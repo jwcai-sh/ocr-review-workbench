@@ -31,7 +31,7 @@ _load_local_env()
 class Settings:
     host: str = os.getenv("APP_HOST", "127.0.0.1")
     port: int = int(os.getenv("APP_PORT", os.getenv("PORT", "8787")))
-    app_name: str = os.getenv("APP_NAME", "UnivModel OCR Workbench")
+    app_name: str = os.getenv("APP_NAME", "OCR Review Workbench")
     mineru_base_url: str = os.getenv("MINERU_BASE_URL", "https://mineryou.cpolar.top").rstrip("/")
     mineru_convert_path: str = os.getenv("MINERU_CONVERT_PATH", "/api/convert")
     request_timeout_seconds: float = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "25"))

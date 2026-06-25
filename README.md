@@ -1,6 +1,19 @@
-# UnivModel OCR Workbench
+# OCR Review Workbench
 
-这是从“宇宙模型 MVP”中抽出的 OCR 校对子应用部署包，只包含 OCR 三栏/整页校对工作台需要的前端、OCR core、PDF 预览、Mathpix 块级识别兼容接口和 OCR correction API。
+OCR Review Workbench 是一个通用 OCR 对照校对工具，适合数学、物理、天文学等公式密集文档的 OCR Markdown 校对。
+
+核心链路是：
+
+```text
+原文 PDF / 图片
+-> OCR Markdown 结果，例如 MinerU middle.json
+-> 页面级对照与 block 级校对
+-> Mathpix / 人工编辑 draft patch
+-> accepted patch
+-> accepted 校正稿预览和下载
+```
+
+当前部署包只包含 OCR 校对工作台需要的前端、OCR core、PDF 预览、Mathpix 块级识别兼容接口和 OCR correction API。
 
 ## 功能范围
 
@@ -13,12 +26,12 @@
 - 人工编辑 patch
 - accepted 校正稿预览和下载
 
-不包含聊天、RAG 知识库、模型测试台页面、可视化展厅和离线批处理流水线。
+不绑定某个特定项目，也不包含聊天、RAG 知识库、模型测试台页面、可视化展厅和离线批处理流水线。
 
 ## 本地启动
 
 ```bash
-cd "/Users/Min369/Documents/同步空间/Manju/AIProjects/UnivModel/univmodel-ocr-workbench"
+cd "/Users/Min369/Documents/同步空间/Manju/AIProjects/UnivModel/ocr-review-workbench"
 python3 -m pip install -r requirements.txt
 APP_HOST=127.0.0.1 APP_PORT=8789 python3 -m backend.ocr_server
 ```
@@ -133,7 +146,7 @@ node -e "const fs=require('fs'); new Function(fs.readFileSync('frontend/ocr-comp
 ```bash
 git init
 git add .
-git commit -m "Initial OCR workbench deploy package"
+git commit -m "Initial OCR review workbench deploy package"
 git branch -M main
 git remote add origin 你的GitHub仓库地址
 git push -u origin main
