@@ -296,9 +296,12 @@ function bindElements() {
     "pdfInput",
     "mineruInput",
     "contentListInput",
+    "workspaceInput",
     "pickPdfButton",
     "pickMineruButton",
     "pickContentListButton",
+    "exportWorkspaceButton",
+    "importWorkspaceButton",
     "previewAcceptedBookButton",
     "downloadAcceptedCorrectedButton",
     "pageList",
@@ -316,11 +319,14 @@ function initialize() {
   els.pickPdfButton.addEventListener("click", () => openFilePicker(els.pdfInput));
   els.pickMineruButton.addEventListener("click", () => openFilePicker(els.mineruInput));
   els.pickContentListButton.addEventListener("click", () => openFilePicker(els.contentListInput));
+  els.exportWorkspaceButton?.addEventListener("click", exportOcrWorkspaceSnapshot);
+  els.importWorkspaceButton?.addEventListener("click", () => openFilePicker(els.workspaceInput));
   els.previewAcceptedBookButton?.addEventListener("click", toggleAcceptedBookPreview);
   els.downloadAcceptedCorrectedButton?.addEventListener("click", downloadAcceptedCorrectedFromTop);
   els.pdfInput.addEventListener("change", handlePdfChange);
   els.mineruInput.addEventListener("change", handleMineruChange);
   els.contentListInput.addEventListener("change", handleContentListChange);
+  els.workspaceInput?.addEventListener("change", handleWorkspaceImportChange);
   document.addEventListener("pointerdown", handleColumnResizeStart);
   window.addEventListener("resize", schedulePdfFocusSync);
   window.addEventListener("mathjax-ready", () => typesetMath(els.pageList));
@@ -532,19 +538,7 @@ function saveOcrWorkspaceState() {
   if (!storage || !key) {
     return false;
   }
-  const payload = {
-    version: 1,
-    savedAt: new Date().toISOString(),
-    mineruFileName: state.mineruFileName,
-    pageCount: getMineruPageCount() || 0,
-    mineruOverrides: serializePageMap(state.mineruOverrides),
-    mineruBlockOverrides: serializeNestedMap(state.mineruBlockOverrides),
-    mathpixBlockDrafts: serializeNestedMap(state.mathpixBlockDrafts),
-    mathpixCache: serializePageMap(state.mathpixCache),
-    ocrPatches: Array.isArray(state.ocrPatches) ? state.ocrPatches : [],
-    reviewNeedsCorrection: Array.from(state.reviewNeedsCorrection || []),
-    reviewFontScale: state.reviewFontScale,
-  };
+  const payload = buildOcrWorkspacePayload();
   try {
     storage.setItem(key, JSON.stringify(payload));
     return true;
@@ -571,22 +565,114 @@ function restoreOcrWorkspaceState() {
     if (!payload || payload.version !== 1) {
       return false;
     }
-    state.mineruOverrides = restorePageMap(payload.mineruOverrides);
-    state.mineruBlockOverrides = restoreNestedMap(payload.mineruBlockOverrides);
-    state.mathpixBlockDrafts = restoreNestedMap(payload.mathpixBlockDrafts);
-    state.mathpixCache = restorePageMap(payload.mathpixCache);
-    state.ocrPatches = Array.isArray(payload.ocrPatches) ? payload.ocrPatches : [];
-    state.reviewNeedsCorrection = new Set(Array.isArray(payload.reviewNeedsCorrection) ? payload.reviewNeedsCorrection.map(String) : []);
-    state.reviewFontScale = clampReviewFontScale(payload.reviewFontScale);
-    state.acceptedPatchPreview = null;
-    state.acceptedPatchBookPreview = null;
-    return true;
+    return applyOcrWorkspacePayload(payload);
   } catch (error) {
     storage.removeItem(key);
     if (typeof console !== "undefined" && typeof console.warn === "function") {
       console.warn("[OCR Workspace] 已忽略损坏的 Mathpix 校正中间稿缓存。", error);
     }
     return false;
+  }
+}
+
+function buildOcrWorkspacePayload() {
+  return {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    mineruFileName: state.mineruFileName,
+    pageCount: getMineruPageCount() || 0,
+    mineruOverrides: serializePageMap(state.mineruOverrides),
+    mineruBlockOverrides: serializeNestedMap(state.mineruBlockOverrides),
+    mathpixBlockDrafts: serializeNestedMap(state.mathpixBlockDrafts),
+    mathpixCache: serializePageMap(state.mathpixCache),
+    ocrPatches: Array.isArray(state.ocrPatches) ? state.ocrPatches : [],
+    reviewNeedsCorrection: Array.from(state.reviewNeedsCorrection || []),
+    reviewFontScale: state.reviewFontScale,
+  };
+}
+
+function unwrapOcrWorkspacePayload(payload) {
+  if (payload?.workspace?.version === 1) {
+    return payload.workspace;
+  }
+  return payload?.version === 1 ? payload : null;
+}
+
+function applyOcrWorkspacePayload(payload) {
+  const workspace = unwrapOcrWorkspacePayload(payload);
+  if (!workspace) {
+    return false;
+  }
+  state.mineruOverrides = restorePageMap(workspace.mineruOverrides);
+  state.mineruBlockOverrides = restoreNestedMap(workspace.mineruBlockOverrides);
+  state.mathpixBlockDrafts = restoreNestedMap(workspace.mathpixBlockDrafts);
+  state.mathpixCache = restorePageMap(workspace.mathpixCache);
+  state.ocrPatches = Array.isArray(workspace.ocrPatches) ? workspace.ocrPatches : [];
+  state.reviewNeedsCorrection = new Set(Array.isArray(workspace.reviewNeedsCorrection) ? workspace.reviewNeedsCorrection.map(String) : []);
+  state.reviewFontScale = clampReviewFontScale(workspace.reviewFontScale);
+  state.acceptedPatchPreview = null;
+  state.acceptedPatchBookPreview = null;
+  return true;
+}
+
+function exportOcrWorkspaceSnapshot() {
+  if (!state.mineruInfo || !state.mineruFileName) {
+    setStatus("先上传 MinerU JSON", "error");
+    return;
+  }
+  saveOcrWorkspaceState();
+  const payload = {
+    kind: "ocr-review-workbench-workspace",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    sourceUrl: typeof window !== "undefined" ? window.location.href : "",
+    workspace: buildOcrWorkspacePayload(),
+  };
+  const filename = `${safeDownloadBaseName()}-ocr-workspace.json`;
+  downloadJsonFile(filename, payload);
+  setStatus("工作区已导出", "ok", filename);
+}
+
+async function handleWorkspaceImportChange() {
+  const file = els.workspaceInput?.files?.[0] || null;
+  if (!file) {
+    return;
+  }
+  if (!state.mineruInfo || !state.mineruFileName) {
+    setStatus("请先上传同一本 MinerU JSON，再导入工作区", "error");
+    els.workspaceInput.value = "";
+    return;
+  }
+  setStatus("导入工作区", "busy", file.name);
+  try {
+    const text = await readFileAsText(file);
+    const payload = JSON.parse(text);
+    const workspace = unwrapOcrWorkspacePayload(payload);
+    if (!workspace) {
+      throw new Error("不是有效的 OCR 工作区 JSON。");
+    }
+    const importedName = String(workspace.mineruFileName || "");
+    if (importedName && importedName !== state.mineruFileName) {
+      const accepted = typeof window === "undefined" || window.confirm(`工作区来自 ${importedName}，当前 MinerU 是 ${state.mineruFileName}。仍要导入吗？`);
+      if (!accepted) {
+        setStatus("已取消导入", "ok");
+        return;
+      }
+    }
+    if (!applyOcrWorkspacePayload(workspace)) {
+      throw new Error("工作区状态恢复失败。");
+    }
+    saveOcrWorkspaceState();
+    updateCorrectionSummary();
+    updateAcceptedPatchTopControls();
+    await renderCurrentPage();
+    setStatus("工作区已导入", "ok", file.name);
+  } catch (error) {
+    setStatus("导入失败", "error", error.message);
+  } finally {
+    if (els.workspaceInput) {
+      els.workspaceInput.value = "";
+    }
   }
 }
 
@@ -1433,6 +1519,11 @@ function renderAcceptedPatchBookPreviewPanel() {
 
 function updateAcceptedPatchTopControls() {
   const hasAccepted = hasAcceptedOcrPatches();
+  const canExportWorkspace = Boolean(state.mineruInfo && state.mineruFileName);
+  if (els.exportWorkspaceButton) {
+    els.exportWorkspaceButton.disabled = !canExportWorkspace;
+    els.exportWorkspaceButton.title = canExportWorkspace ? "导出当前书的 OCR 校对工作区状态" : "先上传 MinerU JSON";
+  }
   if (els.previewAcceptedBookButton) {
     els.previewAcceptedBookButton.disabled = !hasAccepted;
     els.previewAcceptedBookButton.textContent = "预览整书 accepted 校正稿";
@@ -5887,6 +5978,18 @@ function baseExportName() {
 
 function downloadTextFile(filename, text) {
   const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function downloadJsonFile(filename, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
