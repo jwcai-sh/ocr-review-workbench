@@ -1,0 +1,14 @@
+{
+  "pageNo": 17,
+  "blocks": [
+    {
+      "blockIndex": 0,
+      "blockType": "paragraph",
+      "rawMarkdown": "The escape velocity is $v_{\\rm esc}=\\sqrt{2GM/R}$ for a spherical mass.",
+      "oldHash": "92b81571aa3c82773452144b8859bc8d75f37db91ae0b4ae11628e1316cd0da8",
+      "blockId": "blk_cosmos_p17_i0_paragraph_no-bbox_92b81571aa3c"
+    }
+  ],
+  "warnings": ["missing_bbox"],
+  "errors": []
+}

@@ -1,0 +1,13 @@
+{
+  "pageNo": 14,
+  "options": {
+    "bookId": "cosmos"
+  },
+  "blocks": [
+    {
+      "block_type": "equation",
+      "markdown": "\\begin{align}\nH^2(a) &= H_0^2\\left(\\Omega_m a^{-3}+\\Omega_\\Lambda\\right) \\\\ \n\\rho_c &= \\frac{3H^2}{8\\pi G}\n\\end{align}",
+      "bbox": [90, 210, 530, 288]
+    }
+  ]
+}

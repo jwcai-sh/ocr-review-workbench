@@ -1,0 +1,21 @@
+{
+  "pageNo": 22,
+  "blocks": [
+    {
+      "blockIndex": 0,
+      "blockType": "paragraph",
+      "rawMarkdown": "Version A: the measured redshift is z=0.12.",
+      "oldHash": "9f201d0957317baa8aef4449b5fdd91ec8b3bbca2860f5779f04a03b4af23a47",
+      "blockId": "blk_cosmos_p22_i0_paragraph_bb_26e67534eb4a_9f201d095731"
+    },
+    {
+      "blockIndex": 1,
+      "blockType": "paragraph",
+      "rawMarkdown": "Version B: the measured redshift is z=0.13.",
+      "oldHash": "cd4c0c7a4ff9584166d6cfcd6acd994dcbb16dc08cdf5943138e67cfc9256ed3",
+      "blockId": "blk_cosmos_p22_i1_paragraph_bb_26e67534eb4a_cd4c0c7a4ff9"
+    }
+  ],
+  "warnings": [],
+  "errors": []
+}

@@ -1,0 +1,14 @@
+[
+  {
+    "patchId": "patch_p4:b0_mathpix_6c4d9d92b72d_9888fbb33b5d",
+    "blockId": "p4:b0",
+    "oldHash": "6c4d9d92b72d2279bce14fcd9f497070a156aff02cacc67e37b86f0aa1009233",
+    "newText": "Distance modulus $m-M$ uses $d$ in parsecs.",
+    "source": "mathpix",
+    "status": "draft",
+    "createdAt": "2026-06-19T00:00:00.000Z",
+    "metadata": {
+      "pageNo": 4
+    }
+  }
+]

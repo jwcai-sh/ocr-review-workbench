@@ -1,0 +1,15 @@
+[
+  {
+    "patchId": "patch_p3:b0_auto_normalizer_c7d5734a3d29_8a681467cd71",
+    "blockId": "p3:b0",
+    "oldHash": "c7d5734a3d2914db35d68152627902c9a1f741f9aeb42e8358f62fa29951d47c",
+    "newText": "$$\nF=ma\n$$",
+    "source": "auto_normalizer",
+    "status": "accepted",
+    "createdAt": "2026-06-19T00:00:00.000Z",
+    "metadata": {
+      "pageNo": 3,
+      "reason": "collapse_extra_display_delimiters"
+    }
+  }
+]

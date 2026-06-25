@@ -1,0 +1,17 @@
+{
+  "pageNo": 19,
+  "options": {
+    "bookId": "cosmos"
+  },
+  "blocks": [
+    {
+      "type": "text",
+      "spans": [
+        { "content": "The Cepheid period " },
+        { "content": "$P$ " },
+        { "content": "sets the luminosity scale." }
+      ],
+      "bbox": [71, 150, 540, 176]
+    }
+  ]
+}

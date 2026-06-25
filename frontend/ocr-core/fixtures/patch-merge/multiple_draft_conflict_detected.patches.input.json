@@ -1,0 +1,26 @@
+[
+  {
+    "patchId": "patch_p9:b0_mathpix_83901f930b2a_c61ad79c9fd6",
+    "blockId": "p9:b0",
+    "oldHash": "83901f930b2ad3e0d3a1b9a2e298199189827d7e4ad12f3029a35e34a1a93690",
+    "newText": "The redshift relation $z=\\lambda/\\lambda_0-1$ is pending review.",
+    "source": "mathpix",
+    "status": "draft",
+    "createdAt": "2026-06-19T00:00:00.000Z",
+    "metadata": {
+      "pageNo": 9
+    }
+  },
+  {
+    "patchId": "patch_p9:b0_human_83901f930b2a_189b8b2e6ef9",
+    "blockId": "p9:b0",
+    "oldHash": "83901f930b2ad3e0d3a1b9a2e298199189827d7e4ad12f3029a35e34a1a93690",
+    "newText": "The redshift relation $z=\\lambda_{obs}/\\lambda_0-1$ is pending review.",
+    "source": "human",
+    "status": "draft",
+    "createdAt": "2026-06-19T00:00:00.000Z",
+    "metadata": {
+      "pageNo": 9
+    }
+  }
+]

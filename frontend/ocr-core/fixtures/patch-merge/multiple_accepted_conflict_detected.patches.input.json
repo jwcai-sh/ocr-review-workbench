@@ -1,0 +1,26 @@
+[
+  {
+    "patchId": "patch_p10:b0_mathpix_9fca88591ccc_4d8c8608652d",
+    "blockId": "p10:b0",
+    "oldHash": "9fca88591cccf1059d2efbbe53963b552adffe3ef0fa47f21b1fa60db5dab6dd",
+    "newText": "The density is $\\rho = 3H^2/8\\pi G$.",
+    "source": "mathpix",
+    "status": "accepted",
+    "createdAt": "2026-06-19T00:00:00.000Z",
+    "metadata": {
+      "pageNo": 10
+    }
+  },
+  {
+    "patchId": "patch_p10:b0_human_9fca88591ccc_af13f64da83d",
+    "blockId": "p10:b0",
+    "oldHash": "9fca88591cccf1059d2efbbe53963b552adffe3ef0fa47f21b1fa60db5dab6dd",
+    "newText": "The density is $\\rho_c = 3H^2/(8\\pi G)$.",
+    "source": "human",
+    "status": "accepted",
+    "createdAt": "2026-06-19T00:00:00.000Z",
+    "metadata": {
+      "pageNo": 10
+    }
+  }
+]

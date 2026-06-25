@@ -1,0 +1,13 @@
+{
+  "pageNo": 15,
+  "options": {
+    "bookId": "cosmos"
+  },
+  "blocks": [
+    {
+      "type": "table",
+      "markdown": "| Band | Central wavelength |\n| --- | --- |\n| Gaia G | $673\\,\\mathrm{nm}$ |\n| WISE W1 | $3.4\\,\\mu\\mathrm{m}$ |",
+      "bbox": [65, 300, 550, 390]
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "pageNo": 16,
+  "options": {
+    "bookId": "cosmos"
+  },
+  "blocks": [
+    {
+      "type": "image",
+      "content": "Figure panel: galaxy rotation curve image placeholder",
+      "bbox": [70, 90, 500, 310]
+    },
+    {
+      "type": "caption",
+      "text": "Figure 4.2: Rotation speed remains nearly flat beyond the optical disk.",
+      "bbox": [72, 320, 498, 352]
+    }
+  ]
+}

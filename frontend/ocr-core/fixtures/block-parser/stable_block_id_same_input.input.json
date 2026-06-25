@@ -1,0 +1,13 @@
+{
+  "pageNo": 21,
+  "options": {
+    "bookId": "cosmos"
+  },
+  "blocks": [
+    {
+      "type": "text",
+      "text": "Stable block IDs support repeatable patch oldHash checks.",
+      "bbox": [80, 140, 500, 166]
+    }
+  ]
+}

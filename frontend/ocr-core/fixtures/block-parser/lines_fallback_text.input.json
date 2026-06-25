@@ -1,0 +1,24 @@
+{
+  "pageNo": 20,
+  "options": {
+    "bookId": "cosmos"
+  },
+  "blocks": [
+    {
+      "type": "text",
+      "lines": [
+        {
+          "spans": [
+            { "content": "First line: the Hubble parameter is $H_0$." }
+          ]
+        },
+        {
+          "spans": [
+            { "content": "Second line: distances use megaparsecs." }
+          ]
+        }
+      ],
+      "bbox": [77, 180, 520, 230]
+    }
+  ]
+}

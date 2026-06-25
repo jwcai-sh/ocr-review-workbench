@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "severity": "warning",
+  "errors": [],
+  "warnings": [
+    { "type": "table_column_mismatch" }
+  ]
+}

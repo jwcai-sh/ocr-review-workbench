@@ -1,0 +1,21 @@
+{
+  "pageNo": 23,
+  "blocks": [
+    {
+      "blockIndex": 0,
+      "blockType": "paragraph",
+      "rawMarkdown": "The same text is positioned in the left column.",
+      "oldHash": "4a4856238b8e5c81048cc5a6d0e4a68525920bd729568e3d0a33eb7749e7ea18",
+      "blockId": "blk_cosmos_p23_i0_paragraph_bb_26e67534eb4a_4a4856238b8e"
+    },
+    {
+      "blockIndex": 1,
+      "blockType": "paragraph",
+      "rawMarkdown": "The same text is positioned in the left column.",
+      "oldHash": "4a4856238b8e5c81048cc5a6d0e4a68525920bd729568e3d0a33eb7749e7ea18",
+      "blockId": "blk_cosmos_p23_i1_paragraph_bb_cd0df7bcb97b_4a4856238b8e"
+    }
+  ],
+  "warnings": [],
+  "errors": []
+}

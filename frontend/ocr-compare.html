@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OCR 三栏对照</title>
+  <link rel="stylesheet" href="./ocr-compare.css">
+</head>
+<body>
+  <div class="ocr-shell">
+    <header class="ocr-header">
+      <a class="back-link" href="./index.html" aria-label="返回智能体首页">←</a>
+      <div>
+        <p>OCR Preview Lab</p>
+        <h1>OCR 三栏对照</h1>
+      </div>
+      <span id="statusBadge" class="status-badge">Ready</span>
+    </header>
+
+    <section class="control-band">
+      <input id="pdfInput" class="hidden-input" type="file" accept=".pdf,application/pdf,image/*">
+      <input id="mineruInput" class="hidden-input" type="file" accept=".json,application/json">
+      <input id="contentListInput" class="hidden-input" type="file" accept=".json,application/json">
+      <div class="control-column control-column-pdf" aria-label="上传 OCR 输入文件">
+        <button id="pickPdfButton" class="primary-button upload-button" type="button">
+          <span class="upload-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M12 3v12"></path>
+              <path d="m7 8 5-5 5 5"></path>
+              <path d="M5 15v4h14v-4"></path>
+            </svg>
+          </span>
+          <span>上传 PDF</span>
+        </button>
+        <button id="pickMineruButton" class="secondary-button upload-button" type="button">
+          <span class="upload-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M12 3v12"></path>
+              <path d="m7 8 5-5 5 5"></path>
+              <path d="M5 15v4h14v-4"></path>
+            </svg>
+          </span>
+          <span>上传 MinerU JSON</span>
+        </button>
+        <button id="pickContentListButton" class="secondary-button upload-button" type="button">
+          <span class="upload-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M12 3v12"></path>
+              <path d="m7 8 5-5 5 5"></path>
+              <path d="M5 15v4h14v-4"></path>
+            </svg>
+          </span>
+          <span>上传 content_list (可选)</span>
+        </button>
+        <div class="accepted-top-actions" aria-label="accepted 校正稿操作">
+          <button id="previewAcceptedBookButton" class="secondary-button accepted-action-button" type="button" data-preview-accepted-book-patches disabled>
+            预览整书 accepted 校正稿
+          </button>
+          <button id="downloadAcceptedCorrectedButton" class="secondary-button accepted-action-button" type="button" data-download-accepted-corrected disabled>
+            下载 accepted 校正稿
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <main class="preview-panel">
+      <div class="column-heads">
+        <div>每页 OCR 截图</div>
+        <button class="column-resizer" type="button" data-resizer="left" aria-label="调整原文和 MinerU 栏宽"></button>
+        <div>MinerU Markdown 预览</div>
+        <button class="column-resizer" type="button" data-resizer="right" aria-label="调整 MinerU 和校对栏宽"></button>
+        <div>校对工作台</div>
+      </div>
+      <section id="pageList" class="page-list">
+        <div class="empty-state">选择原书 PDF，再选择对应的 MinerU `_middle.json`。优先点击高风险块，只对该块调用 Mathpix。</div>
+      </section>
+    </main>
+  </div>
+
+  <script src="./runtime-config.js"></script>
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [["$", "$"], ["\\(", "\\)"]],
+        displayMath: [["$$", "$$"], ["\\[", "\\]"]],
+        processEscapes: true
+      },
+      options: {
+        skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"]
+      },
+      startup: {
+        typeset: false,
+        pageReady: () =>
+          MathJax.startup.defaultPageReady().then(() => {
+            window.dispatchEvent(new Event("mathjax-ready"));
+          })
+      }
+    };
+  </script>
+  <script src="./ocr-compare.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+[
+  {
+    "patchId": "patch_p11:b1_mathpix_a768a5bc2a9b_d32b1a6c8a6e",
+    "blockId": "p11:b1",
+    "oldHash": "a768a5bc2a9bda3c077e6fe01047ac02ee35723afa12b257ecd83b5754659dde",
+    "newText": "Magnitude equation $m-M=5\\log_{10}(d/10\\mathrm{pc})$.",
+    "source": "mathpix",
+    "status": "accepted",
+    "createdAt": "2026-06-19T00:00:00.000Z",
+    "metadata": {
+      "pageNo": 11
+    }
+  }
+]

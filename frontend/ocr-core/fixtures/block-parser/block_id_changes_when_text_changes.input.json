@@ -1,0 +1,18 @@
+{
+  "pageNo": 22,
+  "options": {
+    "bookId": "cosmos"
+  },
+  "blocks": [
+    {
+      "type": "text",
+      "text": "Version A: the measured redshift is z=0.12.",
+      "bbox": [80, 140, 500, 166]
+    },
+    {
+      "type": "text",
+      "text": "Version B: the measured redshift is z=0.13.",
+      "bbox": [80, 140, 500, 166]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "pageNo": 18,
+  "options": {
+    "bookId": "cosmos"
+  },
+  "blocks": [
+    {
+      "type": "text",
+      "text": "",
+      "bbox": [100, 100, 180, 120]
+    }
+  ]
+}

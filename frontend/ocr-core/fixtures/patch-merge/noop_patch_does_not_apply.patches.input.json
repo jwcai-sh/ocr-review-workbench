@@ -1,0 +1,14 @@
+[
+  {
+    "patchId": "patch_p6:b0_auto_normalizer_a3deb7934916_a3deb7934916",
+    "blockId": "p6:b0",
+    "oldHash": "a3deb793491678e9c3ec30af76e89969d9a037fa21d8c7f14a6a1b903848dedd",
+    "newText": "The inline period $P=2\\pi\\sqrt{a^3/GM}$ is already valid.",
+    "source": "auto_normalizer",
+    "status": "noop",
+    "createdAt": "2026-06-19T00:00:00.000Z",
+    "metadata": {
+      "pageNo": 6
+    }
+  }
+]

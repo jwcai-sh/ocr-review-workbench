@@ -1,0 +1,21 @@
+{
+  "pageNo": 16,
+  "blocks": [
+    {
+      "blockIndex": 0,
+      "blockType": "figure",
+      "rawMarkdown": "Figure panel: galaxy rotation curve image placeholder",
+      "oldHash": "c06222fbe81aef66b6ffe64562b85304a0f950be5217b1776c41f2967b27ba68",
+      "blockId": "blk_cosmos_p16_i0_figure_bb_fafb78f24fec_c06222fbe81a"
+    },
+    {
+      "blockIndex": 1,
+      "blockType": "caption",
+      "rawMarkdown": "Figure 4.2: Rotation speed remains nearly flat beyond the optical disk.",
+      "oldHash": "ea189ca14018aa2a4ce075abc865cc11a7157867289deb32b37e04fa5638196d",
+      "blockId": "blk_cosmos_p16_i1_caption_bb_f3339fa9be8e_ea189ca14018"
+    }
+  ],
+  "warnings": [],
+  "errors": []
+}

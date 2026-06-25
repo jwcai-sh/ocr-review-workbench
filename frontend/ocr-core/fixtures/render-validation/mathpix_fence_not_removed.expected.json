@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "severity": "warning",
+  "errors": [],
+  "warnings": [
+    { "type": "mathpix_fence_not_removed" }
+  ]
+}

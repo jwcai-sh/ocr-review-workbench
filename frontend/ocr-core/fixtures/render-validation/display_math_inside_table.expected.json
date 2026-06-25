@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "severity": "error",
+  "errors": [
+    { "type": "display_math_inside_table" }
+  ],
+  "warnings": []
+}

@@ -1,0 +1,15 @@
+[
+  {
+    "patchId": "patch_p2:b0_human_7ce6401931ba_07f55e608431",
+    "blockId": "p2:b0",
+    "oldHash": "7ce6401931ba33d2f75d5b4af6a29fd7db3a17ab097a42aee88d9accde7162de",
+    "newText": "The stellar luminosity follows the Stefan-Boltzmann law.",
+    "source": "human",
+    "status": "accepted",
+    "createdAt": "2026-06-19T00:00:00.000Z",
+    "metadata": {
+      "pageNo": 2,
+      "reason": "manual_typo_fix"
+    }
+  }
+]

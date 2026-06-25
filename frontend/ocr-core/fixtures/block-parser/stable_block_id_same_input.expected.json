@@ -1,0 +1,14 @@
+{
+  "pageNo": 21,
+  "blocks": [
+    {
+      "blockIndex": 0,
+      "blockType": "paragraph",
+      "rawMarkdown": "Stable block IDs support repeatable patch oldHash checks.",
+      "oldHash": "0a92feeb8610320ee989f94e9fd00b51c26f48b60d699cce91ac4de162adce68",
+      "blockId": "blk_cosmos_p21_i0_paragraph_bb_26e67534eb4a_0a92feeb8610"
+    }
+  ],
+  "warnings": [],
+  "errors": []
+}

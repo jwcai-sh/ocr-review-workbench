@@ -1,0 +1,15 @@
+[
+  {
+    "patchId": "patch_p1:b0_mathpix_182b73f0a7cf_6cc86e89b6b4",
+    "blockId": "p1:b0",
+    "oldHash": "182b73f0a7cf3e1b8b96a9fc33abf17582f6d215349622ebd886c8bd4bd1898c",
+    "newText": "The OCR line reads $E=mc^2$ for photon energy.",
+    "source": "mathpix",
+    "status": "accepted",
+    "createdAt": "2026-06-19T00:00:00.000Z",
+    "metadata": {
+      "pageNo": 1,
+      "reason": "superscript_missing"
+    }
+  }
+]

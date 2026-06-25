@@ -1,0 +1,14 @@
+{
+  "pageNo": 14,
+  "blocks": [
+    {
+      "blockIndex": 0,
+      "blockType": "display_math",
+      "rawMarkdown": "\\begin{align}\nH^2(a) &= H_0^2\\left(\\Omega_m a^{-3}+\\Omega_\\Lambda\\right) \\\\ \n\\rho_c &= \\frac{3H^2}{8\\pi G}\n\\end{align}",
+      "oldHash": "99a70c8e3d3cb46a9e02a196559d1218442e2acada5e335fba7755ad83225dcd",
+      "blockId": "blk_cosmos_p14_i0_display_math_bb_29f83c98e429_99a70c8e3d3c"
+    }
+  ],
+  "warnings": [],
+  "errors": []
+}

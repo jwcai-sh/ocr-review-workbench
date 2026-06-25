@@ -1,0 +1,13 @@
+{
+  "mergedBlocks": [
+    {
+      "blockId": "p9:b0",
+      "text": "The redshift relation z = lambda/lambda0 - 1 is pending review."
+    }
+  ],
+  "errors": [],
+  "warnings": [],
+  "conflicts": [
+    "multiple_draft_patches_for_block"
+  ]
+}

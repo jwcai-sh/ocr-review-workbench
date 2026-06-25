@@ -1,0 +1,13 @@
+{
+  "pageNo": 12,
+  "options": {
+    "bookId": "cosmos"
+  },
+  "blocks": [
+    {
+      "type": "text",
+      "text": "The parallax angle gives the distance through $d=1/p$ when $p$ is measured in arcseconds.",
+      "bbox": [72.01, 118.02, 512.09, 144.04]
+    }
+  ]
+}

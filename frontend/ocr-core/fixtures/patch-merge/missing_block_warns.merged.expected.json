@@ -1,0 +1,12 @@
+{
+  "mergedBlocks": [
+    {
+      "blockId": "p8:b0",
+      "text": "Only one block exists on this page."
+    }
+  ],
+  "errors": [],
+  "warnings": [
+    "patch_block_not_found"
+  ]
+}

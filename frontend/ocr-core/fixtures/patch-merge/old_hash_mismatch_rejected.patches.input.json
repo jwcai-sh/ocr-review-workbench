@@ -1,0 +1,14 @@
+[
+  {
+    "patchId": "patch_p7:b0_mathpix_71b197c2ea47_b5300ae85ecf",
+    "blockId": "p7:b0",
+    "oldHash": "71b197c2ea470079f91c3b84cb625f59165a3100ed9c682b98619d0308455d4e",
+    "newText": "Mathpix correction from stale OCR text.",
+    "source": "mathpix",
+    "status": "accepted",
+    "createdAt": "2026-06-19T00:00:00.000Z",
+    "metadata": {
+      "pageNo": 7
+    }
+  }
+]

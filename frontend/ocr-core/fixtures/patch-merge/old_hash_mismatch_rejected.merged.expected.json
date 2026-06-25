@@ -1,0 +1,12 @@
+{
+  "mergedBlocks": [
+    {
+      "blockId": "p7:b0",
+      "text": "Current block already changed by a human reviewer."
+    }
+  ],
+  "errors": [
+    "old_hash_mismatch"
+  ],
+  "warnings": []
+}

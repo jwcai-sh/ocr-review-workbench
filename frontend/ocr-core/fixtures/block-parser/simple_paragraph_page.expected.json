@@ -1,0 +1,14 @@
+{
+  "pageNo": 12,
+  "blocks": [
+    {
+      "blockIndex": 0,
+      "blockType": "paragraph",
+      "rawMarkdown": "The parallax angle gives the distance through $d=1/p$ when $p$ is measured in arcseconds.",
+      "oldHash": "d378cdf3d5fc631f8b2d183082cc77ebb6810437918921aed53ac9b46c905b72",
+      "blockId": "blk_cosmos_p12_i0_paragraph_bb_de30fce2dbbf_d378cdf3d5fc"
+    }
+  ],
+  "warnings": [],
+  "errors": []
+}

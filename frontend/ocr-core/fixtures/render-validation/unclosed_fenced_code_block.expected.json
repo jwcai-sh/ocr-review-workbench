@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "severity": "error",
+  "errors": [
+    { "type": "unclosed_fenced_code_block" }
+  ],
+  "warnings": []
+}

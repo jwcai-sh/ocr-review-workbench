@@ -1,0 +1,14 @@
+{
+  "pageNo": 15,
+  "blocks": [
+    {
+      "blockIndex": 0,
+      "blockType": "table",
+      "rawMarkdown": "| Band | Central wavelength |\n| --- | --- |\n| Gaia G | $673\\,\\mathrm{nm}$ |\n| WISE W1 | $3.4\\,\\mu\\mathrm{m}$ |",
+      "oldHash": "000dfc6b4c62f7da6265326b7801858cc9f10131f2f3550308e1ebcddbef4c0a",
+      "blockId": "blk_cosmos_p15_i0_table_bb_dd916653063d_000dfc6b4c62"
+    }
+  ],
+  "warnings": [],
+  "errors": []
+}

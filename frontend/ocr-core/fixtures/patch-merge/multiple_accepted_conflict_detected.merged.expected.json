@@ -1,0 +1,15 @@
+{
+  "mergedBlocks": [
+    {
+      "blockId": "p10:b0",
+      "text": "The density is rho = 3H2/8piG."
+    }
+  ],
+  "errors": [
+    "multiple_accepted_patches_for_block"
+  ],
+  "warnings": [],
+  "conflicts": [
+    "multiple_accepted_patches_for_block"
+  ]
+}

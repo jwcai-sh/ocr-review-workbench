@@ -1,0 +1,14 @@
+[
+  {
+    "blockId": "p11:b0",
+    "text": "Block zero keeps the original telescope description."
+  },
+  {
+    "blockId": "p11:b1",
+    "text": "Magnitude equation m-M=5log(d/10pc)."
+  },
+  {
+    "blockId": "p11:b2",
+    "text": "Block two keeps the original spectrum note."
+  }
+]

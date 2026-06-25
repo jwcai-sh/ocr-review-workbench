@@ -1,0 +1,14 @@
+{
+  "pageNo": 13,
+  "blocks": [
+    {
+      "blockIndex": 0,
+      "blockType": "display_math",
+      "rawMarkdown": "$$\nL = 4\\pi R^2\\sigma T_{\\rm eff}^4\n$$",
+      "oldHash": "7f6cb47b7abf7a5d0530bf60b5ebed972f29d9e4ae5df3926e1b8645d37b1f9d",
+      "blockId": "blk_cosmos_p13_i0_display_math_bb_b249d45e761a_7f6cb47b7abf"
+    }
+  ],
+  "warnings": [],
+  "errors": []
+}

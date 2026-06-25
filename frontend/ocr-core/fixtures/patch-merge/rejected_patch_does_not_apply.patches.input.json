@@ -1,0 +1,15 @@
+[
+  {
+    "patchId": "patch_p5:b0_auto_normalizer_4c109240e7ec_7b7b24da6d33",
+    "blockId": "p5:b0",
+    "oldHash": "4c109240e7ec31eb2a686725a930f4aaeed72246dd41d5b12cd242b1a6c6ea24",
+    "newText": "The filter cost $100$ in the observing notes.",
+    "source": "auto_normalizer",
+    "status": "rejected",
+    "createdAt": "2026-06-19T00:00:00.000Z",
+    "metadata": {
+      "pageNo": 5,
+      "reason": "currency_not_math"
+    }
+  }
+]

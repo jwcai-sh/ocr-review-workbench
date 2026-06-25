@@ -1,0 +1,14 @@
+[
+  {
+    "patchId": "patch_p8:missing_human_80a3bbce60de_12df1c756695",
+    "blockId": "p8:missing",
+    "oldHash": "80a3bbce60debffc32f84529f6eba13316ae2fb293404131a9a28fdcaf9ea92c",
+    "newText": "Correction for a block that is no longer present.",
+    "source": "human",
+    "status": "accepted",
+    "createdAt": "2026-06-19T00:00:00.000Z",
+    "metadata": {
+      "pageNo": 8
+    }
+  }
+]
