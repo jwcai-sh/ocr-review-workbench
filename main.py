@@ -1,5 +1,5 @@
-from backend.ocr_server import main
+from backend.ocr_server import run
 
 
 if __name__ == "__main__":
-    main()
+    run()
