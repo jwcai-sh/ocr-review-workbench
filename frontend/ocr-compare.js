@@ -30,6 +30,7 @@ const state = {
   mathpixCache: new Map(),
   reviewExpanded: new Set(),
   reviewCorrectionOpen: new Set(),
+  reviewActionsOpen: new Set(),
   reviewNeedsCorrection: new Set(),
   reviewInitializedPages: new Set(),
   pdfImageZoom: DEFAULT_PDF_IMAGE_ZOOM,
@@ -301,12 +302,9 @@ function bindElements() {
     "pdfInput",
     "mineruInput",
     "contentListInput",
-    "workspaceInput",
     "pickPdfButton",
     "pickMineruButton",
     "pickContentListButton",
-    "exportWorkspaceButton",
-    "importWorkspaceButton",
     "previewAcceptedBookButton",
     "downloadAcceptedCorrectedButton",
     "pageList",
@@ -324,14 +322,11 @@ function initialize() {
   els.pickPdfButton.addEventListener("click", () => openFilePicker(els.pdfInput));
   els.pickMineruButton.addEventListener("click", () => openFilePicker(els.mineruInput));
   els.pickContentListButton.addEventListener("click", () => openFilePicker(els.contentListInput));
-  els.exportWorkspaceButton?.addEventListener("click", exportOcrWorkspaceSnapshot);
-  els.importWorkspaceButton?.addEventListener("click", () => openFilePicker(els.workspaceInput));
   els.previewAcceptedBookButton?.addEventListener("click", toggleAcceptedBookPreview);
   els.downloadAcceptedCorrectedButton?.addEventListener("click", downloadAcceptedCorrectedFromTop);
   els.pdfInput.addEventListener("change", handlePdfChange);
   els.mineruInput.addEventListener("change", handleMineruChange);
   els.contentListInput.addEventListener("change", handleContentListChange);
-  els.workspaceInput?.addEventListener("change", handleWorkspaceImportChange);
   document.addEventListener("pointerdown", handleColumnResizeStart);
   window.addEventListener("resize", schedulePdfFocusSync);
   window.addEventListener("mathjax-ready", () => typesetMath(els.pageList));
@@ -622,7 +617,7 @@ function applyOcrWorkspacePayload(payload) {
 
 function exportOcrWorkspaceSnapshot() {
   if (!state.mineruInfo || !state.mineruFileName) {
-    setStatus("先上传 MinerU JSON", "error");
+    setStatus("先上传 middle.json", "error");
     return;
   }
   saveOcrWorkspaceState();
@@ -754,6 +749,8 @@ async function goToPage(pageNumber) {
   state.currentPage = nextPage;
   state.acceptedPatchPreview = null;
   state.reviewExpanded.clear();
+  state.reviewActionsOpen.clear();
+  state.reviewCorrectionOpen.clear();
   updatePager();
   await renderCurrentPage();
 }
@@ -1403,7 +1400,7 @@ function renderMineruBlock(entry, markdown, risk, corrected, options = {}) {
   const isRisk = Boolean(risk);
   const labels = risk ? risk.reasons.map(riskReasonLabel).join(" · ") : "";
   const disabled = risk?.bbox ? "" : "disabled";
-  const actionLabel = corrected ? "重新校正此块" : risk?.bbox ? "Mathpix 校正此块" : "缺少 bbox";
+  const actionLabel = corrected ? "Mathpix 重校正" : risk?.bbox ? "Mathpix 校正" : "缺少 bbox";
   return `
     <section class="mineru-block ${isRisk ? "is-risk" : ""} ${corrected ? "is-corrected" : ""}" data-block-index="${entry.blockIndex}">
       ${
@@ -1460,18 +1457,43 @@ function renderReviewCard() {
       if (event.target?.closest?.("button, textarea, input, select, summary, details, a")) {
         return;
       }
-      selectReviewBlock(block.dataset.reviewPageBlock);
+      if (event.detail > 1) {
+        return;
+      }
+      const key = block.dataset.reviewPageBlock;
+      if (isActiveReviewBlockKey(key)) {
+        toggleReviewBlockActions(key);
+        return;
+      }
+      selectReviewBlock(key);
+    });
+    block.addEventListener("dblclick", (event) => {
+      if (event.target?.closest?.("button, textarea, input, select, summary, details, a")) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      openReviewCorrectionPanel(block.dataset.reviewPageBlock);
     });
     block.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") {
         return;
       }
       event.preventDefault();
-      selectReviewBlock(block.dataset.reviewPageBlock);
+      const key = block.dataset.reviewPageBlock;
+      if (isActiveReviewBlockKey(key)) {
+        toggleReviewBlockActions(key);
+        return;
+      }
+      selectReviewBlock(key);
     });
   });
   card.querySelectorAll("[data-risk-mathpix]").forEach((button) => {
-    button.addEventListener("click", () => recognizeRiskBlockWithMathpix(button.dataset.riskMathpix));
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      await runRiskBlockMathpixFromButton(button);
+    });
   });
   card.querySelectorAll("[data-review-toggle]").forEach((button) => {
     button.addEventListener("click", () => toggleReviewBlock(button.dataset.reviewToggle));
@@ -1489,18 +1511,50 @@ function renderReviewCard() {
     });
   });
   card.querySelectorAll("[data-apply-mathpix-block-edit]").forEach((button) => {
-    button.addEventListener("click", () => applyMathpixBlockEdit(button.dataset.applyMathpixBlockEdit, button));
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      applyMathpixBlockEdit(button.dataset.applyMathpixBlockEdit, button);
+    });
   });
   card.querySelectorAll("[data-apply-mineru-source-edit]").forEach((button) => {
-    button.addEventListener("click", () => applyMineruSourceEdit(button.dataset.applyMineruSourceEdit, button));
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      applyMineruSourceEdit(button.dataset.applyMineruSourceEdit, button);
+    });
+  });
+  card.querySelectorAll("[data-toolbar-apply-mathpix-block-edit]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      applyMathpixBlockEdit(button.dataset.toolbarApplyMathpixBlockEdit, button);
+    });
+  });
+  card.querySelectorAll("[data-toolbar-apply-mineru-source-edit]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      applyMineruSourceEdit(button.dataset.toolbarApplyMineruSourceEdit, button);
+    });
   });
   card.querySelectorAll("[data-auto-unwrap-linebreaks]").forEach((button) => {
-    button.addEventListener("click", () => autoUnwrapMineruLineBreaksForBlock(button.dataset.autoUnwrapLinebreaks));
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      autoUnwrapMineruLineBreaksForBlock(button.dataset.autoUnwrapLinebreaks);
+    });
   });
   card.querySelectorAll("[data-auto-add-figure-label]").forEach((button) => {
-    button.addEventListener("click", () => autoAddFigureLabelForBlock(button.dataset.autoAddFigureLabel));
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      autoAddFigureLabelForBlock(button.dataset.autoAddFigureLabel);
+    });
+  });
+  card.querySelectorAll(".selected-block-toolbar, .block-source-detail").forEach((container) => {
+    ["click", "pointerdown", "dblclick"].forEach((eventName) => {
+      container.addEventListener(eventName, (event) => event.stopPropagation());
+    });
   });
   card.querySelectorAll("[data-mathpix-edit], [data-mineru-source-edit]").forEach((editor) => {
+    ["click", "pointerdown", "keydown"].forEach((eventName) => {
+      editor.addEventListener(eventName, (event) => event.stopPropagation());
+    });
     editor.addEventListener("input", () => updateReviewEditorActionState(editor));
     updateReviewEditorActionState(editor);
   });
@@ -1519,7 +1573,9 @@ function renderReviewCard() {
     button.addEventListener("click", async () => {
       setReviewFontScale(button.dataset.reviewFontScale);
       saveOcrWorkspaceState();
-      await renderCurrentPage();
+      if (!refreshRightWorkbenchOnly()) {
+        await renderCurrentPage();
+      }
     });
   });
   card.querySelectorAll("[data-page-jump]").forEach((button) => {
@@ -1536,7 +1592,9 @@ function renderReviewCard() {
   });
   card.querySelector("[data-next-risk-page]")?.addEventListener("click", () => goToNextRiskPage());
   card.querySelectorAll("[data-ocr-patch-status-action]").forEach((button) => {
-    button.addEventListener("click", async () => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       const result = updateOcrPatchStatus(button.dataset.ocrPatchId, button.dataset.ocrPatchStatusAction);
       state.acceptedPatchPreview = null;
       state.acceptedPatchBookPreview = null;
@@ -1566,7 +1624,7 @@ function updateAcceptedPatchTopControls() {
   const canExportWorkspace = Boolean(state.mineruInfo && state.mineruFileName);
   if (els.exportWorkspaceButton) {
     els.exportWorkspaceButton.disabled = !canExportWorkspace;
-    els.exportWorkspaceButton.title = canExportWorkspace ? "导出当前书的 OCR 校对工作区状态" : "先上传 MinerU JSON";
+    els.exportWorkspaceButton.title = canExportWorkspace ? "导出当前书的 OCR 校对工作区状态" : "先上传 middle.json";
   }
   if (els.previewAcceptedBookButton) {
     els.previewAcceptedBookButton.disabled = !hasAccepted;
@@ -1854,23 +1912,28 @@ function renderPageReviewBlock(entry) {
   const hasDraft = Boolean(draftMarkdown || ocrPatch?.status === "draft");
   const itemState = hasDraft ? "mathpix-draft" : corrected ? "corrected" : risk.reviewOnly ? "normal" : "candidate";
   const correctionOpen = state.reviewCorrectionOpen.has(fullKey);
+  const actionsOpen = state.reviewActionsOpen.has(fullKey) || correctionOpen;
   const needsCorrection = state.reviewNeedsCorrection.has(fullKey);
   const missingFigureLabel = inferMissingFigureLabelForBlock(state.currentPage, blockKey, segment.markdown || "");
   return `
     <section class="review-page-block ${selected ? "is-selected" : ""} ${corrected ? "is-corrected" : ""} ${hasDraft ? "has-mathpix-draft" : ""} ${needsCorrection ? "needs-extra-correction" : ""}" tabindex="0" role="button" data-review-page-block="${escapeHtml(fullKey)}" data-source-block-id="${escapeHtml(blockKey)}" data-review-item-state="${escapeHtml(itemState)}">
-      <div class="review-page-block-actions">
-        <button class="review-page-mark-button ${needsCorrection ? "is-active" : ""}" type="button" data-review-needs-correction-toggle="${escapeHtml(fullKey)}" aria-pressed="${needsCorrection ? "true" : "false"}">
-          需要额外校正
-        </button>
-        ${
-          missingFigureLabel
-            ? `<button class="review-page-local-button" type="button" data-auto-add-figure-label="${escapeHtml(blockKey)}">补图号</button>`
-            : ""
-        }
-        <button class="review-page-correct-button" type="button" data-review-correction-toggle="${escapeHtml(fullKey)}" aria-expanded="${correctionOpen ? "true" : "false"}">
-          ${correctionOpen ? "收起校正" : "校正"}
-        </button>
-      </div>
+      ${
+        actionsOpen
+          ? `<div class="review-page-block-actions">
+              <button class="review-page-mark-button ${needsCorrection ? "is-active" : ""}" type="button" data-review-needs-correction-toggle="${escapeHtml(fullKey)}" aria-pressed="${needsCorrection ? "true" : "false"}">
+                需要额外校正
+              </button>
+              ${
+                missingFigureLabel
+                  ? `<button class="review-page-local-button" type="button" data-auto-add-figure-label="${escapeHtml(blockKey)}">补图号</button>`
+                  : ""
+              }
+              <button class="review-page-correct-button" type="button" data-review-correction-toggle="${escapeHtml(fullKey)}" aria-expanded="${correctionOpen ? "true" : "false"}">
+                ${correctionOpen ? "收起校正" : "校正"}
+              </button>
+            </div>`
+          : ""
+      }
       <div class="review-page-block-render">
         ${renderBlockContent(displayMarkdown, segment)}
       </div>
@@ -1906,7 +1969,7 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
   const hasAcceptedPatchMarkdown = Boolean(patchMarkdown && ocrPatch?.status === "accepted");
   const hasMathpixDraft = Boolean(String(mathpixDraftMarkdown || "").trim()) || hasPatchDraft;
   const isCorrected = Boolean(corrected || hasAcceptedPatchMarkdown);
-  const editableMarkdown = prepareMathpixMarkdown(mathpixDraftMarkdown || patchMarkdown || correctedMarkdown || "");
+  const editableMarkdown = cleanMathpixEditableMarkdown(prepareMathpixMarkdown(mathpixDraftMarkdown || patchMarkdown || correctedMarkdown || ""));
   const hasEditableMarkdown = Boolean(editableMarkdown.trim());
   const previewMarkdown = hasMathpixDraft || hasAcceptedPatchMarkdown ? editableMarkdown : correctedMarkdown;
   const mathpixEditorIsSaved = Boolean(hasAcceptedPatchMarkdown && !hasMathpixDraft && editableMarkdown === prepareMathpixMarkdown(patchMarkdown));
@@ -1941,7 +2004,7 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
             <summary>编辑当前块 MinerU Markdown 源码</summary>
             <textarea class="mathpix-source-editor block-source-editor" data-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" spellcheck="false">${escapeHtml(segment.markdown)}</textarea>
             <div class="mathpix-edit-actions">
-              <button class="text-button" type="button" data-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保存修改并接受" disabled>
+              <button class="text-button" type="button" data-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保持修改" disabled>
                 未修改
               </button>
             </div>
@@ -1958,8 +2021,8 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
             <summary>编辑 Markdown 源码（保存后进入 accepted 校正稿）</summary>
             <textarea class="mathpix-source-editor" data-mathpix-edit="${escapeHtml(String(segment.blockIndex))}" spellcheck="false">${escapeHtml(editableMarkdown)}</textarea>
             <div class="mathpix-edit-actions">
-              <button class="text-button" type="button" data-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-dirty-label="保存修改并接受">
-                保存修改并接受
+              <button class="text-button" type="button" data-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="${hasMathpixDraft ? "保持修改" : "未修改"}" data-dirty-label="保持修改" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>
+                ${hasMathpixDraft ? "保持修改" : "未修改"}
               </button>
             </div>
           </details>
@@ -1977,8 +2040,11 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
     const mathpixActionHtml = isCrossPage
       ? `<button class="text-button risk-action" type="button" data-cross-page-jump-page="${escapeHtml(String(risk.crossPageSourcePage))}" data-cross-page-jump-block="${escapeHtml(String(risk.sourceBlockIndex))}">跳到第 ${escapeHtml(String(risk.crossPageSourcePage))} 页校对</button>`
       : `<button class="text-button risk-action" type="button" data-risk-mathpix="${segment.blockIndex}" ${disabled}>
-          ${isCorrected ? "重新校正此块" : risk.bbox ? "Mathpix 校正此块" : "缺少 bbox"}
+          ${isCorrected ? "Mathpix 重校正" : risk.bbox ? "Mathpix 校正" : "缺少 bbox"}
         </button>`;
+    const saveActionHtml = hasEditableMarkdown
+      ? `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="${hasMathpixDraft ? "保持修改" : "未修改"}" data-dirty-label="保持修改" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>${hasMathpixDraft ? "保持修改" : "未修改"}</button>`
+      : `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保持修改" disabled>未修改</button>`;
     return `
       <div class="selected-block-toolbar review-item ${isReviewOnly ? "is-normal" : ""} ${isCorrected ? "is-corrected" : ""} ${hasMathpixDraft ? "has-mathpix-draft" : ""} ${isCrossPage ? "is-cross-page" : ""} is-expanded" data-review-item-state="${escapeHtml(itemState)}" data-source-block-id="${escapeHtml(String(segment.blockIndex))}">
         <div class="selected-block-toolbar-head">
@@ -1987,8 +2053,9 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
           </div>
           <div class="review-item-actions">
             ${renderOcrPatchStatusControls(ocrPatch)}
-            ${mathpixActionHtml}
             <button class="text-button review-toolbar-collapse" type="button" data-review-correction-toggle="${escapeHtml(reviewKey)}" aria-label="收起校正面板" title="收起">⌃</button>
+            ${mathpixActionHtml}
+            ${saveActionHtml}
           </div>
         </div>
         <div class="selected-block-toolbar-body">
@@ -2017,7 +2084,7 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
             isCrossPage
               ? `<button class="text-button risk-action" type="button" data-cross-page-jump-page="${escapeHtml(String(risk.crossPageSourcePage))}" data-cross-page-jump-block="${escapeHtml(String(risk.sourceBlockIndex))}">跳到第 ${escapeHtml(String(risk.crossPageSourcePage))} 页校对</button>`
               : `<button class="text-button risk-action" type="button" data-risk-mathpix="${segment.blockIndex}" ${disabled}>
-                  ${isCorrected ? "重新校正此块" : risk.bbox ? "Mathpix 校正此块" : "缺少 bbox"}
+                  ${isCorrected ? "Mathpix 重校正" : risk.bbox ? "Mathpix 校正" : "缺少 bbox"}
                 </button>`
           }
         </div>
@@ -2045,8 +2112,8 @@ function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditab
         <summary>查看/编辑 Mathpix draft / accepted Markdown</summary>
         <textarea class="mathpix-source-editor" data-mathpix-edit="${blockIndex}" spellcheck="false">${mathpixMarkdown}</textarea>
         <div class="mathpix-edit-actions">
-          <button class="text-button" type="button" data-apply-mathpix-block-edit="${blockIndex}" data-dirty-label="保存修改并接受">
-            保存修改并接受
+          <button class="text-button" type="button" data-apply-mathpix-block-edit="${blockIndex}" data-clean-label="${mathpixEditorIsSaved ? "未修改" : "保持修改"}" data-dirty-label="保持修改" ${mathpixEditorIsSaved ? 'data-disable-when-clean="1" disabled' : ""}>
+            ${mathpixEditorIsSaved ? "未修改" : "保持修改"}
           </button>
         </div>
       </details>`
@@ -2054,7 +2121,7 @@ function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditab
         <summary>查看/编辑 MinerU 源码</summary>
         <textarea class="mathpix-source-editor block-source-editor" data-mineru-source-edit="${blockIndex}" spellcheck="false">${mineruMarkdown}</textarea>
         <div class="mathpix-edit-actions">
-          <button class="text-button" type="button" data-apply-mineru-source-edit="${blockIndex}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保存修改并接受" disabled>
+          <button class="text-button" type="button" data-apply-mineru-source-edit="${blockIndex}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保持修改" disabled>
             未修改
           </button>
         </div>
@@ -2069,35 +2136,35 @@ function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditab
 function updateReviewEditorActionState(editor) {
   const container = editor?.closest?.(".block-source-detail") || editor?.closest?.(".review-item");
   const button = container?.querySelector?.("[data-apply-mathpix-block-edit], [data-apply-mineru-source-edit]");
-  if (!button) {
-    return false;
-  }
+  const toolbar = editor?.closest?.(".selected-block-toolbar");
+  const toolbarButton = toolbar?.querySelector?.("[data-toolbar-apply-mathpix-block-edit], [data-toolbar-apply-mineru-source-edit]");
   const currentValue = String(editor.value || "");
   const initialValue = String(editor.defaultValue ?? "");
   const isDirty = currentValue !== initialValue;
-  if (button.dataset?.disableWhenClean === "1") {
+  const syncButton = (targetButton) => {
+    if (!targetButton) {
+      return;
+    }
+    if (targetButton.dataset?.disableWhenClean === "1") {
+      targetButton.disabled = !isDirty;
+      targetButton.textContent = isDirty ? targetButton.dataset.dirtyLabel || "保持修改" : targetButton.dataset.cleanLabel || "未修改";
+      return;
+    }
+    if (targetButton.dataset?.dirtyLabel && isDirty) {
+      targetButton.textContent = targetButton.dataset.dirtyLabel;
+    }
+  };
+  syncButton(button);
+  syncButton(toolbarButton);
+  if (button?.dataset?.disableWhenClean === "1") {
     button.disabled = !isDirty;
-    button.textContent = isDirty ? button.dataset.dirtyLabel || "保存修改并接受" : button.dataset.cleanLabel || "未修改";
     return isDirty;
-  }
-  if (button.dataset?.dirtyLabel && isDirty) {
-    button.textContent = button.dataset.dirtyLabel;
   }
   return isDirty;
 }
 
 function renderOcrPatchStatusControls(patch) {
-  if (!patch || patch.status !== "draft") {
-    return "";
-  }
-  const status = String(patch.status || "");
-  const patchId = String(patch.patchId || "");
-  return `
-    <div class="ocr-patch-status" data-ocr-patch-id="${escapeHtml(patchId)}" data-ocr-patch-status="${escapeHtml(status)}">
-      <button class="text-button" type="button" data-ocr-patch-id="${escapeHtml(patchId)}" data-ocr-patch-status-action="accepted">接受</button>
-      <button class="text-button" type="button" data-ocr-patch-id="${escapeHtml(patchId)}" data-ocr-patch-status-action="rejected">拒绝</button>
-    </div>
-  `;
+  return "";
 }
 
 function reviewBlockKey(pageNumber, blockIndex) {
@@ -2139,13 +2206,20 @@ async function selectReviewBlock(blockIndex) {
     return;
   }
   const samePage = Number(fullKey.split(":")[0]) === state.currentPage;
+  const hadOpenReviewControls = state.reviewActionsOpen.size > 0 || state.reviewCorrectionOpen.size > 0;
   state.reviewExpanded.clear();
   state.reviewExpanded.add(fullKey);
+  state.reviewActionsOpen.clear();
   if (!state.reviewCorrectionOpen.has(fullKey)) {
     state.reviewCorrectionOpen.clear();
   }
   state.reviewInitializedPages.add(Number(fullKey.split(":")[0]) || state.currentPage);
-  if (samePage && refreshRightWorkbenchOnly()) {
+  if (samePage && !hadOpenReviewControls && refreshReviewSelectionInPlace(fullKey)) {
+    scrollSelectedReviewBlockIntoView();
+    schedulePdfFocusSync();
+    return;
+  }
+  if (samePage && refreshRightWorkbenchOnly({ preserveReviewScroll: true })) {
     refreshReviewSelectionInPlace(fullKey);
     scrollSelectedReviewBlockIntoView();
     schedulePdfFocusSync();
@@ -2156,6 +2230,48 @@ async function selectReviewBlock(blockIndex) {
   schedulePdfFocusSync();
 }
 
+async function toggleReviewBlockActions(blockIndex) {
+  const fullKey = normalizeReviewBlockKey(blockIndex);
+  if (!fullKey) {
+    return;
+  }
+  state.reviewExpanded.clear();
+  state.reviewExpanded.add(fullKey);
+  if (state.reviewActionsOpen.has(fullKey)) {
+    state.reviewActionsOpen.clear();
+    state.reviewCorrectionOpen.clear();
+  } else {
+    state.reviewActionsOpen.clear();
+    state.reviewActionsOpen.add(fullKey);
+  }
+  if (refreshRightWorkbenchOnly({ preserveReviewScroll: true, preserveReviewAnchorKey: fullKey })) {
+    refreshReviewSelectionInPlace(fullKey);
+    schedulePdfFocusSync();
+    return;
+  }
+  await renderCurrentPage();
+}
+
+async function openReviewCorrectionPanel(blockIndex) {
+  const fullKey = normalizeReviewBlockKey(blockIndex);
+  if (!fullKey) {
+    return;
+  }
+  state.reviewExpanded.clear();
+  state.reviewExpanded.add(fullKey);
+  state.reviewActionsOpen.clear();
+  state.reviewActionsOpen.add(fullKey);
+  state.reviewCorrectionOpen.clear();
+  state.reviewCorrectionOpen.add(fullKey);
+  if (refreshRightWorkbenchOnly({ preserveReviewScroll: true, preserveReviewAnchorKey: fullKey })) {
+    refreshReviewSelectionInPlace(fullKey);
+    schedulePdfFocusSync();
+    return;
+  }
+  await renderCurrentPage();
+  schedulePdfFocusSync();
+}
+
 async function toggleReviewCorrectionPanel(blockIndex) {
   const fullKey = normalizeReviewBlockKey(blockIndex);
   if (!fullKey) {
@@ -2163,14 +2279,16 @@ async function toggleReviewCorrectionPanel(blockIndex) {
   }
   state.reviewExpanded.clear();
   state.reviewExpanded.add(fullKey);
+  state.reviewActionsOpen.clear();
+  state.reviewActionsOpen.add(fullKey);
   if (state.reviewCorrectionOpen.has(fullKey)) {
     state.reviewCorrectionOpen.clear();
   } else {
     state.reviewCorrectionOpen.clear();
     state.reviewCorrectionOpen.add(fullKey);
   }
-  if (refreshRightWorkbenchOnly()) {
-    scrollSelectedReviewBlockIntoView();
+  if (refreshRightWorkbenchOnly({ preserveReviewScroll: true, preserveReviewAnchorKey: fullKey })) {
+    refreshReviewSelectionInPlace(fullKey);
     schedulePdfFocusSync();
     return;
   }
@@ -2190,7 +2308,7 @@ async function toggleReviewNeedsCorrection(blockIndex) {
     state.reviewNeedsCorrection.add(fullKey);
   }
   saveOcrWorkspaceState();
-  if (refreshRightWorkbenchOnly()) {
+  if (refreshRightWorkbenchOnly({ preserveReviewScroll: true, preserveReviewAnchorKey: fullKey })) {
     refreshReviewSelectionInPlace(fullKey);
     schedulePdfFocusSync();
     return;
@@ -2198,7 +2316,7 @@ async function toggleReviewNeedsCorrection(blockIndex) {
   await renderCurrentPage();
 }
 
-function refreshRightWorkbenchOnly() {
+function refreshRightWorkbenchOnly(options = {}) {
   if (typeof document === "undefined" || !els.pageList) {
     return false;
   }
@@ -2206,10 +2324,73 @@ function refreshRightWorkbenchOnly() {
   if (!current) {
     return false;
   }
+  const scrollState = options.preserveReviewScroll ? captureRightWorkbenchScrollState(current, options.preserveReviewAnchorKey) : null;
   const next = renderRightWorkbench(state.pageCache.get(state.currentPage) || null);
   current.replaceWith(next);
   typesetMath(next);
+  restoreRightWorkbenchScrollState(next, scrollState);
+  scheduleRightWorkbenchScrollRestore(next, scrollState);
+  updateAcceptedPatchTopControls();
   return true;
+}
+
+function captureRightWorkbenchScrollState(current, anchorKey = "") {
+  const canvas = current?.querySelector?.(".review-page-canvas") || null;
+  const anchor = anchorKey ? reviewBlockElementIn(current, anchorKey) : null;
+  const canvasRect = canvas?.getBoundingClientRect?.();
+  const anchorRect = anchor?.getBoundingClientRect?.();
+  return {
+    scrollTop: canvas ? canvas.scrollTop : null,
+    scrollLeft: canvas ? canvas.scrollLeft : null,
+    anchorKey: String(anchorKey || ""),
+    anchorTop: canvasRect && anchorRect ? anchorRect.top - canvasRect.top : null,
+    windowX: typeof window !== "undefined" ? window.scrollX : null,
+    windowY: typeof window !== "undefined" ? window.scrollY : null,
+  };
+}
+
+function restoreRightWorkbenchScrollState(next, scrollState) {
+  if (!scrollState) {
+    return false;
+  }
+  const canvas = next?.querySelector?.(".review-page-canvas") || null;
+  if (canvas && scrollState.scrollTop !== null) {
+    canvas.scrollTop = scrollState.scrollTop;
+    if (scrollState.scrollLeft !== null) {
+      canvas.scrollLeft = scrollState.scrollLeft;
+    }
+    const anchor = scrollState.anchorKey ? reviewBlockElementIn(next, scrollState.anchorKey) : null;
+    const canvasRect = canvas.getBoundingClientRect?.();
+    const anchorRect = anchor?.getBoundingClientRect?.();
+    if (canvasRect && anchorRect && scrollState.anchorTop !== null) {
+      canvas.scrollTop += anchorRect.top - canvasRect.top - scrollState.anchorTop;
+    }
+  }
+  if (typeof window !== "undefined" && typeof window.scrollTo === "function" && scrollState.windowY !== null) {
+    window.scrollTo(scrollState.windowX || 0, scrollState.windowY || 0);
+  }
+  return true;
+}
+
+function scheduleRightWorkbenchScrollRestore(next, scrollState) {
+  if (!scrollState || typeof window === "undefined") {
+    return;
+  }
+  const restore = () => restoreRightWorkbenchScrollState(next, scrollState);
+  if (typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(restore);
+  }
+  if (typeof window.setTimeout === "function") {
+    window.setTimeout(restore, 0);
+    window.setTimeout(restore, 120);
+  }
+}
+
+function reviewBlockElementIn(root, fullKey) {
+  if (!root || typeof root.querySelectorAll !== "function") {
+    return null;
+  }
+  return Array.from(root.querySelectorAll("[data-review-page-block]")).find((block) => block.dataset?.reviewPageBlock === String(fullKey || "")) || null;
 }
 
 function refreshReviewSelectionInPlace(fullKey) {
@@ -2251,7 +2432,16 @@ function scrollSelectedReviewBlockIntoView() {
     return false;
   }
   const item = document.querySelector(".review-page-block.is-selected, .review-item.is-expanded");
-  item?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  if (!item) {
+    return false;
+  }
+  const container = item.closest?.(".review-page-canvas, .right-workbench-card") || null;
+  const itemRect = item.getBoundingClientRect?.();
+  const containerRect = container?.getBoundingClientRect?.();
+  if (itemRect && containerRect && itemRect.top >= containerRect.top + 24 && itemRect.bottom <= containerRect.bottom - 24) {
+    return true;
+  }
+  item.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
   return Boolean(item);
 }
 
@@ -2281,7 +2471,7 @@ async function applyMathpixBlockEdit(blockIndex, trigger) {
   if (!editor) {
     return;
   }
-  const preparedMarkdown = prepareMathpixMarkdown(editor.value || "");
+  const preparedMarkdown = cleanMathpixEditableMarkdown(prepareMathpixMarkdown(editor.value || ""));
   await saveHumanAcceptedBlockEdit(blockKey, preparedMarkdown);
 }
 
@@ -2667,7 +2857,7 @@ function canAutoCorrectPlainMineruMarkdown(markdown) {
 }
 
 function normalizeInlineMathSpacing(markdown) {
-  const text = String(markdown || "");
+  const text = repairUnclosedInlineMathBeforeReference(String(markdown || ""));
   let output = "";
   let inInlineMath = false;
   for (let index = 0; index < text.length; index += 1) {
@@ -2692,6 +2882,50 @@ function normalizeInlineMathSpacing(markdown) {
     }
   }
   return output.replace(/[ \t]{2,}/g, " ");
+}
+
+function repairUnclosedInlineMathBeforeReference(line) {
+  const text = String(line || "");
+  if (!hasOddSingleDollarCount(text)) {
+    return text;
+  }
+  const lastDollarIndex = lastSingleDollarIndex(text);
+  if (lastDollarIndex < 0) {
+    return text;
+  }
+  const tail = text.slice(lastDollarIndex + 1);
+  const referenceMatch = tail.match(/\s*\[?\s*(?:see\s*)?(?:Eq\.?|Equation|Fig\.?|Figure|Table)\s*\.?\s*\(?\d+(?:\.\d+)*[a-zA-Z]?\)?/i);
+  if (!referenceMatch || referenceMatch.index == null || referenceMatch.index <= 0) {
+    return text;
+  }
+  const insertAt = lastDollarIndex + 1 + referenceMatch.index;
+  const before = text.slice(0, insertAt).replace(/[ \t]+$/, "");
+  const after = text.slice(insertAt).replace(/^[ \t]*/, "");
+  return `${before}$ ${after}`;
+}
+
+function hasOddSingleDollarCount(text) {
+  let count = 0;
+  for (let index = 0; index < String(text || "").length; index += 1) {
+    if (isSingleUnescapedDollar(text, index)) {
+      count += 1;
+    }
+  }
+  return count % 2 === 1;
+}
+
+function lastSingleDollarIndex(text) {
+  for (let index = String(text || "").length - 1; index >= 0; index -= 1) {
+    if (isSingleUnescapedDollar(text, index)) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function isSingleUnescapedDollar(text, index) {
+  const value = String(text || "");
+  return value[index] === "$" && value[index - 1] !== "$" && value[index + 1] !== "$" && !isEscapedDollar(value, index);
 }
 
 function isEscapedDollar(text, index) {
@@ -2855,7 +3089,7 @@ function unwrapPlainTextParagraph(paragraph) {
 }
 
 async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
-  const preparedMarkdown = String(newMarkdown || "");
+  const preparedMarkdown = cleanMathpixEditableMarkdown(String(newMarkdown || ""));
   if (!preparedMarkdown.trim()) {
     setStatus("Empty block", "error");
     return;
@@ -2927,10 +3161,105 @@ function renderBlockContent(markdown, entry) {
   if (shouldRenderAsAlgorithmBlock(markdown, entry)) {
     return renderAlgorithmBlock(markdownToAlgorithmLines(markdown));
   }
-  const normalizedMarkdown = normalizeDisplayMathForRender(markdown);
+  const normalizedMarkdown = normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(markdown));
   const imagePreview = renderBlockImagePreview(normalizedMarkdown, entry);
   const markdownForHtml = imagePreview ? stripMarkdownImageReferences(normalizedMarkdown) : normalizedMarkdown;
   return `${imagePreview}${renderMarkdownHtml(markdownForHtml)}`;
+}
+
+function normalizeInlineMathSpacingForRender(markdown) {
+  const text = String(markdown || "");
+  if (!text) {
+    return text;
+  }
+  if (canAutoCorrectPlainMineruMarkdown(text)) {
+    return normalizeInlineMathSpacing(text);
+  }
+  return normalizeInlineMathSpacingOutsideDisplayMath(text);
+}
+
+function normalizeInlineMathSpacingOutsideDisplayMath(markdown) {
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+  let inDisplayMath = false;
+  let inCodeFence = false;
+  return lines
+    .map((line) => {
+      const trimmed = line.trim();
+      if (isCodeFenceStart(line)) {
+        inCodeFence = !inCodeFence;
+        return line;
+      }
+      if (inCodeFence || isLikelyMarkdownTableLine(line) || isStandaloneMarkdownImageLine(line)) {
+        return line;
+      }
+      if (trimmed === "$$" || trimmed === "\\[" || trimmed === "\\]") {
+        inDisplayMath = trimmed === "\\]" ? false : !inDisplayMath;
+        return line;
+      }
+      if (inDisplayMath || hasLatexMathEnvironment(line)) {
+        return line;
+      }
+      return normalizeInlineMathSpacing(line);
+    })
+    .join("\n")
+    .replace(/[ \t]+\n/g, "\n");
+}
+
+function cleanMathpixEditableMarkdown(markdown) {
+  return compactLatexSourceSpacing(normalizeInlineMathSpacingOutsideDisplayMath(String(markdown || ""))).trim();
+}
+
+function compactLatexSourceSpacing(markdown) {
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+  let inDisplayMath = false;
+  let inCodeFence = false;
+  return lines
+    .map((line) => {
+      const trimmed = line.trim();
+      if (isCodeFenceStart(line)) {
+        inCodeFence = !inCodeFence;
+        return line;
+      }
+      if (inCodeFence) {
+        return line;
+      }
+      if (trimmed === "$$" || trimmed === "\\[" || trimmed === "\\]") {
+        inDisplayMath = trimmed === "\\]" ? false : !inDisplayMath;
+        return line;
+      }
+      return inDisplayMath || isLatexDenseSourceLine(line) ? compactLatexSourceLine(line) : line;
+    })
+    .join("\n");
+}
+
+function isLatexDenseSourceLine(line) {
+  const text = String(line || "");
+  return /\\[A-Za-z]+|[_^]\s*\{|\\begin\s*\{|\\end\s*\{/.test(text);
+}
+
+function compactLatexSourceLine(line) {
+  return String(line || "")
+    .replace(/\\([A-Za-z]+)\s+\*/g, "\\$1*")
+    .replace(/\\([A-Za-z]+\*)\s+\{/g, "\\$1{")
+    .replace(/\\([A-Za-z]+)\s+\{/g, "\\$1{")
+    .replace(/\\([A-Za-z]+)\s+([_^])/g, "\\$1$2")
+    .replace(/([_^])\s+\{/g, "$1{")
+    .replace(/\{\s+/g, "{")
+    .replace(/\s+\}/g, "}")
+    .replace(/\}\s+\{/g, "}{")
+    .replace(/\s+([_^])/g, "$1")
+    .replace(/\\begin\{array\}\s*\{([^}]*)\}/g, (_match, columns) => `\\begin{array}{${String(columns || "").replace(/\s+/g, "")}}`)
+    .replace(/\\operatorname\*\{([^}]*)\}/g, (_match, name) => `\\operatorname*{${compactSpacedLetters(name)}}`)
+    .replace(/\\operatorname\{([^}]*)\}/g, (_match, name) => `\\operatorname{${compactSpacedLetters(name)}}`)
+    .replace(/\\mathrm\{([^}]*)\}/g, (_match, value) => `\\mathrm{${compactSpacedLetters(value)}}`)
+    .replace(/\s+([,.;:])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trimEnd();
+}
+
+function compactSpacedLetters(text) {
+  const value = String(text || "").trim();
+  return /^[A-Za-z](?:\s+[A-Za-z])+$/.test(value) ? value.replace(/\s+/g, "") : value;
 }
 
 function shouldRenderAsAlgorithmBlock(markdown, entry) {
@@ -3149,7 +3478,7 @@ function renderRiskItem(item) {
         <pre><code>${escapeHtml(item.text)}</code></pre>
       </details>
       <button class="text-button risk-action" type="button" data-risk-mathpix="${item.blockIndex}" ${disabled}>
-        ${corrected ? "重新校正此块" : item.bbox ? "Mathpix 校正此块" : "缺少 bbox"}
+        ${corrected ? "Mathpix 重校正" : item.bbox ? "Mathpix 校正" : "缺少 bbox"}
       </button>
     </article>
   `;
@@ -3329,7 +3658,12 @@ async function recognizeCurrentPageWithMathpix() {
 }
 
 async function recognizeRiskBlockWithMathpix(blockIndex) {
-  if (state.busy || !state.pdfDataUrl) {
+  if (state.busy) {
+    setStatus("正在处理", "busy");
+    return;
+  }
+  if (!state.pdfDataUrl) {
+    setStatus("先上传 PDF", "error");
     return;
   }
   const blockKey = String(blockIndex);
@@ -3392,6 +3726,25 @@ async function recognizeRiskBlockWithMathpix(blockIndex) {
     state.busy = false;
     updatePager();
     await renderCurrentPage();
+  }
+}
+
+async function runRiskBlockMathpixFromButton(button) {
+  if (!button) {
+    return;
+  }
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "Mathpix 中...";
+  try {
+    await recognizeRiskBlockWithMathpix(button.dataset.riskMathpix);
+  } catch (error) {
+    setStatus("Block OCR failed", "error", error?.message || String(error || ""));
+  } finally {
+    if (button.isConnected) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
   }
 }
 

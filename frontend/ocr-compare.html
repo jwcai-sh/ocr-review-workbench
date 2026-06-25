@@ -21,7 +21,6 @@
       <input id="pdfInput" class="hidden-input" type="file" accept=".pdf,application/pdf,image/*">
       <input id="mineruInput" class="hidden-input" type="file" accept=".json,application/json">
       <input id="contentListInput" class="hidden-input" type="file" accept=".json,application/json">
-      <input id="workspaceInput" class="hidden-input" type="file" accept=".json,application/json">
       <div class="control-column control-column-pdf" aria-label="上传 OCR 输入文件">
         <button id="pickPdfButton" class="primary-button upload-button" type="button">
           <span class="upload-icon" aria-hidden="true">
@@ -41,7 +40,7 @@
               <path d="M5 15v4h14v-4"></path>
             </svg>
           </span>
-          <span>上传 MinerU JSON</span>
+          <span>上传 middle.json</span>
         </button>
         <button id="pickContentListButton" class="secondary-button upload-button" type="button">
           <span class="upload-icon" aria-hidden="true">
@@ -53,16 +52,8 @@
           </span>
           <span>上传 content_list (可选)</span>
         </button>
-        <div class="workspace-transfer-actions" aria-label="OCR 工作区迁移">
-          <button id="exportWorkspaceButton" class="secondary-button workspace-transfer-button" type="button" disabled>
-            导出工作区
-          </button>
-          <button id="importWorkspaceButton" class="secondary-button workspace-transfer-button" type="button">
-            导入工作区
-          </button>
-        </div>
         <div class="accepted-top-actions" aria-label="accepted 校正稿操作">
-          <button id="previewAcceptedBookButton" class="secondary-button accepted-action-button" type="button" data-preview-accepted-book-patches disabled>
+          <button id="previewAcceptedBookButton" class="secondary-button accepted-action-button" type="button" data-preview-accepted-book-patches disabled hidden>
             预览整书 accepted 校正稿
           </button>
           <button id="downloadAcceptedCorrectedButton" class="secondary-button accepted-action-button" type="button" data-download-accepted-corrected disabled>

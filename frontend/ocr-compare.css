@@ -190,33 +190,6 @@ textarea {
   background: #edf8f2;
 }
 
-.workspace-transfer-actions {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.workspace-transfer-button {
-  min-height: 38px;
-  padding: 0 13px;
-  color: #37556f;
-  border-color: #c9d8e7;
-  background: #f4f8fb;
-  font-size: 14px;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.workspace-transfer-button:not(:disabled):hover,
-.workspace-transfer-button:not(:disabled):focus-visible {
-  color: #18364f;
-  border-color: #8fb2d1;
-  background: #eaf3fa;
-  outline: none;
-}
-
 .accepted-top-actions {
   min-width: 0;
   display: flex;
@@ -1161,6 +1134,10 @@ textarea {
 
 .selected-source-detail .mathpix-edit-actions {
   margin: 0 10px 10px;
+}
+
+.selected-block-compact-actions .mathpix-edit-actions {
+  display: none;
 }
 
 .review-item {

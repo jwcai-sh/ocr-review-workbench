@@ -105,9 +105,10 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('id="pickContentListButton"'));
   assert(ocrCompareHtml.includes('class="control-column control-column-pdf"'));
   assert(ocrCompareHtml.includes("上传 PDF"));
-  assert(ocrCompareHtml.includes("上传 MinerU JSON"));
+  assert(ocrCompareHtml.includes("上传 middle.json"));
   assert(ocrCompareHtml.includes("上传 content_list (可选)"));
   assert(ocrCompareHtml.includes('id="previewAcceptedBookButton"'));
+  assert(/id="previewAcceptedBookButton"[^>]*hidden/.test(ocrCompareHtml), "book preview button should stay hidden while it is not part of the main workflow");
   assert(ocrCompareHtml.includes('id="downloadAcceptedCorrectedButton"'));
   assert(ocrCompareHtml.includes("预览整书 accepted 校正稿"));
   assert(ocrCompareHtml.includes("下载 accepted 校正稿"));
@@ -686,17 +687,17 @@ function assertOcrPatchShape(patch) {
   })()`);
   const parsed = JSON.parse(statusHtml);
   assert(!parsed.draftHtml.includes("Patch：draft"));
-  assert(parsed.draftHtml.includes("data-ocr-patch-status-action=\"accepted\""));
-  assert(parsed.draftHtml.includes(">接受<"));
-  assert(parsed.draftHtml.includes(">拒绝<"));
+  assert(!parsed.draftHtml.includes("data-ocr-patch-status-action=\"accepted\""));
+  assert(!parsed.draftHtml.includes(">接受<"));
+  assert(!parsed.draftHtml.includes(">拒绝<"));
+  assert(parsed.draftHtml.includes("保持修改"), "draft edits should be accepted through the single save action");
   assert(!parsed.draftHtml.includes("确认 MinerU 有误后"));
   assert(!parsed.acceptedHtml.includes("Patch：accepted"));
   assert(!parsed.acceptedHtml.includes("已接受 patch"));
   assert(parsed.acceptedHtml.includes("已接受校正稿"));
   assert(parsed.acceptedHtml.includes("data-mathpix-edit=\"3\""));
-  assert(parsed.acceptedHtml.includes("保存修改并接受"));
-  assert(/data-apply-mathpix-block-edit="3"[^>]*>\s*保存修改并接受/.test(parsed.acceptedHtml));
-  assert(!/data-apply-mathpix-block-edit="3"[^>]*data-disable-when-clean="1"/.test(parsed.acceptedHtml));
+  assert(parsed.acceptedHtml.includes("未修改"));
+  assert(/data-apply-mathpix-block-edit="3"[^>]*data-disable-when-clean="1"[^>]*disabled/.test(parsed.acceptedHtml));
   assert(parsed.acceptedHtml.includes("F=\\sigma T^4"));
   assert(!parsed.acceptedHtml.includes("确认 MinerU 有误后"));
   assert(!parsed.acceptedHtml.includes("data-ocr-patch-status-action=\"accepted\""));
@@ -704,6 +705,33 @@ function assertOcrPatchShape(patch) {
   assert(!parsed.rejectedHtml.includes("data-ocr-patch-status-action=\"accepted\""));
   assert.strictEqual(parsed.noopHtml, "");
   assert(!parsed.noopHtml.includes("data-ocr-patch-status-action=\"accepted\""));
+  const mathpixButtonSource = source.slice(
+    source.indexOf('card.querySelectorAll("[data-risk-mathpix]")'),
+    source.indexOf('card.querySelectorAll("[data-review-toggle]")'),
+  );
+  assert(mathpixButtonSource.includes("event.preventDefault();"), "Mathpix block button should consume the click event");
+  assert(mathpixButtonSource.includes("runRiskBlockMathpixFromButton(button)"), "Mathpix block button should use the visible button feedback wrapper");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      const statusBadge = { textContent: "", className: "", title: "" };
+      els.statusBadge = statusBadge;
+      state.busy = true;
+      recognizeRiskBlockWithMathpix("0");
+      const busyStatus = { text: statusBadge.textContent, className: statusBadge.className };
+      state.busy = false;
+      state.pdfDataUrl = "";
+      recognizeRiskBlockWithMathpix("0");
+      const missingPdfStatus = { text: statusBadge.textContent, className: statusBadge.className };
+      return JSON.stringify({ busyStatus, missingPdfStatus });
+    })()`),
+  );
+  assert.strictEqual(result.busyStatus.text, "正在处理");
+  assert(result.busyStatus.className.includes("is-busy"));
+  assert.strictEqual(result.missingPdfStatus.text, "先上传 PDF");
+  assert(result.missingPdfStatus.className.includes("is-error"));
 }
 
 {
@@ -917,6 +945,24 @@ function assertOcrPatchShape(patch) {
   assert(result.corrected.includes("parameters $\\\\eta^A$ by the best tests"), "inline math should be spaced before and after adjacent prose");
   assert(result.corrected.includes("where $\\\\delta=1$ if $(Z,A)=(odd, even)."), "multiple inline math spans should be spaced without changing content");
   assert.strictEqual(result.displayBlocked, false, "display math blocks should not be auto-cleaned");
+}
+
+{
+  const mixedInlineDisplaySource = "$$\nE=mc^2\n$$\nwhere$\\mathcal { G }$ = 1 and$\\zeta$[see Eq. (10.65)], and\nwhere$\\mathcal { H } = 1 - \\zeta [seeEq. (10.66)], and\n$$\n\\Psi = 2\n$$";
+  const result = JSON.parse(
+    call(`(() => {
+      const source = ${JSON.stringify(mixedInlineDisplaySource)};
+      return JSON.stringify({
+        normalized: normalizeInlineMathSpacingOutsideDisplayMath(source),
+        rendered: renderBlockContent(source, { kind: "text", blockIndex: "mixed-inline-display" })
+      });
+    })()`),
+  );
+  assert(result.normalized.includes("where $\\mathcal { G }$ = 1"), "inline math after display math should receive a leading space");
+  assert(result.normalized.includes("and $\\zeta$ [see Eq. (10.65)]"), "inline math before bracketed prose should receive surrounding spaces");
+  assert(result.normalized.includes("where $\\mathcal { H } = 1 - \\zeta$ [seeEq. (10.66)]"), "unclosed inline math before equation references should be repaired");
+  assert(result.rendered.includes('class="math-display"'), "display math should still render as display math");
+  assert(!result.rendered.includes("where$"), "rendered mixed blocks should not keep cramped inline math");
 }
 
 {
@@ -1502,7 +1548,7 @@ function assertOcrPatchShape(patch) {
         dataset: {
           disableWhenClean: "1",
           cleanLabel: "已保存",
-          dirtyLabel: "保存修改并接受"
+          dirtyLabel: "保持修改"
         }
       };
       const container = {
@@ -1532,7 +1578,7 @@ function assertOcrPatchShape(patch) {
   assert.strictEqual(result.cleanState.text, "已保存");
   assert.strictEqual(result.dirtyState.dirty, true);
   assert.strictEqual(result.dirtyState.disabled, false);
-  assert.strictEqual(result.dirtyState.text, "保存修改并接受");
+  assert.strictEqual(result.dirtyState.text, "保持修改");
 }
 
 function setupPreviewPageExpression(blocks) {
@@ -2443,6 +2489,62 @@ function setupPreviewBookExpression(pages) {
   assert.strictEqual(result.style.height, "102px");
   assert.strictEqual(result.scrolled.top, 191);
   assert.strictEqual(result.scrolled.left, 200);
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      const oldCanvas = {
+        scrollTop: 100,
+        scrollLeft: 7,
+        getBoundingClientRect() {
+          return { top: 10, bottom: 510 };
+        }
+      };
+      const oldAnchor = {
+        dataset: { reviewPageBlock: "5:3" },
+        getBoundingClientRect() {
+          return { top: 260, bottom: 300 };
+        }
+      };
+      const current = {
+        querySelector(selector) {
+          return selector === ".review-page-canvas" ? oldCanvas : null;
+        },
+        querySelectorAll(selector) {
+          return selector === "[data-review-page-block]" ? [oldAnchor] : [];
+        }
+      };
+      const newCanvas = {
+        scrollTop: 0,
+        scrollLeft: 0,
+        getBoundingClientRect() {
+          return { top: 20, bottom: 520 };
+        }
+      };
+      const newAnchor = {
+        dataset: { reviewPageBlock: "5:3" },
+        getBoundingClientRect() {
+          return { top: 340, bottom: 380 };
+        }
+      };
+      const next = {
+        querySelector(selector) {
+          return selector === ".review-page-canvas" ? newCanvas : null;
+        },
+        querySelectorAll(selector) {
+          return selector === "[data-review-page-block]" ? [newAnchor] : [];
+        }
+      };
+      const scrollState = captureRightWorkbenchScrollState(current, "5:3");
+      const restored = restoreRightWorkbenchScrollState(next, scrollState);
+      return JSON.stringify({ restored, scrollTop: newCanvas.scrollTop, scrollLeft: newCanvas.scrollLeft, anchorTop: scrollState.anchorTop });
+    })()`),
+  );
+  assert.strictEqual(result.restored, true);
+  assert.strictEqual(result.anchorTop, 250);
+  assert.strictEqual(result.scrollTop, 170, "right workbench refresh should preserve the selected block visual offset");
+  assert.strictEqual(result.scrollLeft, 7);
 }
 
 {
@@ -3702,6 +3804,9 @@ function setupPreviewBookExpression(pages) {
       state.reviewNeedsCorrection.clear();
       state.reviewNeedsCorrection.add("1:1");
       const markedCanvas = renderPageReviewCanvas(entries);
+      state.reviewActionsOpen.clear();
+      state.reviewActionsOpen.add("1:1");
+      const actionsCanvas = renderPageReviewCanvas(entries);
       state.reviewCorrectionOpen.clear();
       state.reviewCorrectionOpen.add("1:1");
       const correctionCanvas = renderPageReviewCanvas(entries);
@@ -3709,6 +3814,7 @@ function setupPreviewBookExpression(pages) {
       return JSON.stringify({
         canvas,
         markedCanvas,
+        actionsCanvas,
         correctionCanvas,
         hotspots,
         selected: Array.from(state.reviewExpanded)
@@ -3727,9 +3833,10 @@ function setupPreviewBookExpression(pages) {
   assert(!canvasResult.canvas.includes("MinerU 渲染"), "selected block should not show the MinerU render pane by default");
   assert(!canvasResult.canvas.includes("已接受校正稿"), "selected block should not show the accepted render pane by default");
   assert(!canvasResult.canvas.includes("Mathpix 识别稿"), "selected block should not show the Mathpix render pane by default");
-  assert(canvasResult.canvas.includes('data-review-needs-correction-toggle="1:1"'), "review block should expose a needs-extra-correction marker");
+  assert(!canvasResult.canvas.includes('data-review-needs-correction-toggle="1:1"'), "selected block should hide correction buttons until the block is clicked again");
+  assert(canvasResult.actionsCanvas.includes('data-review-needs-correction-toggle="1:1"'), "second click should expose a needs-extra-correction marker");
   assert(canvasResult.markedCanvas.includes("needs-extra-correction"), "marked review block should have a visible marker class");
-  assert(canvasResult.markedCanvas.includes('aria-pressed="true"'), "marked review block button should expose pressed state");
+  assert(canvasResult.actionsCanvas.includes('aria-pressed="true"'), "marked review block button should expose pressed state when actions are visible");
   assert(canvasResult.correctionCanvas.includes("selected-block-toolbar"), "correction panel should restore the original block correction UI on demand");
   assert(canvasResult.correctionCanvas.includes('data-risk-mathpix="1"'), "correction panel should expose the Mathpix block action");
   assert(canvasResult.correctionCanvas.includes("查看/编辑 MinerU 源码"), "correction panel should expose source editing");
@@ -3813,15 +3920,19 @@ function setupPreviewBookExpression(pages) {
       };
       const entries = reviewEntriesForCurrentPage();
       const html = renderPageReviewCanvas(entries);
+      state.reviewActionsOpen.clear();
+      state.reviewActionsOpen.add("1:0");
+      const actionHtml = renderPageReviewCanvas(entries);
       const label = inferMissingFigureLabelForBlock(1, "0", reviewSegmentsForPage(1)[0].markdown);
       const labeled = label ? \`\${label} \${reviewSegmentsForPage(1)[0].markdown}\` : "";
       const falsePositiveLabel = inferMissingFigureLabelForBlock(1, "2", reviewSegmentsForPage(1)[2].markdown);
-      return JSON.stringify({ html, label, labeled, falsePositiveLabel });
+      return JSON.stringify({ html, actionHtml, label, labeled, falsePositiveLabel });
     })()`),
   );
   assert.strictEqual(localActions.label, "Fig. 2.2", "figure captions should infer a missing nearby figure label");
   assert(localActions.labeled.startsWith("Fig. 2.2 Selected tests"), "inferred figure label should be prepended to the caption");
-  assert(localActions.html.includes('data-auto-add-figure-label="0"'), "caption block should expose a local figure-label action");
+  assert(!localActions.html.includes('data-auto-add-figure-label="0"'), "caption block should hide local figure-label action until actions are opened");
+  assert(localActions.actionHtml.includes('data-auto-add-figure-label="0"'), "caption block should expose a local figure-label action when actions are opened");
   assert.strictEqual(localActions.falsePositiveLabel, "", "ordinary prose near a Figure reference should not infer a missing figure label");
   assert(!localActions.html.includes('data-auto-add-figure-label="2"'), "ordinary prose should not expose the figure-label action");
   assert(!localActions.html.includes('data-auto-unwrap-linebreaks="2"'), "plain prose cleanup should be automatic rather than exposed as a manual button");
@@ -4054,7 +4165,7 @@ assert(reviewHtml.includes('data-review-item-state="mathpix-draft"'), "new Mathp
 assert(!reviewHtml.includes('class="review-item-state"'), "new Mathpix draft should not add noisy state badges in the toolbar");
 assert(!reviewHtml.includes("待核查"), "review item title should avoid noisy pending copy");
 assert(!reviewHtml.includes("公式被拆散"), "review item title should avoid long risk reason chains");
-assert(reviewHtml.includes("保存修改并接受"), "editing Mathpix Markdown should use the streamlined save-and-accept action");
+assert(reviewHtml.includes("保持修改"), "editing Mathpix Markdown should use the streamlined save action");
 assert(!reviewHtml.includes("应用到校正稿"), "old apply wording should not be shown in block edit UI");
 assert(reviewHtml.includes("New Mathpix draft"), "pending Mathpix draft should be previewed");
 assert(!reviewHtml.includes("Old applied correction</div>"), "old applied correction should not be the visible pending preview");
@@ -4093,6 +4204,15 @@ const escapedDanglingDollarMathRenderHtml = call(`renderBlockContent(${JSON.stri
 )}, { kind: "text", blockIndex: "escaped-dangling-dollar" })`);
 assert(escapedDanglingDollarMathRenderHtml.includes('class="math-display"'), "escaped dangling dollar lines before display math should still render as math");
 assert(!/>\\s*\\$\\s*</.test(escapedDanglingDollarMathRenderHtml), "escaped dangling dollar delimiters should not remain as visible text nodes");
+
+const compactedMathpixSource = call(`cleanMathpixEditableMarkdown(${JSON.stringify(
+  "$$\n\\begin{array} { r l r } { { \\frac { d P _ { \\mathrm { T } } ^ { 0 } } { d t } = - \\operatorname* { l i m } _ { R \\to \\infty } \\int \\tilde { \\tau } ^ { 0 } d ^ { 2 } S _ { j } } } \\\\ & \\end{array}\n$$",
+)})`);
+assert(compactedMathpixSource.includes("\\begin{array}{rlr}"), "editable Mathpix source should compact spaced array column specs");
+assert(compactedMathpixSource.includes("\\frac{d P_{\\mathrm{T}}^{0}}{d t}"), "editable Mathpix source should compact command/braces/subscript spacing");
+assert(compactedMathpixSource.includes("\\operatorname*{lim}_{R \\to \\infty}"), "editable Mathpix source should compact spaced operator names");
+assert(!compactedMathpixSource.includes("\\frac {"), "editable Mathpix source should not keep spaced command braces");
+assert(!compactedMathpixSource.includes("\\mathrm {"), "editable Mathpix source should not keep spaced roman command braces");
 
 const numberedAlignedPatch = JSON.parse(
   call(`(() => {
