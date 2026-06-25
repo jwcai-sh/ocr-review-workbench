@@ -69,6 +69,11 @@ let ocrCorePatchWarningShown = false;
 let mathJaxLoadPromise = null;
 let riskAnalysisTimer = null;
 let riskAnalysisRunId = 0;
+let renderCurrentPageRunId = 0;
+let pagePrefetchTimer = null;
+const pendingPagePreviewRequests = new Map();
+const pendingMathTypesetRoots = new Set();
+let mathTypesetTimer = null;
 
 function getOcrCoreNormalizeMathDelimiters() {
   if (ocrCoreNormalizeMathDelimiters) {
@@ -777,11 +782,15 @@ async function renderCurrentPage() {
   if (!state.pdfDataUrl && !state.mineruInfo) {
     return;
   }
+  const runId = ++renderCurrentPageRunId;
   applyMiddleColumnCollapsedState();
   els.pageList.innerHTML = "";
   const row = document.createElement("article");
   row.className = "page-row";
   const page = await ensureCurrentPagePreview();
+  if (runId !== renderCurrentPageRunId) {
+    return;
+  }
   if (state.middleColumnCollapsed) {
     row.append(renderImageCard(page), renderMiddleColumnRestoreRail(), renderRightWorkbench(page));
   } else {
@@ -797,6 +806,7 @@ async function renderCurrentPage() {
   typesetMath(row);
   syncPdfFocusToExpandedReviewBlock();
   updateAcceptedPatchTopControls();
+  scheduleAdjacentPagePreviewPrefetch();
 }
 
 function createColumnResizer(side) {
@@ -1005,19 +1015,53 @@ async function ensureCurrentPagePreview() {
 }
 
 async function loadPagePreview(pageNumber) {
-  const response = await postJson("/api/ocr/preview-pages", {
+  const requestedPage = Number(pageNumber) || 1;
+  if (pendingPagePreviewRequests.has(requestedPage)) {
+    return pendingPagePreviewRequests.get(requestedPage);
+  }
+  const request = postJson("/api/ocr/preview-pages", {
     name: state.pdfFile?.name || "book.pdf",
     mimeType: state.pdfFile?.type || "application/pdf",
     dataUrl: state.pdfDataUrl,
-    pageNumber,
+    pageNumber: requestedPage,
     maxPages: 1,
     zoom: 1.8,
     includeText: true,
+  }).finally(() => {
+    pendingPagePreviewRequests.delete(requestedPage);
   });
+  pendingPagePreviewRequests.set(requestedPage, request);
+  const response = await request;
   if (!response.ok) {
     throw new Error(response.error || "PDF 页面渲染失败");
   }
   return response;
+}
+
+function scheduleAdjacentPagePreviewPrefetch() {
+  if (!state.pdfDataUrl) {
+    return;
+  }
+  if (pagePrefetchTimer) {
+    clearTimeout(pagePrefetchTimer);
+  }
+  pagePrefetchTimer = setTimeout(() => {
+    pagePrefetchTimer = null;
+    prefetchAdjacentPagePreviews();
+  }, 120);
+}
+
+function prefetchAdjacentPagePreviews() {
+  const total = state.pdfPageCount || getMineruPageCount() || 1;
+  const pages = [state.currentPage + 1, state.currentPage - 1].filter((pageNumber) => pageNumber >= 1 && pageNumber <= total);
+  pages.forEach((pageNumber) => {
+    if (state.pageCache.has(pageNumber) || pendingPagePreviewRequests.has(pageNumber)) {
+      return;
+    }
+    loadPagePreview(pageNumber)
+      .then((preview) => cachePreviewPage(pageNumber, preview))
+      .catch(() => {});
+  });
 }
 
 function cachePreviewPage(pageNumber, preview) {
@@ -6766,14 +6810,28 @@ function typesetMath(root) {
   if (!root || !rootHasMathContent(root)) {
     return;
   }
+  pendingMathTypesetRoots.add(root);
+  if (mathTypesetTimer) {
+    clearTimeout(mathTypesetTimer);
+  }
+  mathTypesetTimer = setTimeout(flushPendingMathTypeset, 80);
+}
+
+function flushPendingMathTypeset() {
+  mathTypesetTimer = null;
+  const roots = Array.from(pendingMathTypesetRoots).filter((root) => root?.isConnected !== false);
+  pendingMathTypesetRoots.clear();
+  if (!roots.length) {
+    return;
+  }
   if (window.MathJax?.typesetPromise) {
-    window.MathJax.typesetPromise([root]).catch(() => {});
+    window.MathJax.typesetPromise(roots).catch(() => {});
     return;
   }
   ensureMathJaxLoaded()
     .then(() => {
       if (window.MathJax?.typesetPromise) {
-        return window.MathJax.typesetPromise([root]);
+        return window.MathJax.typesetPromise(roots);
       }
       return null;
     })
