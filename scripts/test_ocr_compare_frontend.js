@@ -125,14 +125,70 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('class="upload-icon"'));
   assert(ocrCompareHtml.includes('viewBox="0 0 24 24"'));
   assert(!ocrCompareHtml.includes("cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"), "MathJax CDN should be lazy-loaded by ocr-compare.js");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260626-visible-editor-source"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260626-visible-editor-source"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260626-orphan-inline-math"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260626-orphan-inline-math"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
+  assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
+  assert(source.includes("async function fetchApi(path, options = {})"));
   assert(source.includes("ensureMathJaxLoaded().catch((error) => reportMathJaxError(error));"));
   assert(ocrCompareHtml.includes("<div>校对工作台</div>"));
   assert(!ocrCompareHtml.includes("导出原始 MinerU"));
   assert(!ocrCompareHtml.includes("中栏读取已有 MinerU"));
   assert(!source.includes('document.querySelector(".control-band")'), "upload controls should stay visible when the MinerU preview column is collapsed");
+}
+
+{
+  assert.strictEqual(call("apiUrl('/api/health')"), "/api/health", "HTTP-served workbench should use the current origin for API requests");
+
+  const http8790Context = runOcrCompareInContext(
+    createOcrCompareContext({
+      window: {
+        __UMA_RUNTIME_CONFIG__: {},
+        location: { protocol: "http:", port: "8790" },
+        setTimeout() {},
+      },
+    }),
+  );
+  assert.strictEqual(
+    vm.runInContext("apiUrl('/api/health')", http8790Context),
+    "/api/health",
+    "HTTP 8790 should not accidentally post to 8787",
+  );
+
+  const fileContext = runOcrCompareInContext(
+    createOcrCompareContext({
+      window: {
+        __UMA_RUNTIME_CONFIG__: {},
+        location: { protocol: "file:", port: "" },
+        setTimeout() {},
+      },
+    }),
+  );
+  assert.strictEqual(
+    vm.runInContext("apiUrl('/api/health')", fileContext),
+    "http://127.0.0.1:8790/api/health",
+    "file:// workbench should default to the active local 8790 backend",
+  );
+  assert.deepStrictEqual(
+    JSON.parse(vm.runInContext("JSON.stringify(localApiBaseFallbacks())", fileContext)),
+    ["http://127.0.0.1:8790", "http://127.0.0.1:8787"],
+    "file:// workbench should retain 8787 as a fallback local backend",
+  );
+
+  const configuredContext = runOcrCompareInContext(
+    createOcrCompareContext({
+      window: {
+        __UMA_RUNTIME_CONFIG__: { apiBaseUrl: "http://127.0.0.1:8801/" },
+        location: { protocol: "file:", port: "" },
+        setTimeout() {},
+      },
+    }),
+  );
+  assert.strictEqual(
+    vm.runInContext("apiUrl('/api/health')", configuredContext),
+    "http://127.0.0.1:8801/api/health",
+    "explicit runtime API base should override local defaults",
+  );
 }
 
 {
@@ -284,12 +340,26 @@ $$
 & -2 \\frac{\\mathcal{G} m}{r} \\left[ \\mathcal{S}_{+} - \\frac{4}{\\bar{\\gamma}} \\left( \\mathcal{S}_{+} \\bar{\\beta}_{+} + \\mathcal{S}_{-} \\bar{\\beta}_{-} \\right) \\right]
 \\end{aligned}
 $$`;
+  const cleaned = call(`cleanMathpixEditableMarkdown(${JSON.stringify(userCorrectedMathBlock)})`);
   const html = call(`renderBlockContent(${JSON.stringify(userCorrectedMathBlock)}, { kind: "text", blockIndex: "user-corrected-math" })`);
+  assert(
+    cleaned.includes(
+      "where $\\mathcal{G} = 1 - \\zeta + \\zeta \\left( 1 -2 s_{1} \\right) \\left( 1 -2 s_{2} \\right)$ [see Eq. (10.65)], and",
+    ),
+    "manual corrected inline math sentence should keep prose spacing outside $...$",
+  );
   assert(html.includes("For a compact binary system, the waveforms"), "manual corrected math block should preserve first-line prose spacing");
+  assert(html.includes("<p>where $\\mathcal{G}"), "inline where sentence should render as a paragraph, not a display equation");
+  assert(html.includes("where $\\mathcal{G}"), "manual corrected math block should keep a space before inline math");
+  assert(html.includes("$ [see Eq. (10.65)], and"), "manual corrected math block should keep a space before equation references");
   assert(html.includes('class="math-display"'), "manual corrected math block should render display formulas as display blocks");
   assert(html.includes("math-display-equation-tag"), "manual corrected math block should expose equation-number labels outside LaTeX");
   assert(html.includes("(11.115)") && html.includes("(11.116)"), "manual corrected math block should show both equation labels");
   assert(!html.includes("Foracompactbinarysystem"), "manual corrected math block should not show stale collapsed prose");
+  assert(!html.includes("where$"), "manual corrected math block should not collapse text into inline math delimiters");
+  assert(!html.includes("$[seeEq."), "manual corrected math block should not collapse equation reference spacing");
+  assert(!html.includes(")],and"), "manual corrected math block should not collapse punctuation and prose after inline math");
+  assert(!html.includes('<div class="math-display-formula">$$\nwhere $'), "inline where sentence should not be collected into the following display math");
   assert(!html.includes("<p>$$"), "manual corrected math block should not render display delimiters as paragraph text");
   assert(!html.includes("\\\\tag{11.115}") && !html.includes("\\\\tag{11.116}"), "manual corrected math block should strip raw LaTeX tags from visible math source");
 }

@@ -1,14 +1,10 @@
 const RUNTIME_CONFIG = window.__UMA_RUNTIME_CONFIG__ || {};
-const API_BASE =
-  RUNTIME_CONFIG.apiBaseUrl ||
-  RUNTIME_CONFIG.backendUrl ||
-  (window.location.protocol === "file:" || window.location.port !== "8787"
-    ? "http://127.0.0.1:8787"
-    : "");
+const LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"];
+let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260626-visible-editor-source";
+const OCR_COMPARE_BUILD_ID = "20260626-orphan-inline-math";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -300,7 +296,43 @@ function warnOcrCorePatch(message, error) {
 loadOcrCorePatchForBrowser();
 
 function apiUrl(path) {
-  return `${API_BASE}${path}`;
+  return `${apiBase}${path}`;
+}
+
+function resolveApiBase() {
+  const configured = normalizeApiBase(RUNTIME_CONFIG.apiBaseUrl || RUNTIME_CONFIG.backendUrl || "");
+  if (configured) {
+    return configured;
+  }
+  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+    return "";
+  }
+  return LOCAL_API_BASE_CANDIDATES[0];
+}
+
+function normalizeApiBase(base) {
+  return String(base || "").replace(/\/+$/, "");
+}
+
+function localApiBaseFallbacks() {
+  if (RUNTIME_CONFIG.apiBaseUrl || RUNTIME_CONFIG.backendUrl || window.location.protocol !== "file:") {
+    return [apiBase];
+  }
+  return Array.from(new Set([apiBase, ...LOCAL_API_BASE_CANDIDATES].map(normalizeApiBase)));
+}
+
+async function fetchApi(path, options = {}) {
+  let lastError = null;
+  for (const base of localApiBaseFallbacks()) {
+    try {
+      const response = await fetch(`${base}${path}`, options);
+      apiBase = base;
+      return response;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error(`Failed to fetch ${path}`);
 }
 
 function bindElements() {
@@ -347,7 +379,7 @@ function initialize() {
 
 async function refreshRuntimeCapabilities() {
   try {
-    const response = await fetch(apiUrl("/api/health"));
+    const response = await fetchApi("/api/health");
     const data = await response.json();
     state.mathpixConfigured = Boolean(data.mathpixConfigured);
     state.mathpixConfigError = String(data.mathpixConfigError || "");
@@ -3535,11 +3567,10 @@ function normalizeInlineMathSpacingOutsideDisplayMath(markdown) {
 }
 
 function cleanMathpixEditableMarkdown(markdown) {
-  return normalizeMathpixEditableSource(
-    compactLatexSourceSpacing(
-      normalizeInlineMathSpacingOutsideDisplayMath(normalizeMathpixCollapsedProse(String(markdown || ""))),
-    ),
-  ).trim();
+  const proseRepaired = normalizeMathpixEditableSource(
+    normalizeInlineMathSpacingOutsideDisplayMath(normalizeMathpixCollapsedProse(String(markdown || ""))),
+  );
+  return normalizeInlineMathSpacingOutsideDisplayMath(compactLatexSourceSpacing(proseRepaired)).trim();
 }
 
 function normalizeMathpixOcrArtifacts(markdown) {
@@ -3598,9 +3629,38 @@ function compactLatexSourceSpacing(markdown) {
         inDisplayMath = trimmed === "\\]" ? false : !inDisplayMath;
         return line;
       }
-      return inDisplayMath || isLatexDenseSourceLine(line) ? compactLatexSourceLine(line) : line;
+      if (inDisplayMath) {
+        return compactLatexSourceLine(line);
+      }
+      if (isSingleLineDisplayMath(line)) {
+        return compactSingleLineDisplayMathSource(line);
+      }
+      if (hasInlineMathDelimiter(line)) {
+        return compactInlineMathSource(line);
+      }
+      return isLatexDenseSourceLine(line) && isLikelyStandaloneMathLine(trimmed) ? compactLatexSourceLine(line) : line;
     })
     .join("\n");
+}
+
+function isSingleLineDisplayMath(line) {
+  return /^\s*\$\$[\s\S]*\$\$\s*$/.test(String(line || "").trim());
+}
+
+function compactSingleLineDisplayMathSource(line) {
+  return String(line || "").replace(/^(\s*)\$\$([\s\S]*?)\$\$(\s*)$/, (_match, leading, body, trailing) => {
+    return `${leading}$$${compactLatexSourceLine(body)}$$${trailing}`;
+  });
+}
+
+function hasInlineMathDelimiter(line) {
+  return /(^|[^$])\$[^$\n]+?\$/.test(String(line || ""));
+}
+
+function compactInlineMathSource(line) {
+  return String(line || "").replace(/\$([^$\n]+?)\$/g, (_match, body) => {
+    return `$${compactLatexSourceLine(body)}$`;
+  });
 }
 
 function isLatexDenseSourceLine(line) {
@@ -6962,7 +7022,7 @@ function downloadBinaryFile(filename, bytes, mimeType) {
 }
 
 async function postJson(path, body) {
-  const response = await fetch(apiUrl(path), {
+  const response = await fetchApi(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -7682,6 +7742,9 @@ function isOrphanDisplayMathBodyStart(lines, startIndex) {
     return false;
   }
   const blockText = lines.slice(startIndex, closeIndex).join("\n");
+  if (hasInlineMathDelimiter(blockText)) {
+    return false;
+  }
   return /\\tag\{[^}]+\}/.test(blockText) || hasLatexMathEnvironment(blockText) || hasStandaloneEquationLine(blockText);
 }
 
