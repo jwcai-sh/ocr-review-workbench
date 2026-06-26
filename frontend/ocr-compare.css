@@ -190,6 +190,12 @@ textarea {
   background: #edf8f2;
 }
 
+.upload-all-button {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
 .accepted-top-actions {
   min-width: 0;
   display: flex;
@@ -785,7 +791,9 @@ textarea {
   border: 1px solid #cbd5e1;
   border-radius: 8px;
   background: #f8fafc;
-  font: 13px/1.65 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: calc(13px * var(--review-font-scale, 1));
+  line-height: 1.65;
 }
 
 .block-source-editor {
@@ -1044,8 +1052,20 @@ textarea {
   overflow-x: auto;
   padding-right: 0;
   color: #111827;
-  font-size: 17px;
+  font-size: calc(17px * var(--review-font-scale, 1));
   line-height: 1.72;
+}
+
+.review-block-error {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fff1f2;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
 }
 
 .selected-block-toolbar {
@@ -1413,7 +1433,8 @@ textarea {
 
 .review-font-nav-group,
 .review-page-nav-group,
-.review-block-nav-group {
+.review-block-nav-group,
+.review-needs-correction-nav-group {
   min-width: 0;
   min-height: 42px;
   display: flex;
@@ -1445,9 +1466,55 @@ textarea {
   background: #f7fdf9;
 }
 
+.review-needs-correction-nav-group {
+  flex: 1 1 220px;
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
+.review-needs-correction-nav-group.has-items {
+  border-color: #f59e0b;
+}
+
 .review-nav-group-label {
   flex: 0 0 auto;
   color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.review-needs-correction-links {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+}
+
+.review-needs-correction-link {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  color: #9a3412;
+  border: 1px solid #fdba74;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.review-needs-correction-link:hover,
+.review-needs-correction-link:focus-visible,
+.review-needs-correction-link.is-selected {
+  color: #ffffff;
+  border-color: #ea580c;
+  background: #ea580c;
+  outline: none;
+}
+
+.review-needs-correction-empty {
+  color: #9a3412;
   font-size: 12px;
   font-weight: 700;
 }

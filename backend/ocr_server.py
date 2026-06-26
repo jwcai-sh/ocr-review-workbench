@@ -41,7 +41,8 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "appName": SETTINGS.app_name,
                     "service": "ocr-workbench",
-                    "mathpixConfigured": bool(SETTINGS.mathpix_app_id and SETTINGS.mathpix_app_key),
+                    "mathpixConfigured": SETTINGS.mathpix_configured,
+                    "mathpixConfigError": SETTINGS.mathpix_config_error or None,
                 }
             )
             return

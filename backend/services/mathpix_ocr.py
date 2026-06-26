@@ -146,10 +146,42 @@ def _indent_fenced_code_blocks(markdown: str) -> str:
     return re.sub(r"```([A-Za-z0-9_-]*)\n([\s\S]*?)\n```", indent_block, markdown)
 
 
+def _normalize_broken_diacritics(markdown: str) -> str:
+    text = str(markdown or "")
+    diaeresis_map = {
+        "A": "Ä",
+        "E": "Ë",
+        "I": "Ï",
+        "O": "Ö",
+        "U": "Ü",
+        "Y": "Ÿ",
+        "a": "ä",
+        "e": "ë",
+        "i": "ï",
+        "o": "ö",
+        "u": "ü",
+        "y": "ÿ",
+    }
+
+    def replace_vowel(match: re.Match[str]) -> str:
+        return diaeresis_map.get(match.group(1), match.group(1))
+
+    text = re.sub(r"([AEIOUYaeiouy])[\u00a8\u0308](?=[A-Za-z])", replace_vowel, text)
+    text = re.sub(
+        r"\b[Ee]\s*(?:ö|o[\u00a8\u0308]?|o)\s*t\s*v\s*(?:ö|o[\u00a8\u0308]?|[\u00a8\u0308]\s*o|o)\s*s\b",
+        "Eötvös",
+        text,
+    )
+    text = re.sub(r"([A-Za-z])\s*[\u00a8\u0308]\s+(?=[A-Za-z])", r"\1 ", text)
+    text = re.sub(r"(^|[\s([{])[\u00a8\u0308]\s*(?=[A-Za-z])", r"\1", text)
+    return text
+
+
 def _normalize_mathpix_latex(markdown: str) -> str:
     text = _strip_markdown_fence(markdown).strip()
     if not text:
         return ""
+    text = _normalize_broken_diacritics(text)
     text = text.replace(r"\{", "{").replace(r"\}", "}")
     text = text.replace(r"\&", "&")
     text = re.sub(r"\\backslash\b", r"\\", text)
@@ -213,8 +245,13 @@ class MathpixOcrService:
         images = [image for image in images if image]
         if not images:
             return {"ok": False, "error": "未找到已上传图片，请重新上传图片后再试。", "attempts": []}
-        if not SETTINGS.mathpix_app_id or not SETTINGS.mathpix_app_key:
-            return {"ok": False, "error": "未配置 MATHPIX_APP_ID/MATHPIX_APP_KEY。", "attempts": []}
+        if not SETTINGS.mathpix_configured:
+            error = SETTINGS.mathpix_config_error or "未配置 MATHPIX_APP_ID/MATHPIX_APP_KEY。"
+            return {
+                "ok": False,
+                "error": error,
+                "attempts": [{"provider": "mathpix", "model": SETTINGS.mathpix_model, "status": "error", "error": error}],
+            }
 
         started_at = time.perf_counter()
         results: list[dict[str, Any]] = []
@@ -236,8 +273,8 @@ class MathpixOcrService:
                     SETTINGS.mathpix_api_url,
                     headers={
                         "Content-Type": "application/json",
-                        "app_id": SETTINGS.mathpix_app_id,
-                        "app_key": SETTINGS.mathpix_app_key,
+                        "app_id": SETTINGS.mathpix_app_id.strip(),
+                        "app_key": SETTINGS.mathpix_app_key.strip(),
                     },
                     json=request_body,
                     timeout=max(1.0, SETTINGS.mathpix_timeout_seconds),

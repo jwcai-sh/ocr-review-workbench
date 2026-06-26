@@ -85,6 +85,9 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareCss.includes("position: sticky"));
   assert(ocrCompareCss.includes(".control-column-pdf"));
   assert(ocrCompareCss.includes(".upload-button.primary-button"));
+  assert(ocrCompareCss.includes(".upload-all-button"));
+  assert(ocrCompareCss.includes("font-size: calc(17px * var(--review-font-scale, 1));"));
+  assert(ocrCompareCss.includes("font-size: calc(13px * var(--review-font-scale, 1));"));
   assert(ocrCompareCss.includes(".accepted-top-actions"));
   assert(ocrCompareCss.includes(".accepted-action-button"));
   assert(ocrCompareCss.includes(".upload-icon svg"));
@@ -93,6 +96,8 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareCss.includes("grid-template-rows: auto minmax(0, 1fr);"));
   assert(ocrCompareCss.includes(".review-page-canvas"));
   assert(ocrCompareCss.includes("--review-font-scale"));
+  assert(ocrCompareCss.includes(".review-needs-correction-nav-group"));
+  assert(ocrCompareCss.includes(".review-needs-correction-link"));
   assert(ocrCompareCss.includes(".math-display-equation-tag"));
   assert(ocrCompareCss.includes(".review-page-block.is-selected"));
   assert(ocrCompareCss.includes(".page-block-hotspot"));
@@ -102,11 +107,16 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareCss.includes(".page-list"));
   assert(ocrCompareCss.includes("overflow: visible"));
   assert(ocrCompareHtml.includes('id="contentListInput"'));
+  assert(ocrCompareHtml.includes('id="requiredFilesInput"'));
   assert(ocrCompareHtml.includes('id="pickContentListButton"'));
+  assert(ocrCompareHtml.includes('id="pickRequiredFilesButton"'));
   assert(ocrCompareHtml.includes('class="control-column control-column-pdf"'));
   assert(ocrCompareHtml.includes("上传 PDF"));
   assert(ocrCompareHtml.includes("上传 middle.json"));
-  assert(ocrCompareHtml.includes("上传 content_list (可选)"));
+  assert(ocrCompareHtml.includes("上传 content_list"));
+  assert(ocrCompareHtml.includes("一键上传所需文件"));
+  assert(!ocrCompareHtml.includes("上传 content_list (可选)"));
+  assert(!ocrCompareHtml.includes("OCR Preview Lab"));
   assert(ocrCompareHtml.includes('id="previewAcceptedBookButton"'));
   assert(/id="previewAcceptedBookButton"[^>]*hidden/.test(ocrCompareHtml), "book preview button should stay hidden while it is not part of the main workflow");
   assert(ocrCompareHtml.includes('id="downloadAcceptedCorrectedButton"'));
@@ -150,12 +160,38 @@ function runOcrCompareInContext(testContext) {
 }
 
 {
+  const batchUpload = JSON.parse(
+    call(`(() => {
+      const files = [
+        { name: "book_content_list.json", type: "application/json" },
+        { name: "origin.pdf", type: "application/pdf" },
+        { name: "book_middle.json", type: "application/json" },
+      ];
+      const picked = identifyRequiredUploadFiles(files);
+      const missing = identifyRequiredUploadFiles([{ name: "origin.pdf", type: "application/pdf" }]);
+      return JSON.stringify({
+        pdf: picked.pdf && picked.pdf.name,
+        mineru: picked.mineru && picked.mineru.name,
+        contentList: picked.contentList && picked.contentList.name,
+        missingMineru: missing.mineru === null,
+        missingContentList: missing.contentList === null,
+      });
+    })()`),
+  );
+  assert.strictEqual(batchUpload.pdf, "origin.pdf");
+  assert.strictEqual(batchUpload.mineru, "book_middle.json");
+  assert.strictEqual(batchUpload.contentList, "book_content_list.json");
+  assert.strictEqual(batchUpload.missingMineru, true);
+  assert.strictEqual(batchUpload.missingContentList, true);
+}
+
+{
   const mineruUploadSource = source.slice(
-    source.indexOf("async function handleMineruChange"),
-    source.indexOf("async function handleContentListChange"),
+    source.indexOf("async function loadMineruFile"),
+    source.indexOf("async function loadContentListFile"),
   );
   const contentListUploadSource = source.slice(
-    source.indexOf("async function handleContentListChange"),
+    source.indexOf("async function loadContentListFile"),
     source.indexOf("function resetPage"),
   );
   assert(mineruUploadSource.includes("analyzeCurrentMineruRiskPage();"));
@@ -711,6 +747,8 @@ function assertOcrPatchShape(patch) {
   );
   assert(mathpixButtonSource.includes("event.preventDefault();"), "Mathpix block button should consume the click event");
   assert(mathpixButtonSource.includes("runRiskBlockMathpixFromButton(button)"), "Mathpix block button should use the visible button feedback wrapper");
+  assert(source.includes("Mathpix 未配置：请设置 MATHPIX_APP_ID/MATHPIX_APP_KEY 后重启服务。"));
+  assert(ocrCompareCss.includes(".review-block-error"));
 }
 
 {
@@ -732,6 +770,66 @@ function assertOcrPatchShape(patch) {
   assert(result.busyStatus.className.includes("is-busy"));
   assert.strictEqual(result.missingPdfStatus.text, "先上传 PDF");
   assert(result.missingPdfStatus.className.includes("is-error"));
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      const statusBadge = { textContent: "", className: "", title: "" };
+      els.statusBadge = statusBadge;
+      state.currentPage = 1;
+      state.busy = false;
+      state.mathpixConfigured = false;
+      state.mathpixConfigError = "";
+      state.pdfDataUrl = "";
+      state.mineruInfo = null;
+      state.mathpixBlockErrors.clear();
+      recognizeRiskBlockWithMathpix("0");
+      const risk = {
+        blockIndex: "0",
+        bbox: [0, 0, 100, 50],
+        pageSize: [100, 100],
+        reasons: ["display_math_block"],
+      };
+      const segment = { blockIndex: "0", markdown: "$$\\\\nE=mc^2\\\\n$$", kind: "interline_equation" };
+      const html = renderReviewItem(segment, risk, "", false, "", null, { mathpixError: getMathpixBlockError(1, "0") });
+      const payload = {
+        statusText: statusBadge.textContent,
+        statusTitle: statusBadge.title,
+        error: getMathpixBlockError(1, "0"),
+        html,
+      };
+      state.mathpixConfigError = "MATHPIX_APP_ID/MATHPIX_APP_KEY 仍是占位符，请替换为真实 Mathpix 凭据。";
+      recognizeRiskBlockWithMathpix("1");
+      const invalidConfigRisk = {
+        blockIndex: "1",
+        bbox: [0, 0, 100, 50],
+        pageSize: [100, 100],
+        reasons: ["display_math_block"],
+      };
+      const invalidConfigHtml = renderReviewItem(
+        { blockIndex: "1", markdown: "$$\\\\na=b\\\\n$$", kind: "interline_equation" },
+        invalidConfigRisk,
+        "",
+        false,
+        "",
+        null,
+        { mathpixError: getMathpixBlockError(1, "1") },
+      );
+      const invalidConfigError = getMathpixBlockError(1, "1");
+      state.mathpixConfigured = null;
+      state.mathpixConfigError = "";
+      state.mathpixBlockErrors.clear();
+      return JSON.stringify({ ...payload, invalidConfigHtml, invalidConfigError });
+    })()`),
+  );
+  assert.strictEqual(result.statusText, "Mathpix 未配置");
+  assert(result.statusTitle.includes("MATHPIX_APP_ID"));
+  assert(result.error.includes("MATHPIX_APP_ID"));
+  assert(result.html.includes("Mathpix 未配置"));
+  assert(result.html.includes("review-block-error"));
+  assert(result.invalidConfigError.includes("占位符"));
+  assert(result.invalidConfigHtml.includes("Mathpix 配置无效"));
 }
 
 {
@@ -778,8 +876,11 @@ function assertOcrPatchShape(patch) {
           };
         }
       };
+      state.reviewNeedsCorrection.clear();
+      state.reviewNeedsCorrection.add("1:0");
       applyMathpixBlockEdit("0", trigger);
       const preview = buildAcceptedPatchPreviewForPage(1);
+      const needsNav = renderReviewNavigationBar(reviewEntriesForCurrentPage());
       return JSON.stringify({
         patches: state.ocrPatches.map((patch) => ({
           patchId: patch.patchId,
@@ -789,6 +890,8 @@ function assertOcrPatchShape(patch) {
           replacedByPatchId: patch.metadata?.replacedByPatchId || ""
         })),
         draftExists: getMathpixBlockDrafts(1, false).has("0"),
+        needsRemaining: Array.from(state.reviewNeedsCorrection),
+        needsNav,
         override: getBlockOverrides(1, false).get("0"),
         preview
       });
@@ -803,6 +906,8 @@ function assertOcrPatchShape(patch) {
   assert.strictEqual(oldAccepted.replacedByPatchId, humanAccepted.patchId);
   assert.strictEqual(mathpixDraft.status, "rejected");
   assert.strictEqual(result.draftExists, false);
+  assert.deepStrictEqual(result.needsRemaining, [], "saving an accepted edit should clear the extra-correction marker");
+  assert(result.needsNav.includes("待校正 0"), "needs-correction nav count should decrement after saving an accepted edit");
   assert.strictEqual(result.override, "Edited Markdown accepted correction");
   assert.strictEqual(result.preview.ok, true);
   assert.strictEqual(result.preview.appliedPatchCount, 1);
@@ -960,9 +1065,86 @@ function assertOcrPatchShape(patch) {
   );
   assert(result.normalized.includes("where $\\mathcal { G }$ = 1"), "inline math after display math should receive a leading space");
   assert(result.normalized.includes("and $\\zeta$ [see Eq. (10.65)]"), "inline math before bracketed prose should receive surrounding spaces");
-  assert(result.normalized.includes("where $\\mathcal { H } = 1 - \\zeta$ [seeEq. (10.66)]"), "unclosed inline math before equation references should be repaired");
+  assert(result.normalized.includes("where $\\mathcal { H } = 1 - \\zeta$ [see Eq. (10.66)]"), "unclosed inline math before equation references should be repaired and reference spacing normalized");
+  assert(!result.normalized.includes("$["), "inline math should not be glued to bracketed references");
+  assert(!result.normalized.includes("seeEq."), "equation references should keep a space between see and Eq.");
   assert(result.rendered.includes('class="math-display"'), "display math should still render as display math");
   assert(!result.rendered.includes("where$"), "rendered mixed blocks should not keep cramped inline math");
+}
+
+{
+  const referenceListBlock = {
+    type: "list",
+    lines: [
+      { spans: [{ content: "Adelberger, E. G., Heckel, B. R., Hoedl, S., Hoyle, C. D., et al. 2007. Particle-physics" }] },
+      { spans: [{ content: "implications of a recent test of the gravitational inverse-square law. Phys. Rev. Lett., 98," }] },
+      { spans: [{ content: "131104, ArXiv e-prints hep-ph/0611223." }] },
+      { spans: [{ content: "Agathos, M., Del Pozzo, W., Li, T. G. F., Van Den Broeck, C., et al. 2014. TIGER: A" }] },
+      { spans: [{ content: "data analysis pipeline for testing the strong-field dynamics of general relativity." }] },
+    ],
+  };
+  const result = call(`blockToMarkdown(${JSON.stringify(referenceListBlock)})`);
+  assert(!result.includes("- implications"), "reference continuation lines should not become separate bullets");
+  assert(result.includes("Particle-physics implications"), "reference continuation lines should be joined into the same entry");
+  assert(result.includes("\n\nAgathos"), "new reference entries should remain separated");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 43;
+      state.contentListItems = [];
+      state.pdfTextPageCache.clear();
+      state.mineruInfo = {
+        pdf_info: Array.from({ length: 43 }, (_unused, index) => index === 42
+          ? {
+              page_size: [612, 792],
+              para_blocks: [
+                { type: "title", bbox: [250, 96, 360, 120], lines: [{ spans: [{ content: "References" }] }] }
+              ]
+            }
+          : { page_size: [612, 792], para_blocks: [] })
+      };
+      state.pdfTextPageCache.set(43, {
+        pageSize: [612, 792],
+        textBlocks: [
+          { text: "References", bbox: [250, 96, 360, 120] },
+          { text: "Anninos, P., Hobill, D., Seidel, E., Smarr, L., and Suen, W.-M. 1993. Collision of two black holes. Phys. Rev. Lett., 71, 2851-2854, ArXiv e-prints gr-qc/9309016.", bbox: [80, 160, 540, 205] },
+          { text: "Antia, H. M., Chitre, S. M., and Gough, D. O. 2008. Temporal variations in the Sun's rotational kinetic energy. Astron. Astrophys., 477, 657-663, ArXiv e-prints 0711.0799.", bbox: [80, 214, 540, 260] }
+        ]
+      });
+      const risks = detectRiskCandidatesForPage(43);
+      return JSON.stringify(risks.map((risk) => ({
+        blockIndex: risk.blockIndex,
+        text: risk.text,
+        reasons: risk.reasons,
+        syntheticLabel: risk.syntheticLabel
+      })));
+    })()`),
+  );
+  const pdfReferenceCandidate = result.find((risk) => risk.blockIndex === "pdf-reference-text-43");
+  assert(pdfReferenceCandidate, "PDF text layer reference entries should become a supplemental review candidate when middle only has the heading");
+  assert(pdfReferenceCandidate.reasons.includes("pdf_text_reference_supplemental"));
+  assert.strictEqual(pdfReferenceCandidate.syntheticLabel, "PDF 参考文献候选");
+  assert(pdfReferenceCandidate.text.includes("Anninos"));
+  assert(pdfReferenceCandidate.text.includes("\n\nAntia"), "PDF reference entries should remain separated by entry");
+}
+
+{
+  const collapsedMathpixSource = "Foracompactbinarysystem,thewaveforms$\\tilde{h}^{j k}$and$\\Psi$aregivento therequiredorders\nwhere$\\mathcal{G}=1-\\zeta$[seeEq. (10.65)], and";
+  const result = JSON.parse(
+    call(`(() => {
+      const source = ${JSON.stringify(collapsedMathpixSource)};
+      return JSON.stringify({
+        cleaned: cleanMathpixEditableMarkdown(source),
+        rendered: renderBlockContent(source, { kind: "text", blockIndex: "collapsed-mathpix" })
+      });
+    })()`),
+  );
+  assert(result.cleaned.includes("For a compact binary system, the waveforms $\\tilde{h}^{j k}$ and $\\Psi$ are given to the required orders"));
+  assert(result.cleaned.includes("where $\\mathcal{G}=1-\\zeta$ [see Eq. (10.65)], and"));
+  assert(!result.rendered.includes("Foracompactbinarysystem"), "rendered stale Mathpix text should not keep collapsed prose");
+  assert(!result.rendered.includes("seeEq."), "rendered stale Mathpix text should normalize reference spacing");
 }
 
 {
@@ -3800,9 +3982,11 @@ function setupPreviewBookExpression(pages) {
         }
       ];
       expandOnlyReviewBlock(1, "1");
+      const emptyNeedsNav = renderReviewNavigationBar(entries);
       const canvas = renderPageReviewCanvas(entries);
       state.reviewNeedsCorrection.clear();
       state.reviewNeedsCorrection.add("1:1");
+      const needsNav = renderReviewNavigationBar(entries);
       const markedCanvas = renderPageReviewCanvas(entries);
       state.reviewActionsOpen.clear();
       state.reviewActionsOpen.add("1:1");
@@ -3813,6 +3997,8 @@ function setupPreviewBookExpression(pages) {
       const hotspots = renderPdfBlockHotspots(entries);
       return JSON.stringify({
         canvas,
+        emptyNeedsNav,
+        needsNav,
         markedCanvas,
         actionsCanvas,
         correctionCanvas,
@@ -3822,6 +4008,10 @@ function setupPreviewBookExpression(pages) {
     })()`),
   );
   assert(canvasResult.canvas.includes('class="review-list review-page-canvas markdown-body"'), "v2 review should render a page canvas");
+  assert(canvasResult.emptyNeedsNav.includes("待校正 0"), "needs-correction nav should show zero when no current-page blocks are marked");
+  assert(canvasResult.needsNav.includes("待校正 1"), "needs-correction nav should count current-page marked blocks");
+  assert(canvasResult.needsNav.includes('data-review-needs-correction-jump="1:1"'), "needs-correction nav should expose a jump button");
+  assert(canvasResult.needsNav.includes(">2</button>"), "needs-correction nav should use the marked block display index");
   assert(canvasResult.canvas.includes('data-review-page-block="1:0"'), "plain paragraph block should be present in the full-page canvas");
   assert(canvasResult.canvas.includes('data-review-page-block="1:1"'), "formula block should be present in the full-page canvas");
   assert(canvasResult.canvas.includes('data-review-page-block="1:2"'), "image block without bbox should still be present in the full-page canvas");
@@ -4214,6 +4404,14 @@ assert(compactedMathpixSource.includes("\\operatorname*{lim}_{R \\to \\infty}"),
 assert(!compactedMathpixSource.includes("\\frac {"), "editable Mathpix source should not keep spaced command braces");
 assert(!compactedMathpixSource.includes("\\mathrm {"), "editable Mathpix source should not keep spaced roman command braces");
 
+const compactedMathpixProseSource = call(`cleanMathpixEditableMarkdown(${JSON.stringify(
+  "Assuming the1 \\\\sigma$bound of $| \\\\eta | < 2 \\\\times 10 ^{- 13}$ from the latest summary of Eöt-Wash experiments, we show the various $\\\\eta^{A}$ parameters.",
+)})`);
+assert(/the 1 \$\\sigma\$ bound/.test(compactedMathpixProseSource), "editable Mathpix source should repair a broken textual sigma bound");
+assert(/\$\|\\eta\| < 2 \\times 10\^{-13}\$/.test(compactedMathpixProseSource), "editable Mathpix source should compact harmless inline LaTeX spacing");
+assert(!compactedMathpixProseSource.includes("10 ^{- 13}"), "editable Mathpix source should remove exponent sign spacing");
+assert(compactedMathpixProseSource.includes("Eöt-Wash"), "Markdown prose should keep Unicode accents because the renderer escapes raw HTML and does not render LaTeX text accents outside math");
+
 const numberedAlignedPatch = JSON.parse(
   call(`(() => {
     state.ocrPatches = [];
@@ -4287,6 +4485,27 @@ const preservedCompleteProse = JSON.parse(
 );
 assert(preservedCompleteProse.normalizedText.includes("Müller"), "Mathpix prose correction should keep useful corrected text");
 assert(preservedCompleteProse.normalizedText.includes("incorrect (Wolf et al., 2011)."), "Mathpix prose correction should preserve missing original tail text");
+
+const normalizedBrokenDiacritics = JSON.parse(
+  call(`(() => {
+    state.ocrPatches = [];
+    const direct = normalizeMathpixBrokenDiacritics("laboratory Eotv¨os experiments, gravitational interactions are¨ totally irrelevant.");
+    const spaced = normalizeMathpixBrokenDiacritics("The Eotv¨ os experiment.");
+    const patch = createAndStoreDraftOcrPatch({
+      pageNo: 43,
+      blockIndex: "accented-name",
+      oldText: "laboratory Eotvos experiments, gravitational interactions are totally irrelevant.",
+      newText: "laboratory Eotv¨os experiments, gravitational interactions are¨ totally irrelevant.",
+      source: "mathpix"
+    });
+    return JSON.stringify({ direct, spaced, patchText: patch.normalizedText });
+  })()`),
+);
+assert(normalizedBrokenDiacritics.direct.includes("laboratory Eötvös experiments"), "Mathpix broken Eotv¨os should normalize to Eötvös");
+assert(normalizedBrokenDiacritics.direct.includes("interactions are totally irrelevant"), "orphan diaeresis should not drift into the next word");
+assert(normalizedBrokenDiacritics.spaced.includes("The Eötvös experiment."), "spaced broken diaeresis in Eötvös should normalize");
+assert(normalizedBrokenDiacritics.patchText.includes("laboratory Eötvös experiments"), "stored Mathpix draft patch should normalize known broken diacritics");
+assert(!normalizedBrokenDiacritics.patchText.includes("are¨ totally"), "stored Mathpix draft patch should drop orphan diaeresis marks");
 
 const preservedFigurePatch = JSON.parse(
   call(`(() => {

@@ -11,7 +11,6 @@
     <header class="ocr-header">
       <a class="back-link" href="./index.html" aria-label="返回智能体首页">←</a>
       <div>
-        <p>OCR Preview Lab</p>
         <h1>OCR 三栏对照</h1>
       </div>
       <span id="statusBadge" class="status-badge">Ready</span>
@@ -21,6 +20,7 @@
       <input id="pdfInput" class="hidden-input" type="file" accept=".pdf,application/pdf,image/*">
       <input id="mineruInput" class="hidden-input" type="file" accept=".json,application/json">
       <input id="contentListInput" class="hidden-input" type="file" accept=".json,application/json">
+      <input id="requiredFilesInput" class="hidden-input" type="file" accept=".pdf,application/pdf,.json,application/json" multiple>
       <div class="control-column control-column-pdf" aria-label="上传 OCR 输入文件">
         <button id="pickPdfButton" class="primary-button upload-button" type="button">
           <span class="upload-icon" aria-hidden="true">
@@ -50,7 +50,17 @@
               <path d="M5 15v4h14v-4"></path>
             </svg>
           </span>
-          <span>上传 content_list (可选)</span>
+          <span>上传 content_list</span>
+        </button>
+        <button id="pickRequiredFilesButton" class="secondary-button upload-button upload-all-button" type="button">
+          <span class="upload-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M12 3v12"></path>
+              <path d="m7 8 5-5 5 5"></path>
+              <path d="M5 15v4h14v-4"></path>
+            </svg>
+          </span>
+          <span>一键上传所需文件</span>
         </button>
         <div class="accepted-top-actions" aria-label="accepted 校正稿操作">
           <button id="previewAcceptedBookButton" class="secondary-button accepted-action-button" type="button" data-preview-accepted-book-patches disabled hidden>
@@ -97,6 +107,6 @@
       }
     };
   </script>
-  <script src="./ocr-compare.js"></script>
+  <script src="./ocr-compare.js?v=20260626-reference-candidates"></script>
 </body>
 </html>

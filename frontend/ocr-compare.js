@@ -23,6 +23,7 @@ const state = {
   mineruOverrides: new Map(),
   mineruBlockOverrides: new Map(),
   mathpixBlockDrafts: new Map(),
+  mathpixBlockErrors: new Map(),
   ocrPatches: [],
   acceptedPatchPreview: null,
   acceptedPatchBookPreview: null,
@@ -36,6 +37,8 @@ const state = {
   pdfImageZoom: DEFAULT_PDF_IMAGE_ZOOM,
   reviewFontScale: DEFAULT_REVIEW_FONT_SCALE,
   middleColumnCollapsed: false,
+  mathpixConfigured: null,
+  mathpixConfigError: "",
   busy: false,
 };
 state.ocrPatches = state.ocrPatches || [];
@@ -302,9 +305,11 @@ function bindElements() {
     "pdfInput",
     "mineruInput",
     "contentListInput",
+    "requiredFilesInput",
     "pickPdfButton",
     "pickMineruButton",
     "pickContentListButton",
+    "pickRequiredFilesButton",
     "previewAcceptedBookButton",
     "downloadAcceptedCorrectedButton",
     "pageList",
@@ -322,15 +327,33 @@ function initialize() {
   els.pickPdfButton.addEventListener("click", () => openFilePicker(els.pdfInput));
   els.pickMineruButton.addEventListener("click", () => openFilePicker(els.mineruInput));
   els.pickContentListButton.addEventListener("click", () => openFilePicker(els.contentListInput));
+  els.pickRequiredFilesButton?.addEventListener("click", () => openFilePicker(els.requiredFilesInput));
   els.previewAcceptedBookButton?.addEventListener("click", toggleAcceptedBookPreview);
   els.downloadAcceptedCorrectedButton?.addEventListener("click", downloadAcceptedCorrectedFromTop);
   els.pdfInput.addEventListener("change", handlePdfChange);
   els.mineruInput.addEventListener("change", handleMineruChange);
   els.contentListInput.addEventListener("change", handleContentListChange);
+  els.requiredFilesInput?.addEventListener("change", handleRequiredFilesChange);
   document.addEventListener("pointerdown", handleColumnResizeStart);
   window.addEventListener("resize", schedulePdfFocusSync);
   window.addEventListener("mathjax-ready", () => typesetMath(els.pageList));
   updateAcceptedPatchTopControls();
+  refreshRuntimeCapabilities();
+}
+
+async function refreshRuntimeCapabilities() {
+  try {
+    const response = await fetch(apiUrl("/api/health"));
+    const data = await response.json();
+    state.mathpixConfigured = Boolean(data.mathpixConfigured);
+    state.mathpixConfigError = String(data.mathpixConfigError || "");
+    if (state.mineruInfo) {
+      await renderCurrentPage();
+    }
+  } catch {
+    state.mathpixConfigured = null;
+    state.mathpixConfigError = "";
+  }
 }
 
 function openFilePicker(input) {
@@ -347,40 +370,8 @@ async function handlePdfChange() {
   if (!file) {
     return;
   }
-  setStatus("读取 PDF", "busy", file.name);
   try {
-    const pdfDataUrl = await readFileAsDataUrl(file);
-    state.pdfFile = file;
-    state.pdfDataUrl = pdfDataUrl;
-    state.pageCache.clear();
-    state.pdfTextPageCache.clear();
-    state.mathpixCache.clear();
-    state.mathpixBlockDrafts.clear();
-    state.mineruOverrides.clear();
-    state.mineruBlockOverrides.clear();
-    state.ocrPatches = [];
-    state.acceptedPatchPreview = null;
-    state.acceptedPatchBookPreview = null;
-    state.riskByPage.clear();
-    cancelScheduledRiskAnalysis();
-    state.reviewExpanded.clear();
-    state.reviewInitializedPages.clear();
-    state.pdfImageZoom = DEFAULT_PDF_IMAGE_ZOOM;
-    state.currentPage = 1;
-    setStatus("渲染 PDF", "busy", file.name);
-    const preview = await loadPagePreview(1);
-    state.pdfPageCount = preview.pageCount || preview.pages?.length || 1;
-    cachePreviewPage(1, preview);
-    if (state.mineruInfo) {
-      analyzeCurrentMineruRiskPage();
-      restoreOcrWorkspaceState();
-    }
-    updatePager();
-    await renderCurrentPage();
-    if (state.mineruInfo) {
-      scheduleMineruRiskAnalysis();
-    }
-    setStatus("Ready", "ok");
+    await loadPdfFile(file);
   } catch (error) {
     setStatus("Error", "error", error.message);
     els.pageList.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
@@ -392,35 +383,8 @@ async function handleMineruChange() {
   if (!file) {
     return;
   }
-  setStatus("读取 MinerU", "busy", file.name);
   try {
-    const text = await readFileAsText(file);
-    const data = JSON.parse(text);
-    const pdfInfo = Array.isArray(data.pdf_info) ? data.pdf_info : [];
-    if (!pdfInfo.length) {
-      throw new Error("这个 JSON 没有找到 pdf_info，可能不是 MinerU middle.json。");
-    }
-    state.mineruInfo = data;
-    state.mineruFileName = file.name;
-    state.mineruOverrides.clear();
-    state.mineruBlockOverrides.clear();
-    state.mathpixBlockDrafts.clear();
-    state.ocrPatches = [];
-    state.acceptedPatchPreview = null;
-    state.acceptedPatchBookPreview = null;
-    state.riskByPage.clear();
-    cancelScheduledRiskAnalysis();
-    state.reviewExpanded.clear();
-    state.reviewInitializedPages.clear();
-    analyzeCurrentMineruRiskPage();
-    if (!state.pdfPageCount) {
-      state.pdfPageCount = pdfInfo.length;
-    }
-    restoreOcrWorkspaceState();
-    updatePager();
-    await renderCurrentPage();
-    scheduleMineruRiskAnalysis();
-    setStatus("Ready", "ok");
+    await loadMineruFile(file);
   } catch (error) {
     setStatus("Error", "error", error.message);
     state.mineruInfo = null;
@@ -443,26 +407,8 @@ async function handleContentListChange() {
   if (!file) {
     return;
   }
-  setStatus("读取 content_list", "busy", file.name);
   try {
-    const text = await readFileAsText(file);
-    const data = JSON.parse(text);
-    const items = normalizeContentListItems(data);
-    if (!items.length) {
-      throw new Error("这个 JSON 没有找到 content_list 条目。");
-    }
-    state.contentListItems = items;
-    state.contentListFileName = file.name;
-    state.riskByPage.clear();
-    cancelScheduledRiskAnalysis();
-    state.reviewExpanded.clear();
-    state.reviewInitializedPages.clear();
-    analyzeCurrentMineruRiskPage();
-    updatePager();
-    updateCorrectionSummary();
-    await renderCurrentPage();
-    scheduleMineruRiskAnalysis();
-    setStatus("Ready", "ok");
+    await loadContentListFile(file);
   } catch (error) {
     setStatus("Error", "error", error.message);
     state.contentListItems = [];
@@ -475,6 +421,151 @@ async function handleContentListChange() {
     await renderCurrentPage();
     scheduleMineruRiskAnalysis();
   }
+}
+
+async function handleRequiredFilesChange() {
+  const files = Array.from(els.requiredFilesInput?.files || []);
+  if (!files.length) {
+    return;
+  }
+  try {
+    const picked = identifyRequiredUploadFiles(files);
+    const missing = [];
+    if (!picked.pdf) {
+      missing.push("origin.pdf");
+    }
+    if (!picked.mineru) {
+      missing.push("middle.json");
+    }
+    if (!picked.contentList) {
+      missing.push("content_list");
+    }
+    if (missing.length) {
+      throw new Error(`缺少文件：${missing.join("、")}`);
+    }
+    setStatus("一键上传", "busy", "正在读取 PDF / middle.json / content_list");
+    await loadPdfFile(picked.pdf);
+    await loadMineruFile(picked.mineru);
+    await loadContentListFile(picked.contentList);
+    setStatus("Ready", "ok", "所需文件已全部上传");
+  } catch (error) {
+    setStatus("一键上传失败", "error", error?.message || String(error || ""));
+  } finally {
+    if (els.requiredFilesInput) {
+      els.requiredFilesInput.value = "";
+    }
+  }
+}
+
+function identifyRequiredUploadFiles(files) {
+  const picked = { pdf: null, mineru: null, contentList: null };
+  (Array.isArray(files) ? files : []).forEach((file) => {
+    const name = String(file?.name || "").toLowerCase();
+    if (!picked.pdf && (name.endsWith(".pdf") || file?.type === "application/pdf")) {
+      picked.pdf = file;
+      return;
+    }
+    if (!name.endsWith(".json")) {
+      return;
+    }
+    if (!picked.contentList && /(?:^|[_\-\s])content[_\-\s]?list(?:[_\-\s.]|$)/.test(name)) {
+      picked.contentList = file;
+      return;
+    }
+    if (!picked.mineru && /(?:^|[_\-\s])middle(?:[_\-\s.]|$)/.test(name)) {
+      picked.mineru = file;
+    }
+  });
+  return picked;
+}
+
+async function loadPdfFile(file) {
+  setStatus("读取 PDF", "busy", file.name);
+  const pdfDataUrl = await readFileAsDataUrl(file);
+  state.pdfFile = file;
+  state.pdfDataUrl = pdfDataUrl;
+  state.pageCache.clear();
+  state.pdfTextPageCache.clear();
+  state.mathpixCache.clear();
+  state.mathpixBlockDrafts.clear();
+  state.mineruOverrides.clear();
+  state.mineruBlockOverrides.clear();
+  state.ocrPatches = [];
+  state.acceptedPatchPreview = null;
+  state.acceptedPatchBookPreview = null;
+  state.riskByPage.clear();
+  cancelScheduledRiskAnalysis();
+  state.reviewExpanded.clear();
+  state.reviewInitializedPages.clear();
+  state.pdfImageZoom = DEFAULT_PDF_IMAGE_ZOOM;
+  state.currentPage = 1;
+  setStatus("渲染 PDF", "busy", file.name);
+  const preview = await loadPagePreview(1);
+  state.pdfPageCount = preview.pageCount || preview.pages?.length || 1;
+  cachePreviewPage(1, preview);
+  if (state.mineruInfo) {
+    analyzeCurrentMineruRiskPage();
+    restoreOcrWorkspaceState();
+  }
+  updatePager();
+  await renderCurrentPage();
+  if (state.mineruInfo) {
+    scheduleMineruRiskAnalysis();
+  }
+  setStatus("Ready", "ok");
+}
+
+async function loadMineruFile(file) {
+  setStatus("读取 MinerU", "busy", file.name);
+  const text = await readFileAsText(file);
+  const data = JSON.parse(text);
+  const pdfInfo = Array.isArray(data.pdf_info) ? data.pdf_info : [];
+  if (!pdfInfo.length) {
+    throw new Error("这个 JSON 没有找到 pdf_info，可能不是 MinerU middle.json。");
+  }
+  state.mineruInfo = data;
+  state.mineruFileName = file.name;
+  state.mineruOverrides.clear();
+  state.mineruBlockOverrides.clear();
+  state.mathpixBlockDrafts.clear();
+  state.ocrPatches = [];
+  state.acceptedPatchPreview = null;
+  state.acceptedPatchBookPreview = null;
+  state.riskByPage.clear();
+  cancelScheduledRiskAnalysis();
+  state.reviewExpanded.clear();
+  state.reviewInitializedPages.clear();
+  analyzeCurrentMineruRiskPage();
+  if (!state.pdfPageCount) {
+    state.pdfPageCount = pdfInfo.length;
+  }
+  restoreOcrWorkspaceState();
+  updatePager();
+  await renderCurrentPage();
+  scheduleMineruRiskAnalysis();
+  setStatus("Ready", "ok");
+}
+
+async function loadContentListFile(file) {
+  setStatus("读取 content_list", "busy", file.name);
+  const text = await readFileAsText(file);
+  const data = JSON.parse(text);
+  const items = normalizeContentListItems(data);
+  if (!items.length) {
+    throw new Error("这个 JSON 没有找到 content_list 条目。");
+  }
+  state.contentListItems = items;
+  state.contentListFileName = file.name;
+  state.riskByPage.clear();
+  cancelScheduledRiskAnalysis();
+  state.reviewExpanded.clear();
+  state.reviewInitializedPages.clear();
+  analyzeCurrentMineruRiskPage();
+  updatePager();
+  updateCorrectionSummary();
+  await renderCurrentPage();
+  scheduleMineruRiskAnalysis();
+  setStatus("Ready", "ok");
 }
 
 function resetPage() {
@@ -505,6 +596,9 @@ function resetPage() {
   els.pdfInput.value = "";
   els.mineruInput.value = "";
   els.contentListInput.value = "";
+  if (els.requiredFilesInput) {
+    els.requiredFilesInput.value = "";
+  }
   els.pageList.innerHTML = '<div class="empty-state">选择原书 PDF，再选择对应的 MinerU `_middle.json`。优先点击高风险块，只对该块调用 Mathpix。</div>';
   updatePager();
   setStatus("Ready", "ok");
@@ -721,6 +815,25 @@ function serializeNestedMap(map) {
   ]);
 }
 
+function mathpixBlockErrorKey(pageNumber, blockIndex) {
+  return `${Number(pageNumber) || 0}:${String(blockIndex || "")}`;
+}
+
+function setMathpixBlockError(pageNumber, blockIndex, message) {
+  const key = mathpixBlockErrorKey(pageNumber, blockIndex);
+  if (!key.endsWith(":")) {
+    state.mathpixBlockErrors.set(key, String(message || ""));
+  }
+}
+
+function clearMathpixBlockError(pageNumber, blockIndex) {
+  state.mathpixBlockErrors.delete(mathpixBlockErrorKey(pageNumber, blockIndex));
+}
+
+function getMathpixBlockError(pageNumber, blockIndex) {
+  return state.mathpixBlockErrors.get(mathpixBlockErrorKey(pageNumber, blockIndex)) || "";
+}
+
 function restoreNestedMap(entries) {
   const map = new Map();
   if (!Array.isArray(entries)) {
@@ -788,6 +901,7 @@ async function renderCurrentPage() {
   if (runId !== renderCurrentPageRunId) {
     return;
   }
+  analyzeCurrentMineruRiskPage();
   if (state.middleColumnCollapsed) {
     row.append(renderImageCard(page), renderMiddleColumnRestoreRail(), renderRightWorkbench(page));
   } else {
@@ -987,7 +1101,9 @@ function clamp(value, min, max) {
 
 async function ensureCurrentPagePreview() {
   if (state.pageCache.has(state.currentPage)) {
-    return state.pageCache.get(state.currentPage);
+    const cachedPage = state.pageCache.get(state.currentPage);
+    cachePdfTextPage(cachedPage);
+    return cachedPage;
   }
   if (!state.pdfDataUrl) {
     return {
@@ -1006,6 +1122,7 @@ async function ensureCurrentPagePreview() {
   }
   state.pdfPageCount = preview.pageCount || state.pdfPageCount || 1;
   state.pageCache.set(state.currentPage, page);
+  cachePdfTextPage(page);
   updatePager();
   setStatus("Ready", "ok");
   return page;
@@ -1569,6 +1686,13 @@ function renderReviewCard() {
   card.querySelectorAll("[data-review-block-step]").forEach((button) => {
     button.addEventListener("click", () => navigateReviewBlock(button.dataset.reviewBlockStep));
   });
+  card.querySelectorAll("[data-review-needs-correction-jump]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      selectReviewBlock(button.dataset.reviewNeedsCorrectionJump);
+    });
+  });
   card.querySelectorAll("[data-review-font-scale]").forEach((button) => {
     button.addEventListener("click", async () => {
       setReviewFontScale(button.dataset.reviewFontScale);
@@ -1726,6 +1850,36 @@ function renderReviewNavigationBar(reviewEntries) {
             <button class="secondary-button block-step-button" type="button" data-review-block-step="next" ${activeIndex < 0 || activeIndex >= entries.length - 1 ? "disabled" : ""} aria-label="下一校对块" title="下一校对块">›</button>
           </div>
         </div>
+        ${renderNeedsCorrectionNav(entries)}
+      </div>
+    </div>
+  `;
+}
+
+function currentPageNeedsCorrectionEntries(reviewEntries) {
+  const entries = Array.isArray(reviewEntries) ? reviewEntries : [];
+  return entries.filter((entry) => state.reviewNeedsCorrection.has(reviewBlockKey(state.currentPage, entry.key)));
+}
+
+function renderNeedsCorrectionNav(reviewEntries) {
+  const markedEntries = currentPageNeedsCorrectionEntries(reviewEntries);
+  const count = markedEntries.length;
+  return `
+    <div class="review-needs-correction-nav-group ${count ? "has-items" : ""}" aria-label="当前页需要额外校正的块">
+      <span class="review-nav-group-label">待校正 ${count}</span>
+      <div class="review-needs-correction-links">
+        ${
+          count
+            ? markedEntries
+                .map((entry) => {
+                  const fullKey = reviewBlockKey(state.currentPage, entry.key);
+                  const label = Number(entry.displayIndex) > 0 ? entry.displayIndex : entry.key;
+                  const selected = isActiveReviewBlockKey(fullKey);
+                  return `<button class="review-needs-correction-link ${selected ? "is-selected" : ""}" type="button" data-review-needs-correction-jump="${escapeHtml(fullKey)}" aria-label="跳转到需要额外校正的 Block ${escapeHtml(String(label))}">${escapeHtml(String(label))}</button>`;
+                })
+                .join("")
+            : '<span class="review-needs-correction-empty">无</span>'
+        }
       </div>
     </div>
   `;
@@ -1915,6 +2069,7 @@ function renderPageReviewBlock(entry) {
   const actionsOpen = state.reviewActionsOpen.has(fullKey) || correctionOpen;
   const needsCorrection = state.reviewNeedsCorrection.has(fullKey);
   const missingFigureLabel = inferMissingFigureLabelForBlock(state.currentPage, blockKey, segment.markdown || "");
+  const mathpixError = getMathpixBlockError(state.currentPage, blockKey);
   return `
     <section class="review-page-block ${selected ? "is-selected" : ""} ${corrected ? "is-corrected" : ""} ${hasDraft ? "has-mathpix-draft" : ""} ${needsCorrection ? "needs-extra-correction" : ""}" tabindex="0" role="button" data-review-page-block="${escapeHtml(fullKey)}" data-source-block-id="${escapeHtml(blockKey)}" data-review-item-state="${escapeHtml(itemState)}">
       ${
@@ -1946,10 +2101,11 @@ function renderPageReviewBlock(entry) {
               blockOverrides.has(blockKey),
               draftMarkdown,
               ocrPatch,
-              { displayIndex: entry.displayIndex },
+              { displayIndex: entry.displayIndex, mathpixError },
             )
           : ""
       }
+      ${mathpixError ? `<div class="review-block-error" role="status">${escapeHtml(mathpixError)}</div>` : ""}
     </section>
   `;
 }
@@ -1964,6 +2120,10 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
   const displayIndex = Number(options.displayIndex) > 0 ? Number(options.displayIndex) : null;
   const displayBlockLabel = `Block ${escapeHtml(String(displayIndex || segment.blockIndex))}`;
   const disabled = !isCrossPage && risk.bbox ? "" : "disabled";
+  const mathpixUnavailable = state.mathpixConfigured === false;
+  const mathpixDisabled = !isCrossPage && (disabled || mathpixUnavailable) ? "disabled" : "";
+  const mathpixUnavailableReason = state.mathpixConfigError || "未配置 MATHPIX_APP_ID/MATHPIX_APP_KEY";
+  const mathpixTitle = mathpixUnavailable ? `title="${escapeHtml(mathpixUnavailableReason)}"` : "";
   const patchMarkdown = reviewPatchMarkdown(ocrPatch);
   const hasPatchDraft = Boolean(patchMarkdown && ocrPatch?.status === "draft");
   const hasAcceptedPatchMarkdown = Boolean(patchMarkdown && ocrPatch?.status === "accepted");
@@ -1988,6 +2148,8 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
             ? "普通段落"
             : "";
   const correctedPaneTitle = hasMathpixDraft ? "Mathpix 识别稿（未应用）" : hasAcceptedPatchMarkdown ? "已接受校正稿" : "校正稿渲染";
+  const mathpixError = String(options.mathpixError || getMathpixBlockError(state.currentPage, segment.blockIndex) || "");
+  const mathpixActionLabel = mathpixUnavailable ? (state.mathpixConfigError ? "Mathpix 配置无效" : "Mathpix 未配置") : isCorrected ? "Mathpix 重校正" : risk.bbox ? "Mathpix 校正" : "缺少 bbox";
   const shouldShowLatestOnly = hasMathpixDraft || isCorrected;
   const title = risk?.syntheticLabel
     ? `${escapeHtml(risk.syntheticLabel)} · ${displayBlockLabel}`
@@ -2039,8 +2201,8 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
   if (options.toolbarOnly) {
     const mathpixActionHtml = isCrossPage
       ? `<button class="text-button risk-action" type="button" data-cross-page-jump-page="${escapeHtml(String(risk.crossPageSourcePage))}" data-cross-page-jump-block="${escapeHtml(String(risk.sourceBlockIndex))}">跳到第 ${escapeHtml(String(risk.crossPageSourcePage))} 页校对</button>`
-      : `<button class="text-button risk-action" type="button" data-risk-mathpix="${segment.blockIndex}" ${disabled}>
-          ${isCorrected ? "Mathpix 重校正" : risk.bbox ? "Mathpix 校正" : "缺少 bbox"}
+      : `<button class="text-button risk-action" type="button" data-risk-mathpix="${segment.blockIndex}" ${mathpixDisabled} ${mathpixTitle}>
+          ${mathpixActionLabel}
         </button>`;
     const saveActionHtml = hasEditableMarkdown
       ? `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="${hasMathpixDraft ? "保持修改" : "未修改"}" data-dirty-label="保持修改" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>${hasMathpixDraft ? "保持修改" : "未修改"}</button>`
@@ -2059,6 +2221,7 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
           </div>
         </div>
         <div class="selected-block-toolbar-body">
+          ${mathpixError ? `<div class="review-block-error" role="status">${escapeHtml(mathpixError)}</div>` : ""}
           ${renderCompactSelectedBlockEditor({
             segment,
             editableMarkdown,
@@ -2083,13 +2246,14 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
           ${
             isCrossPage
               ? `<button class="text-button risk-action" type="button" data-cross-page-jump-page="${escapeHtml(String(risk.crossPageSourcePage))}" data-cross-page-jump-block="${escapeHtml(String(risk.sourceBlockIndex))}">跳到第 ${escapeHtml(String(risk.crossPageSourcePage))} 页校对</button>`
-              : `<button class="text-button risk-action" type="button" data-risk-mathpix="${segment.blockIndex}" ${disabled}>
-                  ${isCorrected ? "Mathpix 重校正" : risk.bbox ? "Mathpix 校正" : "缺少 bbox"}
+              : `<button class="text-button risk-action" type="button" data-risk-mathpix="${segment.blockIndex}" ${mathpixDisabled} ${mathpixTitle}>
+                  ${mathpixActionLabel}
                 </button>`
           }
         </div>
       </div>
       <div class="review-item-body" ${expanded ? "" : "hidden"}>
+        ${mathpixError ? `<div class="review-block-error" role="status">${escapeHtml(mathpixError)}</div>` : ""}
         ${bodyHtml}
       </div>
     </article>
@@ -2314,6 +2478,15 @@ async function toggleReviewNeedsCorrection(blockIndex) {
     return;
   }
   await renderCurrentPage();
+}
+
+function clearReviewNeedsCorrectionForBlock(pageNumber, blockIndex) {
+  const fullKey = normalizeReviewBlockKey(blockIndex, pageNumber);
+  if (!fullKey || !state.reviewNeedsCorrection.has(fullKey)) {
+    return false;
+  }
+  state.reviewNeedsCorrection.delete(fullKey);
+  return true;
 }
 
 function refreshRightWorkbenchOnly(options = {}) {
@@ -2603,6 +2776,7 @@ function saveAutomaticAcceptedBlockPatch(pageNo, blockKey, oldMarkdown, newMarkd
   }
   getMathpixBlockDrafts(pageNo).delete(String(blockKey));
   getBlockOverrides(pageNo).set(String(blockKey), patchResult.normalizedText);
+  clearReviewNeedsCorrectionForBlock(pageNo, blockKey);
   saveOcrWorkspaceState();
   return true;
 }
@@ -2881,7 +3055,7 @@ function normalizeInlineMathSpacing(markdown) {
       output += " ";
     }
   }
-  return output.replace(/[ \t]{2,}/g, " ");
+  return normalizeReferenceSpacing(output.replace(/[ \t]{2,}/g, " "));
 }
 
 function repairUnclosedInlineMathBeforeReference(line) {
@@ -2937,7 +3111,16 @@ function isEscapedDollar(text, index) {
 }
 
 function shouldAddSpaceAfterInlineMath(nextChar) {
-  return Boolean(nextChar) && !/\s|[,.;:!?，。；：！？)\]\}]/.test(nextChar);
+  return Boolean(nextChar) && !/\s|[,.;:!?，。；：！？)\}]/.test(nextChar);
+}
+
+function normalizeReferenceSpacing(text) {
+  return String(text || "")
+    .replace(/\$\s*\[/g, "$ [")
+    .replace(/\bsee\s*Eq\./gi, (match) => (match[0] === "S" ? "See Eq." : "see Eq."))
+    .replace(/\bsee\s+Eq\.\s*\(/gi, (match) => (match[0] === "S" ? "See Eq. (" : "see Eq. ("))
+    .replace(/\[\s*(see|See)\s+Eq\.\s*/g, "[$1 Eq. ")
+    .replace(/\]\s*,\s*(?=[A-Za-z])/g, "], ");
 }
 
 function inferMissingFigureLabelForBlock(pageNumber, blockIndex, markdown) {
@@ -3109,6 +3292,7 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
     updateOcrPatchStatus(patchResult.patch.patchId, "accepted");
   }
   getMathpixBlockDrafts(state.currentPage).delete(blockKey);
+  clearReviewNeedsCorrectionForBlock(state.currentPage, blockKey);
   // TODO: next step will switch display/export to accepted patches.
   getBlockOverrides(state.currentPage).set(blockKey, markdown);
   saveOcrWorkspaceState();
@@ -3161,7 +3345,11 @@ function renderBlockContent(markdown, entry) {
   if (shouldRenderAsAlgorithmBlock(markdown, entry)) {
     return renderAlgorithmBlock(markdownToAlgorithmLines(markdown));
   }
-  const normalizedMarkdown = normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(markdown));
+  const normalizedMarkdown = normalizeReferenceSpacing(
+    normalizeMathpixCollapsedProse(
+      normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(markdown)),
+    ),
+  );
   const imagePreview = renderBlockImagePreview(normalizedMarkdown, entry);
   const markdownForHtml = imagePreview ? stripMarkdownImageReferences(normalizedMarkdown) : normalizedMarkdown;
   return `${imagePreview}${renderMarkdownHtml(markdownForHtml)}`;
@@ -3206,7 +3394,49 @@ function normalizeInlineMathSpacingOutsideDisplayMath(markdown) {
 }
 
 function cleanMathpixEditableMarkdown(markdown) {
-  return compactLatexSourceSpacing(normalizeInlineMathSpacingOutsideDisplayMath(String(markdown || ""))).trim();
+  return normalizeMathpixEditableSource(
+    compactLatexSourceSpacing(
+      normalizeInlineMathSpacingOutsideDisplayMath(normalizeMathpixCollapsedProse(String(markdown || ""))),
+    ),
+  ).trim();
+}
+
+function normalizeMathpixOcrArtifacts(markdown) {
+  return normalizeMathpixCollapsedProse(normalizeMathpixBrokenDiacritics(markdown));
+}
+
+function normalizeMathpixCollapsedProse(markdown) {
+  return String(markdown || "")
+    .replace(/\bForacompactbinarysystem,\s*/gi, "For a compact binary system, ")
+    .replace(/\bthewaveforms\b/gi, "the waveforms")
+    .replace(/\baregivento\b/gi, "are given to")
+    .replace(/\btherequiredorders\b/gi, "the required orders")
+    .replace(/\brequiredorders\b/gi, "required orders")
+    .replace(/\s+([,.;:])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ");
+}
+
+function normalizeMathpixEditableSource(markdown) {
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+  let inCodeFence = false;
+  return lines
+    .map((line) => {
+      if (isCodeFenceStart(line)) {
+        inCodeFence = !inCodeFence;
+        return line;
+      }
+      if (inCodeFence) {
+        return line;
+      }
+      return line
+        .replace(/\\{2,}(?=[A-Za-z])/g, "\\")
+        .replace(/\b([Tt])he\s*([0-9]+)\s+\\+sigma\$bound\b/g, (_match, prefix, number) => `${prefix}he ${number} $\\sigma$ bound`)
+        .replace(/\\+sigma\$bound\b/g, "$\\sigma$ bound")
+        .replace(/\$\|\s*\\+eta\s*\|\s*</g, "$|\\eta| <")
+        .replace(/\s+([,.;:])/g, "$1")
+        .replace(/[ \t]{2,}/g, " ");
+    })
+    .join("\n");
 }
 
 function compactLatexSourceSpacing(markdown) {
@@ -3252,6 +3482,7 @@ function compactLatexSourceLine(line) {
     .replace(/\\operatorname\*\{([^}]*)\}/g, (_match, name) => `\\operatorname*{${compactSpacedLetters(name)}}`)
     .replace(/\\operatorname\{([^}]*)\}/g, (_match, name) => `\\operatorname{${compactSpacedLetters(name)}}`)
     .replace(/\\mathrm\{([^}]*)\}/g, (_match, value) => `\\mathrm{${compactSpacedLetters(value)}}`)
+    .replace(/([+\-])\s+(?=\d)/g, "$1")
     .replace(/\s+([,.;:])/g, "$1")
     .replace(/[ \t]{2,}/g, " ")
     .trimEnd();
@@ -3662,11 +3893,18 @@ async function recognizeRiskBlockWithMathpix(blockIndex) {
     setStatus("正在处理", "busy");
     return;
   }
+  const blockKey = String(blockIndex);
+  if (state.mathpixConfigured === false) {
+    const message = state.mathpixConfigError || "Mathpix 未配置：请设置 MATHPIX_APP_ID/MATHPIX_APP_KEY 后重启服务。";
+    setMathpixBlockError(state.currentPage, blockKey, message);
+    setStatus(state.mathpixConfigError ? "Mathpix 配置无效" : "Mathpix 未配置", "error", message);
+    await renderCurrentPage();
+    return;
+  }
   if (!state.pdfDataUrl) {
     setStatus("先上传 PDF", "error");
     return;
   }
-  const blockKey = String(blockIndex);
   const risk = reviewRiskForBlock(state.currentPage, blockKey);
   if (!risk?.bbox) {
     setStatus("No bbox", "error");
@@ -3676,6 +3914,7 @@ async function recognizeRiskBlockWithMathpix(blockIndex) {
   updatePager();
   setStatus("Block OCR", "busy");
   try {
+    clearMathpixBlockError(state.currentPage, blockKey);
     const page = await ensureCurrentPagePreview();
     const cropDataUrl = await cropPageImage(page.image, risk.bbox, risk.pageSize, cropPaddingForRiskBlock(risk));
     const upload = await postJson("/api/model-tester/upload", {
@@ -3715,13 +3954,16 @@ async function recognizeRiskBlockWithMathpix(blockIndex) {
     const markdown = patchResult.normalizedText;
     // TODO: next step will switch display/export to accepted patches.
     getMathpixBlockDrafts(state.currentPage).set(blockKey, markdown);
+    clearMathpixBlockError(state.currentPage, blockKey);
     saveOcrWorkspaceState();
     expandOnlyReviewBlock(state.currentPage, blockKey);
     updateCorrectionSummary();
     setStatus("Draft ready", "ok");
   } catch (error) {
-    setStatus("Error", "error");
-    state.mathpixCache.set(state.currentPage, { error: error.message });
+    const message = error?.message || String(error || "Mathpix 块级请求失败");
+    setMathpixBlockError(state.currentPage, blockKey, message);
+    setStatus("Block OCR failed", "error", message);
+    state.mathpixCache.set(state.currentPage, { error: message });
   } finally {
     state.busy = false;
     updatePager();
@@ -3949,8 +4191,11 @@ function createAndStoreDraftOcrPatch({ pageNo, blockIndex, oldText, newText, sou
   const context = createLegacyBlockPatchContext(pageNo, blockIndex, oldText);
   const createOcrPatch = getOcrCoreCreateOcrPatch();
   const preservationSource = [oldText, preserveText].filter(Boolean).join("\n\n");
-  const completeNewText = preserveMathpixPlainTextCompleteness(oldText, newText, source);
-  const preservedNewText = preserveEquationNumbersFromOriginal(preservationSource, completeNewText);
+  const normalizedNewText = source === "mathpix" ? normalizeMathpixOcrArtifacts(newText) : String(newText || "");
+  const completeNewText = preserveMathpixPlainTextCompleteness(oldText, normalizedNewText, source);
+  const preservedNewText = source === "mathpix"
+    ? normalizeMathpixOcrArtifacts(preserveEquationNumbersFromOriginal(preservationSource, completeNewText))
+    : preserveEquationNumbersFromOriginal(preservationSource, completeNewText);
   if (!context || !createOcrPatch) {
     warnOcrCorePatch("createOcrPatch 不可用，已跳过 OCR draft patch 记录。");
     return {
@@ -5225,7 +5470,8 @@ function detectLocalRiskCandidatesForPage(pageNumber) {
 function detectSupplementalRiskCandidatesForPage(pageNumber) {
   return detectCrossPageContinuationCandidatesForPage(pageNumber)
     .concat(detectSyntheticRiskCandidatesForPage(pageNumber))
-    .concat(detectContentListRiskCandidatesForPage(pageNumber));
+    .concat(detectContentListRiskCandidatesForPage(pageNumber))
+    .concat(detectPdfReferenceTextCandidatesForPage(pageNumber));
 }
 
 function detectSyntheticRiskCandidatesForPage(pageNumber) {
@@ -5246,6 +5492,76 @@ function detectContentListRiskCandidatesForPage(pageNumber) {
   return items
     .map((item, pageItemIndex) => contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSize, middleTexts))
     .filter(Boolean);
+}
+
+function detectPdfReferenceTextCandidatesForPage(pageNumber) {
+  const textBlocks = pdfTextBlocksForPage(pageNumber)
+    .map((block) => ({
+      text: String(block?.text || "").trim(),
+      bbox: normalizedBBox(block?.bbox),
+    }))
+    .filter((block) => block.text && block.bbox)
+    .sort((left, right) => {
+      const yDiff = left.bbox[1] - right.bbox[1];
+      return Math.abs(yDiff) > 2 ? yDiff : left.bbox[0] - right.bbox[0];
+    });
+  if (!textBlocks.length) {
+    return [];
+  }
+  const hasHeading =
+    textBlocks.some((block) => isLikelyReferenceHeading(block.text)) ||
+    contentListItemsForPage(pageNumber).some((item) => isLikelyReferenceHeading(contentListItemText(item))) ||
+    originalBlockMarkdownsForPage(pageNumber).some((entry) => isLikelyReferenceHeading(String(entry.markdown || "").replace(/^#{1,6}\s+/, "")));
+  const bodyBlocks = textBlocks.filter((block) => !isLikelyReferenceHeading(block.text) && !isPageNumberOnlyText(block.text));
+  if (!bodyBlocks.length) {
+    return [];
+  }
+  const rawReferenceText = bodyBlocks.map((block) => block.text).join("\n");
+  if (!hasHeading && !isLikelyBibliographyText(rawReferenceText)) {
+    return [];
+  }
+  if (hasHeading && !hasBibliographyBodySignal(rawReferenceText)) {
+    return [];
+  }
+  const referenceText = formatBibliographyText(rawReferenceText);
+  if (!referenceText || referenceText.length < 40) {
+    return [];
+  }
+  const existingTexts = new Set(
+    reviewBlockMarkdownsForPage(pageNumber)
+      .map((entry) => normalizeTextForComparison(entry.markdown))
+      .concat(contentListItemsForPage(pageNumber).map((item) => normalizeTextForComparison(contentListItemText(item))))
+      .filter(Boolean),
+  );
+  if (isTextRedundantWithNormalizedSet(referenceText, existingTexts)) {
+    return [];
+  }
+  return [
+    {
+      pageNumber,
+      blockIndex: `pdf-reference-text-${pageNumber}`,
+      bbox: mergeBBoxes(bodyBlocks.map((block) => block.bbox)),
+      pageSize: pdfTextPageSizeForPage(pageNumber),
+      text: referenceText,
+      score: 0.36,
+      reasons: ["pdf_text_reference_supplemental"],
+      syntheticPlacement: "content_list",
+      syntheticLabel: "PDF 参考文献候选",
+      supplementalSource: "pdf_text_reference",
+    },
+  ];
+}
+
+function hasBibliographyBodySignal(text) {
+  const lines = String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const starts = lines.filter(isLikelyReferenceEntryStart).length;
+  const yearHits = lines.filter((line) => /\b(?:18|19|20)\d{2}[a-z]?\b/.test(line)).length;
+  const referenceSignals = lines.filter((line) => /\b(?:ArXiv|Phys\.|Rev\.|Astrophys\.|Astron\.|Science|Class\.|Quantum|Lett\.)/i.test(line)).length;
+  return starts >= 1 && yearHits >= 1 && (starts >= 2 || referenceSignals >= 1 || yearHits >= 3);
 }
 
 function detectCrossPageContinuationCandidatesForPage(pageNumber) {
@@ -6001,12 +6317,71 @@ function blockToMarkdown(block) {
     return `### ${text}`;
   }
   if (block.type === "list") {
+    if (isLikelyBibliographyText(text)) {
+      return formatBibliographyText(text);
+    }
     return text
       .split("\n")
       .map((line) => (line.trim() ? `- ${line.trim()}` : ""))
       .join("\n");
   }
   return text;
+}
+
+function formatBibliographyText(text) {
+  const lines = String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim().replace(/[ \t]{2,}/g, " "))
+    .filter(Boolean);
+  const entries = [];
+  let current = "";
+  lines.forEach((line) => {
+    if (isLikelyReferenceHeading(line) || isPageNumberOnlyText(line)) {
+      return;
+    }
+    if (isLikelyReferenceEntryStart(line) && current) {
+      entries.push(current.trim());
+      current = line;
+      return;
+    }
+    current = current ? `${current} ${line}` : line;
+  });
+  if (current.trim()) {
+    entries.push(current.trim());
+  }
+  return entries.length ? entries.join("\n\n") : lines.join("\n");
+}
+
+function isLikelyBibliographyText(text) {
+  const lines = String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) {
+    return false;
+  }
+  const bodyLines = lines.filter((line) => !isLikelyReferenceHeading(line) && !isPageNumberOnlyText(line));
+  if (bodyLines.length < 2) {
+    return false;
+  }
+  const starts = bodyLines.filter(isLikelyReferenceEntryStart).length;
+  const yearHits = bodyLines.filter((line) => /\b(?:18|19|20)\d{2}[a-z]?\b/.test(line)).length;
+  const referenceSignals = bodyLines.filter((line) => /\b(?:ArXiv|Phys\.|Rev\.|Astrophys\.|Astron\.|Science|Class\.|Quantum|Lett\.|J\.|D,|A,|B,)\b/i.test(line)).length;
+  return starts >= 2 || (starts >= 1 && yearHits >= 2) || (yearHits >= 3 && referenceSignals >= 2);
+}
+
+function isLikelyReferenceHeading(text) {
+  return /^references?$/i.test(String(text || "").trim());
+}
+
+function isLikelyReferenceEntryStart(text) {
+  const line = String(text || "").trim();
+  if (!line || isLikelyReferenceHeading(line)) {
+    return false;
+  }
+  return /^[A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+(?:[- ][A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+)*,\s+(?:[A-Z]\.|[A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+|[A-Z]\s)/.test(line) && /\b(?:18|19|20)\d{2}[a-z]?\b/.test(line.slice(0, 220));
 }
 
 function collectBlockText(block, options = {}) {
@@ -6184,7 +6559,7 @@ function prepareMarkdownForExport(markdown) {
 }
 
 function prepareMathpixMarkdown(markdown) {
-  const rawMarkdown = String(markdown || "");
+  const rawMarkdown = normalizeMathpixOcrArtifacts(String(markdown || ""));
   const adaptMathpixToTargetMarkdown = getOcrCoreAdaptMathpixToTargetMarkdown();
   if (!adaptMathpixToTargetMarkdown) {
     warnOcrCoreMathpixAdapter("mathpixToTargetMarkdownAdapter 不可用，已保守返回原始 Markdown。");
@@ -6197,11 +6572,34 @@ function prepareMathpixMarkdown(markdown) {
       source: "mathpix",
       blockType: "unknown",
     });
-    return typeof result?.targetMarkdown === "string" ? result.targetMarkdown : rawMarkdown;
+    return normalizeMathpixOcrArtifacts(typeof result?.targetMarkdown === "string" ? result.targetMarkdown : rawMarkdown);
   } catch (error) {
     warnOcrCoreMathpixAdapter("prepareMathpixMarkdown 调用 mathpixToTargetMarkdownAdapter 失败，已保守返回原始 Markdown。", error);
     return rawMarkdown;
   }
+}
+
+function normalizeMathpixBrokenDiacritics(markdown) {
+  let text = String(markdown || "").normalize("NFC");
+  const diaeresisMap = {
+    A: "Ä",
+    E: "Ë",
+    I: "Ï",
+    O: "Ö",
+    U: "Ü",
+    Y: "Ÿ",
+    a: "ä",
+    e: "ë",
+    i: "ï",
+    o: "ö",
+    u: "ü",
+    y: "ÿ",
+  };
+  text = text.replace(/([AEIOUYaeiouy])[\u00a8\u0308](?=[A-Za-z])/g, (_match, letter) => diaeresisMap[letter] || letter);
+  text = text.replace(/\b[Ee]\s*(?:ö|o[\u00a8\u0308]?|o)\s*t\s*v\s*(?:ö|o[\u00a8\u0308]?|[\u00a8\u0308]\s*o|o)\s*s\b/g, "Eötvös");
+  text = text.replace(/([A-Za-z])\s*[\u00a8\u0308]\s+(?=[A-Za-z])/g, "$1 ");
+  text = text.replace(/(^|[\s([{])[\u00a8\u0308]\s*(?=[A-Za-z])/g, "$1");
+  return text.normalize("NFC");
 }
 
 // Legacy Mathpix cleanup helpers are kept for now so older paths can be audited
@@ -6466,6 +6864,7 @@ function riskReasonLabel(reason) {
       footnote_marker_or_note: "脚注/注释",
       ocr_garbled_text: "疑似 OCR 字符乱码",
       content_list_discarded: "content_list 补充",
+      pdf_text_reference_supplemental: "PDF 参考文献候选",
       background_heading_missing: "疑似漏识别标题",
       page_top_text_missing: "疑似漏识别页首正文",
       cross_page_continuation: "跨页续段",

@@ -27,6 +27,22 @@ def _load_local_env() -> None:
 _load_local_env()
 
 
+def mathpix_credentials_error(app_id: str, app_key: str) -> str:
+    app_id = str(app_id or "").strip()
+    app_key = str(app_key or "").strip()
+    if not app_id or not app_key:
+        return "未配置 MATHPIX_APP_ID/MATHPIX_APP_KEY。"
+
+    combined = "\n".join([app_id, app_key])
+    lowered = combined.lower()
+    placeholder_markers = ("你的", "your_", "your-", "replace", "changeme", "todo")
+    if any(marker in lowered for marker in placeholder_markers):
+        return "MATHPIX_APP_ID/MATHPIX_APP_KEY 仍是占位符，请替换为真实 Mathpix 凭据。"
+    if not combined.isascii():
+        return "MATHPIX_APP_ID/MATHPIX_APP_KEY 只能包含 ASCII 字符，请检查是否粘贴了中文或其他非英文字符。"
+    return ""
+
+
 @dataclass(slots=True)
 class Settings:
     host: str = os.getenv("APP_HOST", "127.0.0.1")
@@ -57,12 +73,21 @@ class Settings:
     yunwu_gpt55_model: str = os.getenv("YUNWU_GPT55_MODEL", "gpt-5.5")
     yunwu_chat_path: str = os.getenv("YUNWU_CHAT_PATH", "/v1/chat/completions")
 
+    @property
+    def mathpix_config_error(self) -> str:
+        return mathpix_credentials_error(self.mathpix_app_id, self.mathpix_app_key)
+
+    @property
+    def mathpix_configured(self) -> bool:
+        return not self.mathpix_config_error
+
     def public_dict(self) -> dict[str, Any]:
         return {
             "appName": self.app_name,
             "mineruBaseUrl": self.mineru_base_url,
             "uploadTimeoutSeconds": self.upload_timeout_seconds,
-            "mathpixConfigured": bool(self.mathpix_app_id and self.mathpix_app_key),
+            "mathpixConfigured": self.mathpix_configured,
+            "mathpixConfigError": self.mathpix_config_error or None,
             "ocrCorrectionConfigured": bool(self.ocr_correction_api_key and self.ocr_correction_model),
             "ocrCorrectionProvider": self.ocr_correction_provider,
         }
