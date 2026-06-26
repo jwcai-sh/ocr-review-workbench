@@ -1265,6 +1265,39 @@ function assertOcrPatchShape(patch) {
 }
 
 {
+  const misclassifiedCodeBlock = {
+    type: "code",
+    bbox: [120, 140, 780, 720],
+    lines: [
+      { spans: [{ content: "For example, the gravitational redshift of spectra of the stars S2 and S102 will be detectable" }] },
+      { spans: [{ content: "during their next pericenter passages. In general relativity, the leading contribution to the" }] },
+      { spans: [{ content: "pericenter advance rate is given by" }] },
+      { spans: [{ content: "\\dot{\\omega}_{\\mathrm{proj}} = 98.3 \\, \\mu \\mathrm{as} \\, \\mathrm{yr}^{-1} \\left( \\frac{1 \\mathrm{yr}}{P_b} \\right) \\frac{\\cos \\iota}{1 \\mp e}," }] },
+      { spans: [{ content: "where the minus sign now corresponds to a measurement at apocenter. For S2 and S102, the rates are potentially observable." }] }
+    ]
+  };
+  const markdown = call(`blockToMarkdown(${JSON.stringify(misclassifiedCodeBlock)})`);
+  assert(!markdown.includes("```"), "science prose misclassified as code should render as Markdown, not a fenced code block");
+  assert(markdown.includes("\\dot{\\omega}_{\\mathrm{proj}}"), "misclassified prose should keep the LaTeX formula source");
+  const html = call(`renderBlockContent(${JSON.stringify(markdown)}, { kind: "text", blockIndex: "misclassified-code" })`);
+  assert(!html.includes("<pre><code"), "science prose misclassified as code should not render as a code block");
+  assert(html.includes('class="math-display"'), "the formula line in misclassified prose should render as display math");
+}
+
+{
+  const realCodeBlock = {
+    type: "code",
+    lines: [
+      { spans: [{ content: "function add(a, b) {" }] },
+      { spans: [{ content: "  return a + b;" }] },
+      { spans: [{ content: "}" }] }
+    ]
+  };
+  const markdown = call(`blockToMarkdown(${JSON.stringify(realCodeBlock)})`);
+  assert(markdown.startsWith("```"), "real code blocks should still be fenced");
+}
+
+{
   const result = JSON.parse(
     call(`(() => {
       ${setupPreviewPageExpression(["where$Z$and$A$are the atomic number and mass number, respectively, parameters$\\\\eta^A$by the best tests, where$\\\\delta=1$if$(Z,A)=(odd, even)."])}

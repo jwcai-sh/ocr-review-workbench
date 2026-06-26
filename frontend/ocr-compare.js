@@ -6832,7 +6832,7 @@ function blockToMarkdown(block) {
   if (Array.isArray(block.blocks) && !block.lines) {
     const nested = block.blocks.map(blockToMarkdown).filter(Boolean).join("\n\n");
     if (block.type === "code" && nested) {
-      return fencedCode(nested);
+      return shouldTreatCodeBlockAsMarkdown(nested) ? wrapLikelyDisplayMathLines(nested) : fencedCode(nested);
     }
     return nested;
   }
@@ -6852,7 +6852,8 @@ function blockToMarkdown(block) {
     return [imagePath ? `![image](${imagePath})` : "", caption].filter(Boolean).join("\n\n");
   }
   if (block.type === "code") {
-    return fencedCode(collectBlockText(block).trim());
+    const text = collectBlockText(block, { preserveVisualParagraphs: true }).trim();
+    return shouldTreatCodeBlockAsMarkdown(text) ? wrapLikelyDisplayMathLines(text) : fencedCode(text);
   }
   const text = collectBlockText(block, { preserveVisualParagraphs: block.type === "text" || !block.type }).trim();
   if (!text) {
@@ -7181,6 +7182,27 @@ function fallbackHtmlTableRows(html) {
 
 function fencedCode(text) {
   return `\`\`\`\n${text}\n\`\`\``;
+}
+
+function shouldTreatCodeBlockAsMarkdown(text) {
+  const value = String(text || "").replace(/\r\n?/g, "\n").trim();
+  if (!value) {
+    return false;
+  }
+  const executableCodeSignal =
+    /(?:^|\n)\s*(?:function|class|const|let|var|import|export|def|if\s*\(|for\s*\(|while\s*\(|return\b|#include|public\s+class|SELECT\b|CREATE\b|BEGIN\b|END\b)/.test(value);
+  if (executableCodeSignal) {
+    return false;
+  }
+  const wordCount = (value.match(/[A-Za-zÀ-ÖØ-öø-ÿ]{3,}/g) || []).length;
+  if (wordCount < 12) {
+    return false;
+  }
+  const hasScientificProseSignal =
+    /\b(?:For example|However|Thus|Therefore|Among|where|respectively|corresponds?|measurement|observable|observations?|general relativity|pericenter|redshift|precession|stars?)\b/i.test(value);
+  const hasMathSignal = /\\[A-Za-z]+|[$]|[A-Za-z]_\{|[A-Za-z]\^\{|(?:^|\s)\(\d+(?:\.\d+)+\)/.test(value);
+  const hasSentenceFlow = /[.!?]\s+[A-Z]/.test(value.replace(/\n+/g, " "));
+  return hasScientificProseSignal && hasMathSignal && hasSentenceFlow;
 }
 
 function getMineruPageCount() {
