@@ -1633,6 +1633,82 @@ function assertOcrPatchShape(patch) {
       state.mineruInfo = {
         pdf_info: [
           {
+            page_size: [600, 800],
+            para_blocks: [
+              {
+                type: "text",
+                bbox: [80, 120, 520, 165],
+                lines: [{ spans: [{ content: "to show that the equation takes the form □Ψ = -8πζρ*(1 - 2s)." }] }]
+              },
+              {
+                type: "interline_equation",
+                bbox: [120, 240, 420, 290],
+                lines: [{ spans: [{ content: "$$\\\\n\\\\Psi = \\\\frac{2\\\\zeta}{R}\\\\sum_a m_a(1-2s_a)(1+\\\\mathcal{N}\\\\cdot v_a+\\\\ldots)\\\\n$$" }] }]
+              },
+              {
+                type: "text",
+                bbox: [525, 250, 565, 272],
+                lines: [{ spans: [{ content: "(11.113)" }] }]
+              }
+            ]
+          }
+        ]
+      };
+      const textSource = reviewSegmentsForPage(1)[0].markdown;
+      const formulaSource = reviewSegmentsForPage(1)[1].markdown;
+      const textPatch = createAndStoreDraftOcrPatch({
+        pageNo: 1,
+        blockIndex: "0",
+        oldText: textSource,
+        newText: "to show that the equation takes the form $\\\\Box\\\\Psi = -8\\\\pi\\\\zeta\\\\rho^{*}(1 - 2s)$.",
+        source: "human"
+      }).patch;
+      updateOcrPatchStatus(textPatch.patchId, "accepted");
+      const formulaPatch = createAndStoreDraftOcrPatch({
+        pageNo: 1,
+        blockIndex: "1",
+        oldText: formulaSource,
+        newText: "$$\\\\n\\\\Psi = \\\\frac{2\\\\zeta}{R}\\\\sum_a m_a(1-2s_a)(1+\\\\boldsymbol{N}\\\\cdot v_a+\\\\ldots)\\\\n$$",
+        source: "human"
+      }).patch;
+      updateOcrPatchStatus(formulaPatch.patchId, "accepted");
+      const automaticCount = applyAutomaticLocalCorrectionsForPage(1);
+      const latestText = getLatestOcrPatchForBlock(1, "0", textSource);
+      const latestFormula = getLatestOcrPatchForBlock(1, "1", formulaSource);
+      return JSON.stringify({
+        automaticCount,
+        patchCount: state.ocrPatches.length,
+        textStatus: latestText?.status || "",
+        formulaStatus: latestFormula?.status || "",
+        text: latestText?.newText || "",
+        formula: latestFormula?.newText || ""
+      });
+    })()`),
+  );
+  assert.strictEqual(result.automaticCount, 0, "automatic local corrections should not overwrite manual accepted patches");
+  assert.strictEqual(result.patchCount, 2, "manual accepted patches should not be replaced by automatic patches");
+  assert.strictEqual(result.textStatus, "accepted");
+  assert.strictEqual(result.formulaStatus, "accepted");
+  assert(result.text.includes("\\Box\\Psi"), "manual accepted prose should preserve the Box correction");
+  assert(result.formula.includes("\\boldsymbol{N}"), "manual accepted formula should preserve the vector N correction");
+  assert(!result.formula.includes("\\mathcal{N}"), "manual accepted formula should not fall back to the old mathcal N OCR");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.contentListItems = [];
+      state.contentListFileName = "";
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.mineruInfo = {
+        pdf_info: [
+          {
             para_blocks: [
               {
                 type: "interline_equation",
@@ -2971,6 +3047,59 @@ function setupPreviewBookExpression(pages) {
 {
   const result = JSON.parse(
     call(`(() => {
+      state.currentPage = 18;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.riskByPage.clear();
+      state.contentListItems = [
+        {
+          type: "discarded",
+          page_idx: 17,
+          page_size: [919, 1256],
+          bbox: [190, 225, 850, 330],
+          text: "Fig. 12.2 Although the uncertainties in the measured post-Keplerian parameter continue to decrease."
+        }
+      ];
+      state.mineruInfo = {
+        pdf_info: Array.from({ length: 18 }, (_unused, index) => index === 17
+          ? {
+              page_size: [919, 1256],
+              para_blocks: [
+                {
+                  type: "text",
+                  bbox: [190, 145, 850, 210],
+                  lines: [{ bbox: [190, 145, 850, 210], spans: [{ bbox: [190, 145, 850, 210], content: "two constraints, we obtain the values for the individual masses shown in Figure 12.2." }] }]
+                }
+              ]
+            }
+          : { page_size: [919, 1256], para_blocks: [] })
+      };
+      const risks = detectRiskCandidatesForPage(18);
+      const entries = buildReviewEntriesForPage(risks, reviewSegmentsForPage(18), 18);
+      const continuation = risks.find((risk) => risk.blockIndex === "content-list-discarded-18-0");
+      const figureLabel = inferMissingFigureLabelForBlock(18, "content-list-discarded-18-0", continuation?.text || "");
+      return JSON.stringify({
+        continuation,
+        figureLabel,
+        entries: entries.map((entry) => ({ key: entry.key, text: entry.segment.markdown }))
+      });
+    })()`),
+  );
+  assert.strictEqual(result.entries[0].key, "0", "current-page body text should remain before figure narrative continuation candidates");
+  assert.strictEqual(result.entries[1].key, "content-list-discarded-18-0", "figure narrative continuation should be anchored after the paragraph that references it");
+  assert.strictEqual(result.continuation.syntheticPlacement, "after_anchor");
+  assert.strictEqual(result.continuation.anchorBlockIndex, "0");
+  assert(result.entries[1].text.startsWith("Although the uncertainties"), "narrative continuation should not keep an incorrect leading figure label");
+  assert.strictEqual(result.figureLabel, "", "narrative continuation should not be treated as a figure caption needing a label");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
       state.currentPage = 12;
       state.mineruInfo = {
         pdf_info: Array.from({ length: 12 }, (_unused, index) => index === 11
@@ -2986,6 +3115,16 @@ function setupPreviewBookExpression(pages) {
                   type: "text",
                   bbox: [320, 38, 760, 62],
                   lines: [{ bbox: [320, 38, 760, 62], spans: [{ bbox: [320, 38, 760, 62], content: "Strong-Field and Dynamical Tests of Relativistic Gravity" }] }]
+                },
+                {
+                  type: "title",
+                  bbox: [380, 64, 540, 88],
+                  lines: [{ bbox: [380, 64, 540, 88], spans: [{ bbox: [380, 64, 540, 88], content: "Gravitational Radiation" }] }]
+                },
+                {
+                  type: "title",
+                  bbox: [390, 68, 530, 92],
+                  lines: [{ bbox: [390, 68, 530, 92], spans: [{ bbox: [390, 68, 530, 92], content: "References" }] }]
                 },
                 {
                   type: "text",
@@ -3005,6 +3144,8 @@ function setupPreviewBookExpression(pages) {
   assert(!result.original.some((text) => text.includes("12.1 Binary Pulsars")), "running page headers should be hidden from base page markdown");
   assert(!result.review.some((text) => text.includes("12.1 Binary Pulsars")), "running page headers should be hidden from right-column review");
   assert(!result.review.some((text) => text.includes("Strong-Field and Dynamical Tests")), "title-only running headers should also be hidden");
+  assert(!result.review.some((text) => text.includes("Gravitational Radiation")), "short title running headers should be hidden");
+  assert(!result.review.some((text) => text.includes("References")), "reference running headers should be hidden");
   assert(result.review.some((text) => text.includes("ever found for pulsed radiation")), "body text below the header should remain visible");
 }
 

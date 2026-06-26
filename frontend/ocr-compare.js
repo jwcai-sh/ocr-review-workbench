@@ -2100,7 +2100,17 @@ function reviewRiskFromSegment(segment, pageNumber = state.currentPage) {
 function riskVisualOrder(risk, orderByKey) {
   const bboxOrder = visualOrderForPageEntry(risk, Number.MAX_SAFE_INTEGER / 4);
   const hasVisualBBox = Boolean(normalizedBBox(risk?.bbox));
+  if (risk?.syntheticPlacement === "after_anchor") {
+    const anchorOrder = orderByKey.get(String(risk?.anchorBlockIndex));
+    if (Number.isFinite(anchorOrder)) {
+      return anchorOrder + 0.001;
+    }
+    return Number.isFinite(bboxOrder) ? bboxOrder : Number.MAX_SAFE_INTEGER / 2;
+  }
   if (risk?.syntheticPlacement === "page_top") {
+    if (risk?.supplementalSource === "content_list" && hasVisualBBox && Number.isFinite(bboxOrder)) {
+      return bboxOrder;
+    }
     if (risk?.reasons?.includes?.("cross_page_continuation") && hasVisualBBox && Number.isFinite(bboxOrder) && !isPageTopBBox(risk?.bbox, risk?.pageSize)) {
       return bboxOrder;
     }
@@ -2989,15 +2999,16 @@ function applyAutomaticLocalCorrectionsForPage(pageNumber) {
       return;
     }
     const existingPatch = getLatestOcrPatchForBlock(pageNo, blockKey, sourceMarkdown);
+    const existingAutoCorrection = String(existingPatch?.metadata?.autoCorrection || "");
+    if (existingPatch?.status === "draft" || isManualAcceptedOcrPatch(existingPatch)) {
+      return;
+    }
     const activeMarkdown = mathpixDrafts.get(blockKey) || blockOverrides.get(blockKey) || reviewPatchMarkdown(existingPatch) || sourceMarkdown;
     const numberedMarkdown = autoCorrectMathEquationNumberMarkdown(pageNo, blockKey, activeMarkdown, segment);
     if (numberedMarkdown && numberedMarkdown !== activeMarkdown.replace(/\r\n?/g, "\n").trim()) {
       if (saveAutomaticAcceptedBlockPatch(pageNo, blockKey, sourceMarkdown, numberedMarkdown, "equation_number_preservation")) {
         changedCount += 1;
       }
-      return;
-    }
-    if (mathpixDrafts.has(blockKey) || existingPatch?.status === "draft") {
       return;
     }
     const captionLabelMarkdown = autoCorrectFigureCaptionLabelMarkdown(pageNo, blockKey, activeMarkdown);
@@ -3007,7 +3018,6 @@ function applyAutomaticLocalCorrectionsForPage(pageNumber) {
       }
       return;
     }
-    const existingAutoCorrection = String(existingPatch?.metadata?.autoCorrection || "");
     const canRefreshPlainCleanup =
       !existingPatch ||
       existingPatch.status !== "accepted" ||
@@ -3030,6 +3040,10 @@ function applyAutomaticLocalCorrectionsForPage(pageNumber) {
     updateCorrectionSummary();
   }
   return changedCount;
+}
+
+function isManualAcceptedOcrPatch(patch) {
+  return Boolean(patch?.status === "accepted" && patch?.source === "human" && !String(patch?.metadata?.autoCorrection || ""));
 }
 
 function saveAutomaticAcceptedBlockPatch(pageNo, blockKey, oldMarkdown, newMarkdown, autoCorrection = "plain_text_cleanup") {
@@ -3444,6 +3458,9 @@ function looksLikeFigureCaptionText(text) {
     return false;
   }
   if (/^(the|this|these|those)\b/i.test(value)) {
+    return false;
+  }
+  if (startsLikeNarrativeProse(value)) {
     return false;
   }
   const strongSignals = [
@@ -4548,7 +4565,7 @@ function isLikelyPageHeaderText(text, bbox, pageSize) {
     .replace(/^#{1,6}\s+/, "")
     .replace(/\s+/g, " ")
     .trim();
-  if (!value || value.length > 120 || isLikelyReferenceHeading(value)) {
+  if (!value || value.length > 120) {
     return false;
   }
   const geometry = bboxGeometryForPageSize(bbox, pageSize);
@@ -4556,6 +4573,9 @@ function isLikelyPageHeaderText(text, bbox, pageSize) {
     return false;
   }
   if (isPageNumberOnlyText(value)) {
+    return true;
+  }
+  if (isLikelyReferenceHeading(value)) {
     return true;
   }
   if (/[\$\\]|[.!?。！？]$/.test(value)) {
@@ -4573,7 +4593,7 @@ function isLikelyPageHeaderText(text, bbox, pageSize) {
     return false;
   }
   const words = value.split(/\s+/).filter(Boolean);
-  if (words.length < 3 || words.length > 12) {
+  if (words.length < 2 || words.length > 12) {
     return false;
   }
   const capitalized = words.filter((word) => /^[A-ZÀ-Þ0-9]/.test(word) || /^(and|of|the|in|for|to|with|on)$/i.test(word)).length;
@@ -5951,8 +5971,9 @@ function detectContentListRiskCandidatesForPage(pageNumber) {
       .filter(Boolean),
   );
   const pageSize = inferContentListPageSize(pageNumber, items);
+  const sourceSegments = reviewSegmentsForPage(pageNumber);
   return items
-    .map((item, pageItemIndex) => contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSize, middleTexts))
+    .map((item, pageItemIndex) => contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSize, middleTexts, sourceSegments))
     .filter(Boolean);
 }
 
@@ -6063,11 +6084,13 @@ function hasCrossPageContinuationForPage(pageNumber) {
   return detectCrossPageContinuationCandidatesForPage(pageNumber).length > 0;
 }
 
-function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSize, middleTexts) {
+function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSize, middleTexts, sourceSegments = []) {
   if (!item || item.type !== "discarded") {
     return null;
   }
-  const text = contentListItemText(item);
+  const rawText = contentListItemText(item);
+  const continuation = figureOrTableNarrativeContinuation(rawText, sourceSegments);
+  const text = continuation?.text || rawText;
   const normalized = normalizeTextForComparison(text);
   if (
     !normalized ||
@@ -6085,7 +6108,8 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
   const scored = scoreRiskBlock(text);
   const reasons = scored.reasons.slice();
   let score = scored.score;
-  const isTopCandidate = Boolean(geometry?.topRatio <= 0.2 && text.length >= 6);
+  const isAnchoredContinuation = Boolean(continuation?.anchorBlockIndex != null);
+  const isTopCandidate = Boolean(!isAnchoredContinuation && geometry?.topRatio <= 0.2 && text.length >= 6);
   if (isTopCandidate && hasCrossPageContinuationForPage(pageNumber)) {
     return null;
   }
@@ -6112,6 +6136,12 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
       reasons.push("background_heading_missing");
     }
   }
+  if (isAnchoredContinuation) {
+    score = Math.max(score, 0.33);
+    if (!reasons.includes("content_list_anchored_continuation")) {
+      reasons.push("content_list_anchored_continuation");
+    }
+  }
   if (isBottomCandidate) {
     score = Math.max(score, 0.31);
     if (!reasons.includes("page_bottom_boundary")) {
@@ -6129,11 +6159,56 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
     text,
     score: Math.min(score, 1),
     reasons: Array.from(new Set(reasons)),
-    syntheticPlacement: isTopCandidate ? "page_top" : isBottomCandidate ? "page_bottom" : "content_list",
-    syntheticLabel: isFootnoteCandidate ? "content_list 脚注候选" : isTopCandidate ? "content_list 标题候选" : "content_list 补充候选",
+    syntheticPlacement: isAnchoredContinuation ? "after_anchor" : isTopCandidate ? "page_top" : isBottomCandidate ? "page_bottom" : "content_list",
+    syntheticLabel: isFootnoteCandidate ? "content_list 脚注候选" : isTopCandidate ? "content_list 标题候选" : isAnchoredContinuation ? "content_list 续段候选" : "content_list 补充候选",
     supplementalSource: "content_list",
     contentListIndex: item.__contentListIndex,
+    anchorBlockIndex: continuation?.anchorBlockIndex,
   };
+}
+
+function figureOrTableNarrativeContinuation(text, sourceSegments = []) {
+  const raw = String(text || "").replace(/\s+/g, " ").trim();
+  const leading = leadingFigureOrTableReferenceLabel(raw);
+  if (!leading) {
+    return null;
+  }
+  const body = raw.slice(leading.raw.length).replace(/^[:.．、\s-]+/, "").trim();
+  if (!startsLikeNarrativeProse(body) || looksLikeFigureCaptionText(body)) {
+    return null;
+  }
+  const anchor = (Array.isArray(sourceSegments) ? sourceSegments : []).find((segment) =>
+    markdownMentionsReferenceLabel(segment?.markdown, leading),
+  );
+  return anchor ? { text: body, anchorBlockIndex: String(anchor.blockIndex) } : null;
+}
+
+function leadingFigureOrTableReferenceLabel(text) {
+  const match = String(text || "").trim().match(/^(Fig(?:ure)?\.?|Table)\s*(\d+(?:\.\d+)*[A-Za-z]?)/i);
+  if (!match) {
+    return null;
+  }
+  const type = /^tab/i.test(match[1]) ? "table" : "figure";
+  return {
+    raw: match[0],
+    type,
+    number: match[2],
+  };
+}
+
+function startsLikeNarrativeProse(text) {
+  return /^(Although|Because|However|Therefore|Thus|If|In\s+fact|In\s+this|From|Using|We|It|This|These|The|For|As|Where|When|Once)\b/i.test(
+    String(text || "").trim(),
+  );
+}
+
+function markdownMentionsReferenceLabel(markdown, label) {
+  if (!label?.number) {
+    return false;
+  }
+  const escapedNumber = label.number.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const typePattern = label.type === "table" ? "Table" : "(?:Fig(?:ure)?\\.?)";
+  return new RegExp(`\\b${typePattern}\\s*${escapedNumber}\\b`, "i").test(String(markdown || ""));
 }
 
 function detectCrossPageRiskCandidatesForPage(pageNumber) {
