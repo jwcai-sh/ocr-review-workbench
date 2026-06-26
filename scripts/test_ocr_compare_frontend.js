@@ -3233,12 +3233,12 @@ function setupPreviewBookExpression(pages) {
       { key: "1", displayIndex: 1, segment: { markdown: "Block source" }, risk: { blockIndex: "1", reasons: ["math"] } }
     ]);
   })()`);
-  assert(navHtml.includes('data-page-nav="review-workbench"'));
   assert(navHtml.includes("review-font-nav-group"));
   assert(navHtml.includes("data-review-fit-page"));
   assert(navHtml.includes('data-review-font-scale="out"'));
   assert(navHtml.includes('data-review-font-scale="in"'));
-  assert(navHtml.includes("review-page-nav-group"));
+  assert(!navHtml.includes("review-page-nav-group"));
+  assert(!navHtml.includes('data-page-nav="review-workbench"'));
   assert(navHtml.includes("块 1 / 1"));
   assert(!navHtml.includes("下一高风险页"));
   assert(!navHtml.includes("data-next-risk-page"));
@@ -3314,6 +3314,7 @@ function setupPreviewBookExpression(pages) {
         }
       };
       state.currentPage = 6;
+      state.pdfPageCount = 6;
       state.riskByPage.clear();
       state.mineruInfo = null;
       state.pdfImageZoom = 1;
@@ -3337,9 +3338,11 @@ function setupPreviewBookExpression(pages) {
   assert(result.normalHtml.includes('data-image-zoom="in"'));
   assert(result.normalHtml.includes('data-image-zoom="out"'));
   assert(result.normalHtml.includes("data-image-fit-page"));
-  assert(!result.normalHtml.includes('data-page-nav="source-page"'));
-  assert(!result.normalHtml.includes('data-page-jump="prev"'));
-  assert(!result.normalHtml.includes('data-page-jump="next"'));
+  assert(result.normalHtml.includes('data-page-nav="source-page"'));
+  assert(result.normalHtml.includes('data-page-jump="prev"'));
+  assert(result.normalHtml.includes('data-page-jump="next"'));
+  assert(result.normalHtml.includes('data-source-page-thumbnail="6"'), "left source pane should include PDF-like page thumbnails");
+  assert(result.normalHtml.includes("source-page-viewer"));
   assert(result.normalHtml.includes("image-zoom-glyph"));
   assert(result.normalHtml.includes("page-image-surface"));
   assert(result.normalHtml.includes("data-page-image-focus"));
@@ -3352,6 +3355,40 @@ function setupPreviewBookExpression(pages) {
   assert(!result.fittedClass.includes("is-zoomed"));
   assert(result.fittedHtml.includes("--pdf-page-aspect-ratio: 919 / 1256"));
   assert(result.listeners.includes("click"));
+  assert(result.listeners.includes("wheel"), "left source pane should listen for wheel-driven page navigation");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      const visited = [];
+      const originalGoToPage = goToPage;
+      goToPage = (pageNumber) => {
+        visited.push(pageNumber);
+        state.currentPage = pageNumber;
+        return Promise.resolve();
+      };
+      sourcePageWheelDelta = 0;
+      sourcePageWheelLockedUntil = 0;
+      state.currentPage = 2;
+      state.pdfPageCount = 3;
+      state.mineruInfo = null;
+      const event = {
+        deltaY: 60,
+        deltaX: 0,
+        prevented: false,
+        preventDefault() {
+          this.prevented = true;
+        }
+      };
+      handleSourcePageWheelNavigation(event);
+      goToPage = originalGoToPage;
+      return JSON.stringify({ visited, prevented: event.prevented, currentPage: state.currentPage });
+    })()`),
+  );
+  assert.deepStrictEqual(result.visited, [3], "wheel down in the source pane should advance one page");
+  assert.strictEqual(result.currentPage, 3, "wheel page navigation should update the current page through goToPage");
+  assert.strictEqual(result.prevented, true, "source pane wheel page navigation should prevent native scrolling");
 }
 
 {
@@ -3576,6 +3613,41 @@ function setupPreviewBookExpression(pages) {
   assert(result.html.includes('data-review-block-select'));
   assert(result.html.includes('value="7" selected'));
   assert(result.html.includes("Block 2"));
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.pdfPageCount = 2;
+      state.reviewExpanded = new Set(["1:1"]);
+      state.riskByPage.clear();
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [100, 100],
+            para_blocks: [
+              { type: "text", bbox: [0, 0, 10, 10], lines: [{ spans: [{ content: "Page one block A." }] }] },
+              { type: "text", bbox: [0, 20, 10, 30], lines: [{ spans: [{ content: "Page one block B." }] }] }
+            ]
+          },
+          {
+            page_size: [100, 100],
+            para_blocks: [
+              { type: "text", bbox: [0, 0, 10, 10], lines: [{ spans: [{ content: "Page two block A." }] }] }
+            ]
+          }
+        ]
+      };
+      const entries = reviewEntriesForCurrentPage();
+      const target = reviewBlockStepTarget("next", entries, activeReviewEntryIndex(entries));
+      const html = renderReviewNavigationBar(entries);
+      return JSON.stringify({ target, html });
+    })()`),
+  );
+  assert.deepStrictEqual(result.target, { pageNumber: 2, blockIndex: "0" }, "next block navigation should cross to the next page");
+  assert(result.html.includes('data-review-block-step="next"'));
+  assert(!/data-review-block-step="next" disabled/.test(result.html), "next block button should stay enabled when next page has blocks");
 }
 
 {

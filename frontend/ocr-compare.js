@@ -4,6 +4,8 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
+const SOURCE_PAGE_WHEEL_DELTA_THRESHOLD = 48;
+const SOURCE_PAGE_WHEEL_COOLDOWN_MS = 260;
 const OCR_COMPARE_BUILD_ID = "20260626-file-runtime-api-fallback";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -79,6 +81,8 @@ let pagePrefetchTimer = null;
 const pendingPagePreviewRequests = new Map();
 const pendingMathTypesetRoots = new Set();
 let mathTypesetTimer = null;
+let sourcePageWheelDelta = 0;
+let sourcePageWheelLockedUntil = 0;
 
 function getOcrCoreNormalizeMathDelimiters() {
   if (ocrCoreNormalizeMathDelimiters) {
@@ -908,7 +912,7 @@ function restoreNestedMap(entries) {
 }
 
 async function goToPage(pageNumber) {
-  const total = state.pdfPageCount || getMineruPageCount() || 1;
+  const total = getReviewPageCount();
   const nextPage = Math.max(1, Math.min(pageNumber, total));
   if (nextPage === state.currentPage && state.pageCache.has(nextPage)) {
     return;
@@ -923,7 +927,7 @@ async function goToPage(pageNumber) {
 }
 
 async function goToPagerTarget(target) {
-  const total = state.pdfPageCount || getMineruPageCount() || 1;
+  const total = getReviewPageCount();
   const targets = {
     first: 1,
     prev: state.currentPage - 1,
@@ -931,6 +935,10 @@ async function goToPagerTarget(target) {
     last: total,
   };
   await goToPage(targets[target] || state.currentPage);
+}
+
+function getReviewPageCount() {
+  return state.pdfPageCount || getMineruPageCount() || 1;
 }
 
 async function goToNextRiskPage() {
@@ -970,6 +978,7 @@ async function renderCurrentPage() {
   els.pageList.append(row);
   typesetMath(row);
   syncPdfFocusToExpandedReviewBlock();
+  scheduleSourcePageThumbnailSync(row);
   scheduleReviewFitScale(row);
   updateAcceptedPatchTopControls();
   scheduleAdjacentPagePreviewPrefetch();
@@ -1313,7 +1322,13 @@ function renderImageCard(page) {
     : `<div class="empty-inline">尚未选择 PDF。</div>`;
   card.innerHTML = `
     <div class="card-head image-card-head">
-      <strong>第 ${state.currentPage} 页</strong>
+      <div class="source-page-title">
+        <span>原文单页</span>
+        <strong>第 ${state.currentPage} 页</strong>
+      </div>
+      <div class="source-page-card-pager">
+        ${renderPageNavigator("source-page")}
+      </div>
       <div class="card-actions">
         <button class="text-button image-zoom-button image-fit-button ${fitToPage ? "is-active" : ""}" type="button" data-image-fit-page ${page.image ? "" : "disabled"} aria-label="原书整页适配窗口" title="整页适配">
           <span class="fit-page-glyph" aria-hidden="true">⛶</span>
@@ -1327,8 +1342,21 @@ function renderImageCard(page) {
         <span>${page.width || "-"} × ${page.height || "-"}</span>
       </div>
     </div>
-    <div class="page-image-wrap" style="--pdf-image-zoom: ${zoom};">${imageHtml}</div>
+    <div class="source-page-viewer">
+      ${renderSourcePageThumbnailRail()}
+      <div class="page-image-wrap" style="--pdf-image-zoom: ${zoom};">${imageHtml}</div>
+    </div>
   `;
+  card.querySelectorAll("[data-page-jump]").forEach((button) => {
+    button.addEventListener("click", () => goToPagerTarget(button.dataset.pageJump));
+  });
+  card.querySelectorAll("[data-page-input]").forEach((input) => {
+    input.addEventListener("change", () => goToPage(Number(input.value || state.currentPage)));
+  });
+  card.querySelectorAll("[data-source-page-thumbnail]").forEach((button) => {
+    button.addEventListener("click", () => goToPage(Number(button.dataset.sourcePageThumbnail || state.currentPage)));
+  });
+  card.querySelector(".source-page-viewer")?.addEventListener("wheel", handleSourcePageWheelNavigation, { passive: false });
   card.querySelectorAll("[data-image-fit-page]").forEach((button) => {
     button.addEventListener("click", async () => {
       state.pdfFitToPage = !state.pdfFitToPage;
@@ -1346,6 +1374,75 @@ function renderImageCard(page) {
     button.addEventListener("click", () => selectReviewBlock(button.dataset.reviewLeftHotspot));
   });
   return card;
+}
+
+function handleSourcePageWheelNavigation(event) {
+  const total = getReviewPageCount();
+  if (total <= 1) {
+    return;
+  }
+  const deltaY = Number(event?.deltaY) || 0;
+  const deltaX = Number(event?.deltaX) || 0;
+  const delta = Math.abs(deltaY) >= Math.abs(deltaX) ? deltaY : deltaX;
+  if (!delta) {
+    return;
+  }
+  event.preventDefault?.();
+  const now = Date.now();
+  if (now < sourcePageWheelLockedUntil) {
+    return;
+  }
+  sourcePageWheelDelta += delta;
+  if (Math.abs(sourcePageWheelDelta) < SOURCE_PAGE_WHEEL_DELTA_THRESHOLD) {
+    return;
+  }
+  const targetPage = clamp(state.currentPage + (sourcePageWheelDelta > 0 ? 1 : -1), 1, total);
+  sourcePageWheelDelta = 0;
+  if (targetPage === state.currentPage) {
+    return;
+  }
+  sourcePageWheelLockedUntil = now + SOURCE_PAGE_WHEEL_COOLDOWN_MS;
+  goToPage(targetPage).catch((error) => {
+    setStatus("Page", "error", error?.message || String(error || ""));
+  });
+}
+
+function renderSourcePageThumbnailRail() {
+  const total = getReviewPageCount();
+  const pages = Array.from({ length: total }, (_unused, index) => index + 1);
+  return `
+    <aside class="source-page-rail" aria-label="原文页缩略图">
+      <div class="source-page-rail-title">页</div>
+      <div class="source-page-thumbnail-list">
+        ${pages.map(renderSourcePageThumbnail).join("")}
+      </div>
+    </aside>
+  `;
+}
+
+function renderSourcePageThumbnail(pageNumber) {
+  const page = state.pageCache.get(pageNumber);
+  const active = Number(pageNumber) === Number(state.currentPage);
+  const image = page?.image
+    ? `<img src="${escapeHtml(page.image)}" alt="第 ${escapeHtml(String(pageNumber))} 页缩略图">`
+    : `<span class="source-page-thumbnail-placeholder">${escapeHtml(String(pageNumber))}</span>`;
+  return `
+    <button class="source-page-thumbnail ${active ? "is-active" : ""}" type="button" data-source-page-thumbnail="${escapeHtml(String(pageNumber))}" ${active ? 'aria-current="page"' : ""} aria-label="跳转到第 ${escapeHtml(String(pageNumber))} 页">
+      <span class="source-page-thumbnail-paper">${image}</span>
+      <span class="source-page-thumbnail-number">${escapeHtml(String(pageNumber))}</span>
+    </button>
+  `;
+}
+
+function scheduleSourcePageThumbnailSync(root = document) {
+  if (typeof setTimeout !== "function") {
+    return false;
+  }
+  setTimeout(() => {
+    const active = root?.querySelector?.(".source-page-thumbnail.is-active");
+    active?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, 0);
+  return true;
 }
 
 function renderPdfBlockHotspots(reviewEntries) {
@@ -1899,6 +1996,8 @@ function renderReviewNavigationBar(reviewEntries) {
   const entries = Array.isArray(reviewEntries) ? reviewEntries : [];
   const activeIndex = entries.length ? Math.max(0, activeReviewEntryIndex(entries)) : -1;
   const active = activeIndex >= 0 ? entries[activeIndex] : null;
+  const previousBlockTarget = reviewBlockStepTarget("prev", entries, activeIndex);
+  const nextBlockTarget = reviewBlockStepTarget("next", entries, activeIndex);
   const fontScale = currentReviewFontScale();
   const fontScaleIndex = REVIEW_FONT_SCALE_LEVELS.indexOf(fontScale);
   return `
@@ -1915,16 +2014,10 @@ function renderReviewNavigationBar(reviewEntries) {
             <span class="image-zoom-glyph" aria-hidden="true"><span>A</span><span>⌃</span></span>
           </button>
         </div>
-        <div class="review-page-nav-group">
-          <span class="review-nav-group-label">页面</span>
-          <div class="review-workbench-pager">
-            ${renderPageNavigator("review-workbench")}
-          </div>
-        </div>
         <div class="review-block-nav-group">
           <span class="review-nav-group-label">块 ${activeIndex >= 0 ? `${activeIndex + 1} / ${entries.length}` : "0 / 0"}</span>
           <div class="review-block-nav-controls">
-            <button class="secondary-button block-step-button" type="button" data-review-block-step="prev" ${activeIndex <= 0 ? "disabled" : ""} aria-label="上一校对块" title="上一校对块">‹</button>
+            <button class="secondary-button block-step-button" type="button" data-review-block-step="prev" ${previousBlockTarget ? "" : "disabled"} aria-label="上一校对块" title="上一校对块">‹</button>
             <select data-review-block-select aria-label="选择校对块" ${entries.length ? "" : "disabled"}>
               ${
                 entries.length
@@ -1932,7 +2025,7 @@ function renderReviewNavigationBar(reviewEntries) {
                   : '<option value="">当前页没有可校对块</option>'
               }
             </select>
-            <button class="secondary-button block-step-button" type="button" data-review-block-step="next" ${activeIndex < 0 || activeIndex >= entries.length - 1 ? "disabled" : ""} aria-label="下一校对块" title="下一校对块">›</button>
+            <button class="secondary-button block-step-button" type="button" data-review-block-step="next" ${nextBlockTarget ? "" : "disabled"} aria-label="下一校对块" title="下一校对块">›</button>
           </div>
         </div>
         ${renderNeedsCorrectionNav(entries)}
@@ -1944,6 +2037,30 @@ function renderReviewNavigationBar(reviewEntries) {
 function currentPageNeedsCorrectionEntries(reviewEntries) {
   const entries = Array.isArray(reviewEntries) ? reviewEntries : [];
   return entries.filter((entry) => state.reviewNeedsCorrection.has(reviewBlockKey(state.currentPage, entry.key)));
+}
+
+function reviewBlockStepTarget(direction, entries = reviewEntriesForCurrentPage(), activeIndex = activeReviewEntryIndex(entries)) {
+  const currentEntries = Array.isArray(entries) ? entries : [];
+  const currentPage = Number(state.currentPage) || 1;
+  if (currentEntries.length) {
+    const numericActiveIndex = Number(activeIndex);
+    const safeIndex = clamp(Number.isFinite(numericActiveIndex) ? numericActiveIndex : 0, 0, currentEntries.length - 1);
+    const adjacentIndex = direction === "prev" ? safeIndex - 1 : safeIndex + 1;
+    if (adjacentIndex >= 0 && adjacentIndex < currentEntries.length) {
+      return { pageNumber: currentPage, blockIndex: currentEntries[adjacentIndex].key };
+    }
+  }
+  const total = getReviewPageCount();
+  const step = direction === "prev" ? -1 : 1;
+  for (let pageNumber = currentPage + step; pageNumber >= 1 && pageNumber <= total; pageNumber += step) {
+    const pageEntries = reviewEntriesForPage(pageNumber);
+    if (!pageEntries.length) {
+      continue;
+    }
+    const targetEntry = direction === "prev" ? pageEntries[pageEntries.length - 1] : pageEntries[0];
+    return { pageNumber, blockIndex: targetEntry.key };
+  }
+  return null;
 }
 
 function renderNeedsCorrectionNav(reviewEntries) {
@@ -2590,13 +2707,15 @@ async function toggleReviewBlock(key) {
 
 async function navigateReviewBlock(direction) {
   const entries = reviewEntriesForCurrentPage();
-  if (!entries.length) {
+  const target = reviewBlockStepTarget(direction, entries, activeReviewEntryIndex(entries));
+  if (!target) {
     return;
   }
-  const currentIndex = Math.max(0, activeReviewEntryIndex(entries));
-  const delta = direction === "prev" ? -1 : 1;
-  const nextIndex = clamp(currentIndex + delta, 0, entries.length - 1);
-  await selectReviewBlock(entries[nextIndex].key);
+  if (Number(target.pageNumber) === Number(state.currentPage)) {
+    await selectReviewBlock(target.blockIndex);
+    return;
+  }
+  await goToReviewBlockTarget(target.pageNumber, target.blockIndex);
 }
 
 async function selectReviewBlock(blockIndex) {
@@ -2877,8 +2996,13 @@ function normalizeReviewBlockKey(blockIndex, pageNumber = state.currentPage) {
 }
 
 function reviewEntriesForCurrentPage() {
-  const risks = state.riskByPage.get(state.currentPage) || [];
-  return buildReviewEntriesForPage(risks, reviewSegmentsForPage(state.currentPage), state.currentPage);
+  return reviewEntriesForPage(state.currentPage);
+}
+
+function reviewEntriesForPage(pageNumber) {
+  const pageNo = Number(pageNumber) || 1;
+  const risks = state.mineruInfo ? analyzeMineruRiskPage(pageNo) : state.riskByPage.get(pageNo) || [];
+  return buildReviewEntriesForPage(risks, reviewSegmentsForPage(pageNo), pageNo);
 }
 
 function scrollSelectedReviewBlockIntoView() {
@@ -2904,16 +3028,24 @@ function scrollExpandedReviewItemIntoView() {
 }
 
 async function jumpToCrossPageBlock(pageNumber, blockIndex) {
+  await goToReviewBlockTarget(pageNumber, blockIndex);
+}
+
+async function goToReviewBlockTarget(pageNumber, blockIndex) {
   const targetPage = Number(pageNumber);
   if (!Number.isFinite(targetPage) || targetPage < 1) {
     return;
   }
-  state.currentPage = Math.max(1, Math.min(targetPage, state.pdfPageCount || getMineruPageCount() || 1));
+  state.currentPage = Math.max(1, Math.min(targetPage, getReviewPageCount()));
   state.acceptedPatchPreview = null;
+  state.reviewActionsOpen.clear();
+  state.reviewCorrectionOpen.clear();
   state.reviewExpanded.clear();
   expandOnlyReviewBlock(state.currentPage, String(blockIndex || ""));
   updatePager();
   await renderCurrentPage();
+  scrollSelectedReviewBlockIntoView();
+  schedulePdfFocusSync();
 }
 
 async function applyMathpixBlockEdit(blockIndex, trigger) {
