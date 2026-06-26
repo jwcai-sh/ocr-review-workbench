@@ -4557,7 +4557,11 @@ function lineHasCrossPageContent(line) {
 }
 
 function isLikelyPageHeaderEntry(entry) {
-  return isLikelyPageHeaderText(entry?.markdown, entry?.bbox, entry?.pageSize);
+  const value = String(entry?.markdown || "")
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return isLikelyReferenceHeading(value) || isLikelyPageHeaderText(value, entry?.bbox, entry?.pageSize);
 }
 
 function isLikelyPageHeaderText(text, bbox, pageSize) {
@@ -5978,6 +5982,9 @@ function detectContentListRiskCandidatesForPage(pageNumber) {
 }
 
 function detectPdfReferenceTextCandidatesForPage(pageNumber) {
+  if (pageHasBibliographyBodyCandidate(pageNumber)) {
+    return [];
+  }
   const textBlocks = pdfTextBlocksForPage(pageNumber)
     .map((block) => ({
       text: String(block?.text || "").trim(),
@@ -6095,9 +6102,13 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
   if (
     !normalized ||
     normalized.length < 4 ||
+    isLikelyReferenceHeading(text) ||
     isPageNumberOnlyText(normalized) ||
     isTextRedundantWithNormalizedSet(normalized, middleTexts)
   ) {
+    return null;
+  }
+  if (isLikelyBibliographyText(text) && pageHasBibliographyBodyCandidate(pageNumber, { excludeContentListIndex: item.__contentListIndex })) {
     return null;
   }
   const bbox = normalizedBBox(item.bbox);
@@ -6873,6 +6884,26 @@ function isLikelyBibliographyText(text) {
     return false;
   }
   return starts >= 2 || (starts >= 1 && yearHits >= 2) || (yearHits >= 3 && referenceSignals >= 2);
+}
+
+function pageHasBibliographyBodyCandidate(pageNumber, options = {}) {
+  const excludeContentListIndex = options?.excludeContentListIndex;
+  const mineruHasBody = reviewBlockMarkdownsForPage(pageNumber).some((entry) => {
+    const text = String(entry?.markdown || "")
+      .replace(/^#{1,6}\s+/, "")
+      .trim();
+    return text && !isLikelyReferenceHeading(text) && isLikelyBibliographyText(text);
+  });
+  if (mineruHasBody) {
+    return true;
+  }
+  return contentListItemsForPage(pageNumber).some((item) => {
+    if (excludeContentListIndex != null && item?.__contentListIndex === excludeContentListIndex) {
+      return false;
+    }
+    const text = contentListItemText(item);
+    return text && !isLikelyReferenceHeading(text) && isLikelyBibliographyText(text);
+  });
 }
 
 function isLikelyReferenceHeading(text) {

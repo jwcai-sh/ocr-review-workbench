@@ -1424,6 +1424,47 @@ function assertOcrPatchShape(patch) {
 }
 
 {
+  const result = JSON.parse(
+    call(`(() => {
+      const referenceBody = "Adelberger, E. G., Heckel, B. R., Hoedl, S., Hoyle, C. D., et al. 2007. Particle-physics implications of a recent test of the gravitational inverse-square law. Phys. Rev. Lett., 98, 131104, ArXiv e-prints hep-ph/0611223.\\nAgathos, M., Del Pozzo, W., Li, T. G. F., Van Den Broeck, C., et al. 2014. TIGER: A data analysis pipeline for testing the strong-field dynamics of general relativity. Phys. Rev. D, 89, 082001, ArXiv e-prints 1311.0420.";
+      state.currentPage = 43;
+      state.pdfTextPageCache.clear();
+      state.contentListItems = [
+        { type: "discarded", page_idx: 42, text: referenceBody + " Alexander, S., and Yunes, N. 2009. Chern-Simons modified general relativity. Phys. Rep., 480, 1-55, ArXiv e-prints 0907.2562.", bbox: [80, 140, 760, 940], __contentListIndex: 0 },
+        { type: "discarded", page_idx: 42, text: "References", bbox: [390, 1010, 530, 1035], __contentListIndex: 1 }
+      ];
+      state.mineruInfo = {
+        pdf_info: Array.from({ length: 43 }, (_unused, index) => index === 42
+          ? {
+              page_size: [919, 1256],
+              para_blocks: [
+                { type: "list", bbox: [90, 150, 780, 620], lines: referenceBody.split("\\n").map((content) => ({ spans: [{ content }] })) },
+                { type: "title", bbox: [390, 1010, 530, 1035], lines: [{ spans: [{ content: "References" }] }] }
+              ]
+            }
+          : { page_size: [919, 1256], para_blocks: [] })
+      };
+      state.pdfTextPageCache.set(43, {
+        pageSize: [919, 1256],
+        textBlocks: [
+          { text: "References", bbox: [430, 70, 520, 95] },
+          { text: referenceBody + " Alexander, S., and Yunes, N. 2009. Chern-Simons modified general relativity. Phys. Rep., 480, 1-55, ArXiv e-prints 0907.2562.", bbox: [80, 140, 760, 940] }
+        ]
+      });
+      const risks = detectRiskCandidatesForPage(43);
+      return JSON.stringify({
+        risks: risks.map((risk) => ({ blockIndex: risk.blockIndex, text: risk.text, syntheticLabel: risk.syntheticLabel })),
+        review: reviewSegmentsForPage(43).map((entry) => entry.markdown)
+      });
+    })()`),
+  );
+  assert(!result.risks.some((risk) => risk.blockIndex === "pdf-reference-text-43"), "PDF reference supplement should not duplicate an existing MinerU bibliography block");
+  assert(!result.risks.some((risk) => String(risk.blockIndex).startsWith("content-list-discarded-43")), "content_list reference supplement should not duplicate an existing MinerU bibliography block");
+  assert(!result.review.some((text) => /^###\\s+References\\s*$/i.test(text.trim()) || /^References\\s*$/i.test(text.trim())), "standalone References headings should be hidden even when bbox is not page-top");
+  assert(result.review.some((text) => text.includes("Adelberger, E. G.")), "the real reference body should remain");
+}
+
+{
   const collapsedMathpixSource = "Foracompactbinarysystem,thewaveforms$\\tilde{h}^{j k}$and$\\Psi$aregivento therequiredorders\nwhere$\\mathcal{G}=1-\\zeta$[seeEq. (10.65)], and";
   const result = JSON.parse(
     call(`(() => {
