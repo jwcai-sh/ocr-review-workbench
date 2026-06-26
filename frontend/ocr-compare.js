@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260626-orphan-inline-math";
+const OCR_COMPARE_BUILD_ID = "20260626-file-runtime-api-fallback";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -34,7 +34,9 @@ const state = {
   reviewNeedsCorrection: new Set(),
   reviewInitializedPages: new Set(),
   pdfImageZoom: DEFAULT_PDF_IMAGE_ZOOM,
+  pdfFitToPage: false,
   reviewFontScale: DEFAULT_REVIEW_FONT_SCALE,
+  reviewFitToPage: false,
   middleColumnCollapsed: false,
   mathpixConfigured: null,
   mathpixConfigError: "",
@@ -300,7 +302,7 @@ function apiUrl(path) {
 }
 
 function resolveApiBase() {
-  const configured = normalizeApiBase(RUNTIME_CONFIG.apiBaseUrl || RUNTIME_CONFIG.backendUrl || "");
+  const configured = configuredApiBase();
   if (configured) {
     return configured;
   }
@@ -311,11 +313,19 @@ function resolveApiBase() {
 }
 
 function normalizeApiBase(base) {
-  return String(base || "").replace(/\/+$/, "");
+  const normalized = String(base || "").trim().replace(/\/+$/, "");
+  if (!normalized || normalized === "null" || normalized === "file:" || normalized.startsWith("file://")) {
+    return "";
+  }
+  return normalized;
+}
+
+function configuredApiBase() {
+  return normalizeApiBase(RUNTIME_CONFIG.apiBaseUrl || RUNTIME_CONFIG.backendUrl || "");
 }
 
 function localApiBaseFallbacks() {
-  if (RUNTIME_CONFIG.apiBaseUrl || RUNTIME_CONFIG.backendUrl || window.location.protocol !== "file:") {
+  if (configuredApiBase() || window.location.protocol !== "file:") {
     return [apiBase];
   }
   return Array.from(new Set([apiBase, ...LOCAL_API_BASE_CANDIDATES].map(normalizeApiBase)));
@@ -722,6 +732,8 @@ function buildOcrWorkspacePayload() {
     ocrPatches: Array.isArray(state.ocrPatches) ? state.ocrPatches : [],
     reviewNeedsCorrection: Array.from(state.reviewNeedsCorrection || []),
     reviewFontScale: state.reviewFontScale,
+    reviewFitToPage: Boolean(state.reviewFitToPage),
+    pdfFitToPage: Boolean(state.pdfFitToPage),
   };
 }
 
@@ -744,6 +756,8 @@ function applyOcrWorkspacePayload(payload) {
   state.ocrPatches = Array.isArray(workspace.ocrPatches) ? workspace.ocrPatches : [];
   state.reviewNeedsCorrection = new Set(Array.isArray(workspace.reviewNeedsCorrection) ? workspace.reviewNeedsCorrection.map(String) : []);
   state.reviewFontScale = clampReviewFontScale(workspace.reviewFontScale);
+  state.reviewFitToPage = Boolean(workspace.reviewFitToPage);
+  state.pdfFitToPage = Boolean(workspace.pdfFitToPage);
   state.acceptedPatchPreview = null;
   state.acceptedPatchBookPreview = null;
   return true;
@@ -956,6 +970,7 @@ async function renderCurrentPage() {
   els.pageList.append(row);
   typesetMath(row);
   syncPdfFocusToExpandedReviewBlock();
+  scheduleReviewFitScale(row);
   updateAcceptedPatchTopControls();
   scheduleAdjacentPagePreviewPrefetch();
 }
@@ -1288,16 +1303,21 @@ function renderImageCard(page) {
   const zoomIndex = PDF_IMAGE_ZOOM_LEVELS.indexOf(zoom);
   const atMinZoom = zoomIndex <= 0;
   const atMaxZoom = zoomIndex >= PDF_IMAGE_ZOOM_LEVELS.length - 1;
-  card.className = `preview-card image-card ${zoom > 1 ? "is-zoomed" : ""}`;
+  const fitToPage = Boolean(state.pdfFitToPage);
+  card.className = `preview-card image-card ${zoom > 1 && !fitToPage ? "is-zoomed" : ""} ${fitToPage ? "is-fit-page" : ""}`;
   const reviewEntries = reviewEntriesForCurrentPage();
   const hotspotsHtml = page.image ? renderPdfBlockHotspots(reviewEntries) : "";
+  const pageAspectRatio = `${Number(page.width) || 1} / ${Number(page.height) || 1}`;
   const imageHtml = page.image
-    ? `<div class="page-image-surface"><img src="${page.image}" alt="第 ${page.pageNumber} 页 OCR 截图">${hotspotsHtml}<div class="page-image-focus" data-page-image-focus hidden></div></div>`
+    ? `<div class="page-image-surface" style="--pdf-page-aspect-ratio: ${pageAspectRatio};"><img src="${page.image}" alt="第 ${page.pageNumber} 页 OCR 截图">${hotspotsHtml}<div class="page-image-focus" data-page-image-focus hidden></div></div>`
     : `<div class="empty-inline">尚未选择 PDF。</div>`;
   card.innerHTML = `
     <div class="card-head image-card-head">
       <strong>第 ${state.currentPage} 页</strong>
       <div class="card-actions">
+        <button class="text-button image-zoom-button image-fit-button ${fitToPage ? "is-active" : ""}" type="button" data-image-fit-page ${page.image ? "" : "disabled"} aria-label="原书整页适配窗口" title="整页适配">
+          <span class="fit-page-glyph" aria-hidden="true">⛶</span>
+        </button>
         <button class="text-button image-zoom-button" type="button" data-image-zoom="out" ${page.image && !atMinZoom ? "" : "disabled"} aria-label="缩小原文页" title="缩小">
           <span class="image-zoom-glyph" aria-hidden="true"><span>A</span><span>⌄</span></span>
         </button>
@@ -1309,6 +1329,13 @@ function renderImageCard(page) {
     </div>
     <div class="page-image-wrap" style="--pdf-image-zoom: ${zoom};">${imageHtml}</div>
   `;
+  card.querySelectorAll("[data-image-fit-page]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      state.pdfFitToPage = !state.pdfFitToPage;
+      saveOcrWorkspaceState();
+      await renderCurrentPage();
+    });
+  });
   card.querySelectorAll("[data-image-zoom]").forEach((button) => {
     button.addEventListener("click", async () => {
       setPdfImageZoom(button.dataset.imageZoom);
@@ -1344,13 +1371,16 @@ function setPdfImageZoom(direction) {
   const current = currentPdfImageZoom();
   const index = PDF_IMAGE_ZOOM_LEVELS.indexOf(current);
   if (direction === "in") {
+    state.pdfFitToPage = false;
     state.pdfImageZoom = PDF_IMAGE_ZOOM_LEVELS[Math.min(PDF_IMAGE_ZOOM_LEVELS.length - 1, index + 1)];
     return;
   }
   if (direction === "out") {
+    state.pdfFitToPage = false;
     state.pdfImageZoom = PDF_IMAGE_ZOOM_LEVELS[Math.max(0, index - 1)];
     return;
   }
+  state.pdfFitToPage = false;
   state.pdfImageZoom = DEFAULT_PDF_IMAGE_ZOOM;
 }
 
@@ -1364,6 +1394,7 @@ function clampReviewFontScale(value) {
 }
 
 function setReviewFontScale(direction) {
+  state.reviewFitToPage = false;
   const current = currentReviewFontScale();
   const index = REVIEW_FONT_SCALE_LEVELS.indexOf(current);
   if (direction === "in") {
@@ -1595,7 +1626,7 @@ function renderRightWorkbench(page) {
 
 function renderReviewCard() {
   const card = document.createElement("section");
-  card.className = "review-card";
+  card.className = `review-card ${state.reviewFitToPage ? "is-fit-page" : ""}`;
   applyAutomaticLocalCorrectionsForPage(state.currentPage);
   const risks = state.riskByPage.get(state.currentPage) || [];
   const segments = reviewSegmentsForPage(state.currentPage);
@@ -1742,6 +1773,17 @@ function renderReviewCard() {
       }
     });
   });
+  card.querySelectorAll("[data-review-fit-page]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      state.reviewFitToPage = !state.reviewFitToPage;
+      saveOcrWorkspaceState();
+      if (!refreshRightWorkbenchOnly({ preserveReviewScroll: true })) {
+        await renderCurrentPage();
+      }
+    });
+  });
   card.querySelectorAll("[data-page-jump]").forEach((button) => {
     button.addEventListener("click", () => goToPagerTarget(button.dataset.pageJump));
   });
@@ -1863,6 +1905,9 @@ function renderReviewNavigationBar(reviewEntries) {
     <div class="review-navigation-bar" data-review-block-navigator>
       <div class="review-nav-controls">
         <div class="review-font-nav-group">
+          <button class="text-button image-zoom-button image-fit-button ${state.reviewFitToPage ? "is-active" : ""}" type="button" data-review-fit-page aria-label="校正稿整页适配窗口" title="整页适配">
+            <span class="fit-page-glyph" aria-hidden="true">⛶</span>
+          </button>
           <button class="text-button image-zoom-button" type="button" data-review-font-scale="out" ${fontScaleIndex <= 0 ? "disabled" : ""} aria-label="缩小右栏字体" title="缩小右栏字体">
             <span class="image-zoom-glyph" aria-hidden="true"><span>A</span><span>⌄</span></span>
           </button>
@@ -1985,7 +2030,7 @@ function ensureDefaultReviewExpansion(orderedRisks) {
 }
 
 function orderRisksBySegment(risks, segments) {
-  const orderByKey = new Map(segments.map((segment, index) => [String(segment.blockIndex), index]));
+  const orderByKey = new Map(segments.map((segment, index) => [String(segment.blockIndex), visualOrderForPageEntry(segment, index)]));
   return risks
     .slice()
     .sort(
@@ -2030,7 +2075,7 @@ function buildReviewEntriesForPage(risks, segments, pageNumber) {
       risk,
     });
   });
-  const orderByKey = new Map(segments.map((segment, index) => [String(segment.blockIndex), index]));
+  const orderByKey = new Map(segments.map((segment, index) => [String(segment.blockIndex), visualOrderForPageEntry(segment, index)]));
   return entries
     .sort((left, right) => riskVisualOrder(left.risk, orderByKey) - riskVisualOrder(right.risk, orderByKey))
     .map((entry, index) => ({
@@ -2053,7 +2098,12 @@ function reviewRiskFromSegment(segment, pageNumber = state.currentPage) {
 }
 
 function riskVisualOrder(risk, orderByKey) {
+  const bboxOrder = visualOrderForPageEntry(risk, Number.MAX_SAFE_INTEGER / 4);
+  const hasVisualBBox = Boolean(normalizedBBox(risk?.bbox));
   if (risk?.syntheticPlacement === "page_top") {
+    if (risk?.reasons?.includes?.("cross_page_continuation") && hasVisualBBox && Number.isFinite(bboxOrder) && !isPageTopBBox(risk?.bbox, risk?.pageSize)) {
+      return bboxOrder;
+    }
     return -2000;
   }
   if (risk?.syntheticPlacement === "page_bottom") {
@@ -2065,7 +2115,25 @@ function riskVisualOrder(risk, orderByKey) {
   if (risk?.crossPageHint === "next_head") {
     return Number.MAX_SAFE_INTEGER - 1000 + (Number(risk.sourceBlockIndex) || 0) / 1000;
   }
-  return orderByKey.get(String(risk?.blockIndex)) ?? Number.MAX_SAFE_INTEGER / 2;
+  return orderByKey.get(String(risk?.blockIndex)) ?? bboxOrder ?? Number.MAX_SAFE_INTEGER / 2;
+}
+
+function visualOrderForPageEntry(entry, fallbackIndex = 0) {
+  const bbox = normalizedBBox(entry?.bbox);
+  const pageSize = entry?.pageSize || null;
+  if (!bbox) {
+    return Number.MAX_SAFE_INTEGER / 2 + (Number(fallbackIndex) || 0);
+  }
+  const width = pageSizeWidth(pageSize) || Math.max(bbox[2], 1);
+  const height = pageSizeHeight(pageSize) || Math.max(bbox[3], 1);
+  const top = Math.max(0, Number(bbox[1]) || 0) / Math.max(height, 1);
+  const left = Math.max(0, Number(bbox[0]) || 0) / Math.max(width, 1);
+  return top * 10000 + left * 100 + (Number(fallbackIndex) || 0) / 10000;
+}
+
+function isPageTopBBox(bbox, pageSize) {
+  const geometry = bboxGeometryForPageSize(bbox, pageSize);
+  return Boolean(geometry && geometry.topRatio <= 0.14);
 }
 
 function reviewPatchMarkdown(patch) {
@@ -2121,28 +2189,27 @@ function renderPageReviewBlock(entry) {
   const needsCorrection = state.reviewNeedsCorrection.has(fullKey);
   const missingFigureLabel = inferMissingFigureLabelForBlock(state.currentPage, blockKey, segment.markdown || "");
   const mathpixError = getMathpixBlockError(state.currentPage, blockKey);
+  const actionsHtml = actionsOpen
+    ? `<div class="review-page-block-actions">
+        <button class="review-page-mark-button ${needsCorrection ? "is-active" : ""}" type="button" data-review-needs-correction-toggle="${escapeHtml(fullKey)}" aria-pressed="${needsCorrection ? "true" : "false"}">
+          需要额外校正
+        </button>
+        ${
+          missingFigureLabel
+            ? `<button class="review-page-local-button" type="button" data-auto-add-figure-label="${escapeHtml(blockKey)}">补图号</button>`
+            : ""
+        }
+        <button class="review-page-correct-button" type="button" data-review-correction-toggle="${escapeHtml(fullKey)}" aria-expanded="${correctionOpen ? "true" : "false"}">
+          ${correctionOpen ? "收起校正" : "校正"}
+        </button>
+      </div>`
+    : "";
   return `
     <section class="review-page-block ${selected ? "is-selected" : ""} ${corrected ? "is-corrected" : ""} ${hasDraft ? "has-mathpix-draft" : ""} ${needsCorrection ? "needs-extra-correction" : ""}" tabindex="0" role="button" data-review-page-block="${escapeHtml(fullKey)}" data-source-block-id="${escapeHtml(blockKey)}" data-review-item-state="${escapeHtml(itemState)}">
-      ${
-        actionsOpen
-          ? `<div class="review-page-block-actions">
-              <button class="review-page-mark-button ${needsCorrection ? "is-active" : ""}" type="button" data-review-needs-correction-toggle="${escapeHtml(fullKey)}" aria-pressed="${needsCorrection ? "true" : "false"}">
-                需要额外校正
-              </button>
-              ${
-                missingFigureLabel
-                  ? `<button class="review-page-local-button" type="button" data-auto-add-figure-label="${escapeHtml(blockKey)}">补图号</button>`
-                  : ""
-              }
-              <button class="review-page-correct-button" type="button" data-review-correction-toggle="${escapeHtml(fullKey)}" aria-expanded="${correctionOpen ? "true" : "false"}">
-                ${correctionOpen ? "收起校正" : "校正"}
-              </button>
-            </div>`
-          : ""
-      }
       <div class="review-page-block-render">
         ${renderBlockContent(displayMarkdown, segment)}
       </div>
+      ${actionsHtml}
       ${
         correctionOpen
           ? renderSelectedBlockToolbar(
@@ -2662,7 +2729,39 @@ function refreshRightWorkbenchOnly(options = {}) {
   typesetMath(next);
   restoreRightWorkbenchScrollState(next, scrollState);
   scheduleRightWorkbenchScrollRestore(next, scrollState);
+  scheduleReviewFitScale(next);
   updateAcceptedPatchTopControls();
+  return true;
+}
+
+function scheduleReviewFitScale(root = document) {
+  if (!state.reviewFitToPage || typeof window === "undefined") {
+    return false;
+  }
+  const run = () => applyReviewFitScale(root);
+  if (typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(run);
+  } else {
+    setTimeout(run, 0);
+  }
+  setTimeout(run, 120);
+  return true;
+}
+
+function applyReviewFitScale(root = document) {
+  const scope = root?.querySelector?.(".review-card.is-fit-page") || (root?.matches?.(".review-card.is-fit-page") ? root : null);
+  const canvas = scope?.querySelector?.(".review-page-canvas");
+  const paper = scope?.querySelector?.(".review-page-paper");
+  if (!canvas || !paper) {
+    return false;
+  }
+  canvas.style.setProperty("--review-fit-scale", "1");
+  const availableWidth = Math.max(1, canvas.clientWidth - 16);
+  const availableHeight = Math.max(1, canvas.clientHeight - 16);
+  const paperWidth = Math.max(1, paper.scrollWidth);
+  const paperHeight = Math.max(1, paper.scrollHeight);
+  const scale = Math.max(0.35, Math.min(1, availableWidth / paperWidth, availableHeight / paperHeight));
+  canvas.style.setProperty("--review-fit-scale", String(Math.round(scale * 1000) / 1000));
   return true;
 }
 
@@ -2838,7 +2937,7 @@ function findReviewEditorForTrigger(trigger, selector) {
   if (detailEditor) {
     return detailEditor;
   }
-  return trigger?.closest?.(".review-item, .selected-block-toolbar, .selected-block-compact-actions")?.querySelector?.(selector) || null;
+  return trigger?.closest?.(".review-page-block, .review-item, .selected-block-toolbar, .selected-block-compact-actions")?.querySelector?.(selector) || null;
 }
 
 async function autoUnwrapMineruLineBreaksForBlock(blockIndex) {
@@ -2899,6 +2998,13 @@ function applyAutomaticLocalCorrectionsForPage(pageNumber) {
       return;
     }
     if (mathpixDrafts.has(blockKey) || existingPatch?.status === "draft") {
+      return;
+    }
+    const captionLabelMarkdown = autoCorrectFigureCaptionLabelMarkdown(pageNo, blockKey, activeMarkdown);
+    if (captionLabelMarkdown && captionLabelMarkdown !== activeMarkdown.replace(/\r\n?/g, "\n").trim()) {
+      if (saveAutomaticAcceptedBlockPatch(pageNo, blockKey, sourceMarkdown, captionLabelMarkdown, "figure_caption_label_preservation")) {
+        changedCount += 1;
+      }
       return;
     }
     const existingAutoCorrection = String(existingPatch?.metadata?.autoCorrection || "");
@@ -2975,6 +3081,18 @@ function autoCorrectMathEquationNumberMarkdown(pageNo, blockKey, sourceMarkdown,
   }
   const corrected = preserveEquationNumbersFromOriginal(nearbyNumbers, source);
   return corrected !== source ? corrected : "";
+}
+
+function autoCorrectFigureCaptionLabelMarkdown(pageNo, blockKey, sourceMarkdown) {
+  const source = String(sourceMarkdown || "").replace(/\r\n?/g, "\n").trim();
+  if (!source || extractReferenceLabels(source).some((label) => /^fig(?:\.|ure)?/i.test(label))) {
+    return "";
+  }
+  if (!looksLikeFigureCaptionText(source)) {
+    return "";
+  }
+  const label = inferMissingFigureLabelForBlock(pageNo, blockKey, source);
+  return label ? `${label} ${source}`.trim() : "";
 }
 
 function hasEquationNumberAutoCorrection(oldMarkdown, newMarkdown) {
@@ -3304,6 +3422,10 @@ function inferMissingFigureLabelForBlock(pageNumber, blockIndex, markdown) {
   if (contentListLabel) {
     return contentListLabel;
   }
+  const visualTextLabel = inferMissingFigureLabelFromVisualText(pageNumber, blockIndex);
+  if (visualTextLabel) {
+    return visualTextLabel;
+  }
   if (!looksLikeFigureCaptionText(text)) {
     return "";
   }
@@ -3330,6 +3452,7 @@ function looksLikeFigureCaptionText(text) {
     /\b(?:grey|gray|light|dark|shaded)\s+(?:region|band|area)\b/i,
     /\b(?:bounds?|limits?)\s+on\b/i,
     /\b(?:x-axis|y-axis|axis|axes|horizontal|vertical)\b/i,
+    /\b(?:image|reproduced|permission|copyright)\b/i,
   ];
   const signalCount = strongSignals.filter((pattern) => pattern.test(value)).length;
   if (signalCount >= 2) {
@@ -3362,6 +3485,86 @@ function inferMissingFigureLabelFromContentList(pageNumber, markdownText) {
     }
   }
   return "";
+}
+
+function inferMissingFigureLabelFromVisualText(pageNumber, blockIndex) {
+  const currentIndex = String(blockIndex);
+  const segment = reviewSegmentsForPage(pageNumber).find((item) => String(item.blockIndex) === currentIndex);
+  const targetBBox = normalizedBBox(segment?.bbox);
+  if (!targetBBox) {
+    return "";
+  }
+  const targetPageSize = segment?.pageSize || state.mineruInfo?.pdf_info?.[Number(pageNumber) - 1]?.page_size || null;
+  const contentListCandidates = contentListItemsForPage(pageNumber).map((item) => ({
+    text: contentListItemText(item),
+    bbox: normalizedBBox(item.bbox),
+    pageSize: targetPageSize,
+    source: "content_list",
+  }));
+  const pdfPageSize = pdfTextPageSizeForPage(pageNumber);
+  const pdfCandidates = pdfTextBlocksForPage(pageNumber).map((block) => ({
+    text: String(block?.text || "").trim(),
+    bbox: scaleBBoxBetweenPageSizes(block?.bbox, pdfPageSize, targetPageSize),
+    pageSize: targetPageSize || pdfPageSize,
+    source: "pdf_text",
+  }));
+  return contentListCandidates
+    .concat(pdfCandidates)
+    .map((candidate) => {
+      const labels = extractReferenceLabels(candidate.text).filter((label) => /^fig(?:\.|ure)?/i.test(label));
+      if (!labels.length || !candidate.bbox || !isFigureLabelOnlyText(candidate.text)) {
+        return null;
+      }
+      const score = figureLabelProximityScore(targetBBox, candidate.bbox, candidate.pageSize);
+      return score > 0 ? { label: labels[0].replace(/^Figure\b/i, "Fig.").replace(/^Fig\b(?!\.)/i, "Fig."), score } : null;
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.score - left.score)[0]?.label || "";
+}
+
+function isFigureLabelOnlyText(text) {
+  const value = String(text || "").trim();
+  if (!value) {
+    return false;
+  }
+  const labels = extractReferenceLabels(value).filter((label) => /^fig(?:\.|ure)?/i.test(label));
+  if (!labels.length) {
+    return false;
+  }
+  return stripReferenceLabelsFromText(value).replace(/[^\p{L}\p{N}]+/gu, "").length === 0;
+}
+
+function figureLabelProximityScore(targetBBox, labelBBox, pageSize) {
+  const target = normalizedBBox(targetBBox);
+  const label = normalizedBBox(labelBBox);
+  if (!target || !label) {
+    return 0;
+  }
+  const pageWidth = pageSizeWidth(pageSize) || Math.max(target[2], label[2], 1);
+  const pageHeight = pageSizeHeight(pageSize) || Math.max(target[3], label[3], 1);
+  const targetHeight = Math.max(1, target[3] - target[1]);
+  const labelHeight = Math.max(1, label[3] - label[1]);
+  const targetCenterX = (target[0] + target[2]) / 2;
+  const targetCenterY = (target[1] + target[3]) / 2;
+  const labelCenterX = (label[0] + label[2]) / 2;
+  const labelCenterY = (label[1] + label[3]) / 2;
+  const verticalOverlap = Math.max(0, Math.min(target[3], label[3]) - Math.max(target[1], label[1]));
+  const verticalDistance = Math.abs(targetCenterY - labelCenterY);
+  const sameCaptionRow = verticalOverlap > 0 || verticalDistance <= Math.max(28, targetHeight * 0.45, labelHeight * 1.8);
+  if (!sameCaptionRow) {
+    return 0;
+  }
+  const labelLeadsCaption = labelCenterX <= targetCenterX - pageWidth * 0.08 || label[2] <= target[0] + pageWidth * 0.2;
+  if (!labelLeadsCaption) {
+    return 0;
+  }
+  const outsideGap = Math.max(0, target[0] - label[2]);
+  if (outsideGap > pageWidth * 0.28) {
+    return 0;
+  }
+  const verticalScore = 1 - Math.min(verticalDistance / Math.max(pageHeight * 0.08, 1), 1);
+  const horizontalScore = 1 - Math.min(outsideGap / Math.max(pageWidth * 0.28, 1), 1);
+  return verticalScore * 0.7 + horizontalScore * 0.3;
 }
 
 function stripReferenceLabelsFromText(text) {
@@ -4216,13 +4419,15 @@ function originalBlockMarkdownsForPage(pageNumber) {
     return [];
   }
   const blocks = Array.isArray(page.para_blocks) ? page.para_blocks : [];
-  return blocks.map((block, blockIndex) => ({
-    block,
-    blockIndex,
-    bbox: getBlockBBox(block),
-    markdown: blockToMarkdown(block),
-    pageSize: page.page_size,
-  }));
+  return blocks
+    .map((block, blockIndex) => ({
+      block,
+      blockIndex,
+      bbox: getBlockBBox(block),
+      markdown: blockToMarkdown(block),
+      pageSize: page.page_size,
+    }))
+    .filter((entry) => !isLikelyPageHeaderEntry(entry));
 }
 
 function pageSegmentsForPage(pageNumber) {
@@ -4236,16 +4441,18 @@ function reviewBlockMarkdownsForPage(pageNumber) {
     return [];
   }
   const blocks = Array.isArray(page.para_blocks) ? page.para_blocks : [];
-  return blocks.map((block, blockIndex) => {
-    const scopedBlock = filterBlockLines(block, (line) => !lineHasCrossPageContent(line));
-    return {
-      block,
-      blockIndex,
-      bbox: getBlockBBox(scopedBlock) || getBlockBBox(block),
-      markdown: blockToMarkdown(scopedBlock),
-      pageSize: page.page_size,
-    };
-  });
+  return blocks
+    .map((block, blockIndex) => {
+      const scopedBlock = filterBlockLines(block, (line) => !lineHasCrossPageContent(line));
+      return {
+        block,
+        blockIndex,
+        bbox: getBlockBBox(scopedBlock) || getBlockBBox(block),
+        markdown: blockToMarkdown(scopedBlock),
+        pageSize: page.page_size,
+      };
+    })
+    .filter((entry) => !isLikelyPageHeaderEntry(entry));
 }
 
 function reviewSegmentsForPage(pageNumber) {
@@ -4330,6 +4537,47 @@ function lineHasCrossPageContent(line) {
     return true;
   }
   return (Array.isArray(line.spans) ? line.spans : []).some((span) => span?.cross_page === true);
+}
+
+function isLikelyPageHeaderEntry(entry) {
+  return isLikelyPageHeaderText(entry?.markdown, entry?.bbox, entry?.pageSize);
+}
+
+function isLikelyPageHeaderText(text, bbox, pageSize) {
+  const value = String(text || "")
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!value || value.length > 120 || isLikelyReferenceHeading(value)) {
+    return false;
+  }
+  const geometry = bboxGeometryForPageSize(bbox, pageSize);
+  if (!geometry || geometry.bottomRatio > 0.13) {
+    return false;
+  }
+  if (isPageNumberOnlyText(value)) {
+    return true;
+  }
+  if (/[\$\\]|[.!?。！？]$/.test(value)) {
+    return false;
+  }
+  const explicitHeader = [
+    /^\d{1,4}\s+\d+(?:\.\d+)+\s+\S/,
+    /^\d+(?:\.\d+)+\s+[A-ZÀ-Þ][\p{L}\p{N}\s.,:;'"’()/-]{2,}$/u,
+    /^[A-ZÀ-Þ][\p{L}\p{N}\s.,:;'"’()/-]{2,}\s+\d{1,4}$/u,
+  ].some((pattern) => pattern.test(value));
+  if (explicitHeader) {
+    return true;
+  }
+  if (geometry.bottomRatio > 0.08) {
+    return false;
+  }
+  const words = value.split(/\s+/).filter(Boolean);
+  if (words.length < 3 || words.length > 12) {
+    return false;
+  }
+  const capitalized = words.filter((word) => /^[A-ZÀ-Þ0-9]/.test(word) || /^(and|of|the|in|for|to|with|on)$/i.test(word)).length;
+  return capitalized / words.length >= 0.82;
 }
 
 function isAlgorithmStartEntry(entry) {
@@ -5767,14 +6015,7 @@ function detectPdfReferenceTextCandidatesForPage(pageNumber) {
 }
 
 function hasBibliographyBodySignal(text) {
-  const lines = String(text || "")
-    .replace(/\r\n?/g, "\n")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const starts = lines.filter(isLikelyReferenceEntryStart).length;
-  const yearHits = lines.filter((line) => /\b(?:18|19|20)\d{2}[a-z]?\b/.test(line)).length;
-  const referenceSignals = lines.filter((line) => /\b(?:ArXiv|Phys\.|Rev\.|Astrophys\.|Astron\.|Science|Class\.|Quantum|Lett\.)/i.test(line)).length;
+  const { starts, yearHits, referenceSignals } = bibliographySignalStats(text);
   return starts >= 1 && yearHits >= 1 && (starts >= 2 || referenceSignals >= 1 || yearHits >= 3);
 }
 
@@ -5838,6 +6079,9 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
   }
   const bbox = normalizedBBox(item.bbox);
   const geometry = bbox ? bboxGeometryForPageSize(bbox, pageSize) : null;
+  if (isLikelyPageHeaderText(text, bbox, pageSize)) {
+    return null;
+  }
   const scored = scoreRiskBlock(text);
   const reasons = scored.reasons.slice();
   let score = scored.score;
@@ -6513,17 +6757,18 @@ function blockToMarkdown(block) {
   if (block.type === "table") {
     const html = firstSpanValue(block, "html");
     if (html) {
-      return htmlTableToMarkdown(html);
+      return [htmlTableToMarkdown(html), collectBlockText(block, { skipHtml: true }).trim()].filter(Boolean).join("\n\n");
     }
   }
   if (block.type === "image") {
     const imagePath = firstSpanValue(block, "image_path");
-    return imagePath ? `![image](${imagePath})` : "";
+    const caption = collectBlockText(block, { skipImagePath: true }).trim();
+    return [imagePath ? `![image](${imagePath})` : "", caption].filter(Boolean).join("\n\n");
   }
   if (block.type === "code") {
     return fencedCode(collectBlockText(block).trim());
   }
-  const text = collectBlockText(block).trim();
+  const text = collectBlockText(block, { preserveVisualParagraphs: block.type === "text" || !block.type }).trim();
   if (!text) {
     return "";
   }
@@ -6543,46 +6788,15 @@ function blockToMarkdown(block) {
 }
 
 function formatBibliographyText(text) {
-  const lines = String(text || "")
-    .replace(/\r\n?/g, "\n")
-    .split("\n")
-    .map((line) => line.trim().replace(/[ \t]{2,}/g, " "))
-    .filter(Boolean);
-  const entries = [];
-  let current = "";
-  lines.forEach((line) => {
-    if (isLikelyReferenceHeading(line) || isPageNumberOnlyText(line)) {
-      return;
-    }
-    if (isLikelyReferenceEntryStart(line) && current) {
-      entries.push(current.trim());
-      current = line;
-      return;
-    }
-    current = current ? `${current} ${line}` : line;
-  });
-  if (current.trim()) {
-    entries.push(current.trim());
-  }
-  return entries.length ? entries.join("\n\n") : lines.join("\n");
+  const entries = splitBibliographyTextByEntryStarts(text);
+  return entries.length ? entries.join("\n\n") : normalizeBibliographyBodyText(text);
 }
 
 function isLikelyBibliographyText(text) {
-  const lines = String(text || "")
-    .replace(/\r\n?/g, "\n")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length < 2) {
+  const { bodyText, starts, yearHits, referenceSignals } = bibliographySignalStats(text);
+  if (!bodyText || bodyText.length < 40) {
     return false;
   }
-  const bodyLines = lines.filter((line) => !isLikelyReferenceHeading(line) && !isPageNumberOnlyText(line));
-  if (bodyLines.length < 2) {
-    return false;
-  }
-  const starts = bodyLines.filter(isLikelyReferenceEntryStart).length;
-  const yearHits = bodyLines.filter((line) => /\b(?:18|19|20)\d{2}[a-z]?\b/.test(line)).length;
-  const referenceSignals = bodyLines.filter((line) => /\b(?:ArXiv|Phys\.|Rev\.|Astrophys\.|Astron\.|Science|Class\.|Quantum|Lett\.|J\.|D,|A,|B,)\b/i.test(line)).length;
   return starts >= 2 || (starts >= 1 && yearHits >= 2) || (yearHits >= 3 && referenceSignals >= 2);
 }
 
@@ -6595,16 +6809,97 @@ function isLikelyReferenceEntryStart(text) {
   if (!line || isLikelyReferenceHeading(line)) {
     return false;
   }
-  return /^[A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+(?:[- ][A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+)*,\s+(?:[A-Z]\.|[A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+|[A-Z]\s)/.test(line) && /\b(?:18|19|20)\d{2}[a-z]?\b/.test(line.slice(0, 220));
+  return /^[A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]+(?:[- ][A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]+)*,\s+(?:[A-Z]\.|[A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+|[A-Z]\s)/.test(line) && /\b(?:18|19|20)\d{2}[a-z]?\b/.test(line.slice(0, 220));
+}
+
+function bibliographySignalStats(text) {
+  const bodyText = normalizeBibliographyBodyText(text);
+  const pieces = splitBibliographyTextByEntryStarts(bodyText);
+  return {
+    bodyText,
+    starts: pieces.filter(isLikelyReferenceEntryStart).length || referenceEntryStartIndexes(bodyText).length,
+    yearHits: (bodyText.match(/\b(?:18|19|20)\d{2}[a-z]?\b/g) || []).length,
+    referenceSignals: (bodyText.match(/\b(?:ArXiv|Phys\.|Rev\.|Astrophys\.|Astron\.|Science|Class\.|Quantum|Lett\.|J\.)/gi) || []).length,
+  };
+}
+
+function splitBibliographyLineByEntryStarts(line) {
+  const value = normalizeBibliographyLine(line);
+  if (!value) {
+    return [];
+  }
+  return splitBibliographyTextByEntryStarts(value);
+}
+
+function splitBibliographyTextByEntryStarts(text) {
+  const value = normalizeBibliographyBodyText(text);
+  if (!value) {
+    return [];
+  }
+  const starts = referenceEntryStartIndexes(value);
+  if (!starts.length) {
+    return [value];
+  }
+  const pieces = [];
+  if (starts[0] > 0) {
+    pieces.push(value.slice(0, starts[0]).trim());
+  }
+  starts.forEach((start, index) => {
+    const end = starts[index + 1] || value.length;
+    pieces.push(value.slice(start, end).trim());
+  });
+  return pieces.filter(Boolean);
+}
+
+function normalizeBibliographyBodyText(text) {
+  return String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map(normalizeBibliographyLine)
+    .filter((line) => line && !isLikelyReferenceHeading(line) && !isPageNumberOnlyText(line))
+    .join(" ")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function normalizeBibliographyLine(line) {
+  return String(line || "")
+    .trim()
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/^(?:\d+\s+)?References?\b[:.]?\s*/i, "")
+    .trim();
+}
+
+function referenceEntryStartIndexes(text) {
+  const value = String(text || "");
+  const pattern = /[A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]+(?:[- ][A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]+)*,\s+(?:[A-Z]\.|[A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+|[A-Z]\s)[\s\S]{0,220}?\b(?:18|19|20)\d{2}[a-z]?\b/g;
+  const starts = [];
+  let match;
+  while ((match = pattern.exec(value))) {
+    const start = match.index;
+    if (start === 0 || /[.!?]\s+$/.test(value.slice(0, start))) {
+      starts.push(start);
+    }
+    pattern.lastIndex = Math.max(pattern.lastIndex, start + 1);
+  }
+  return starts;
 }
 
 function collectBlockText(block, options = {}) {
   const chunks = [];
   if (Array.isArray(block.lines)) {
+    let previousLine = null;
+    let previousText = "";
     block.lines.forEach((line) => {
       const lineText = (line.spans || []).map((span) => spanToMarkdown(span, options)).join("");
-      if (lineText.trim()) {
-        chunks.push(lineText.trim());
+      const text = lineText.trim();
+      if (text) {
+        if (options.preserveVisualParagraphs && chunks.length && isLikelyVisualParagraphBreak(previousLine, line, previousText, text, block, lineText)) {
+          chunks.push("");
+        }
+        chunks.push(text);
+        previousLine = line;
+        previousText = text;
       }
     });
   }
@@ -6616,7 +6911,50 @@ function collectBlockText(block, options = {}) {
       }
     });
   }
-  return chunks.join("\n");
+  return chunks.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+function isLikelyVisualParagraphBreak(previousLine, currentLine, previousText, currentText, block, rawCurrentText = "") {
+  const previous = String(previousText || "").trim();
+  const current = String(currentText || "").trim();
+  if (!previous || !current) {
+    return false;
+  }
+  if (!/[.!?。！？]["')\]}”’]*$/.test(previous)) {
+    return false;
+  }
+  if (!/^[A-ZΑ-Ω"'“‘(]/.test(current) || /^(?:and|or|but|where|which|that|because|since)\b/i.test(current)) {
+    return false;
+  }
+  if (hasInlineMathDelimiter(previous) || hasInlineMathDelimiter(current) || isLikelyStandaloneMathLine(previous) || isLikelyStandaloneMathLine(current)) {
+    return false;
+  }
+  if (/^\s{3,}\S/.test(String(rawCurrentText || ""))) {
+    return true;
+  }
+  const previousStart = lineStartX(previousLine);
+  const currentStart = lineStartX(currentLine);
+  const blockBox = getBlockBBox(block);
+  if (!Number.isFinite(previousStart) || !Number.isFinite(currentStart) || !blockBox) {
+    return false;
+  }
+  const blockLeft = Number(blockBox[0]) || 0;
+  const blockWidth = Math.max(1, (Number(blockBox[2]) || 0) - blockLeft);
+  const indentThreshold = Math.max(14, Math.min(28, blockWidth * 0.035));
+  const indentFromBlock = currentStart - blockLeft;
+  const indentFromPrevious = currentStart - previousStart;
+  return indentFromBlock >= indentThreshold && indentFromPrevious >= Math.max(8, indentThreshold * 0.55);
+}
+
+function lineStartX(line) {
+  const direct = normalizedBBox(line?.bbox);
+  if (direct) {
+    return direct[0];
+  }
+  const spanStarts = (Array.isArray(line?.spans) ? line.spans : [])
+    .map((span) => normalizedBBox(span?.bbox)?.[0])
+    .filter(Number.isFinite);
+  return spanStarts.length ? Math.min(...spanStarts) : NaN;
 }
 
 function spanToMarkdown(span, options = {}) {
@@ -6624,10 +6962,16 @@ function spanToMarkdown(span, options = {}) {
     return "";
   }
   if (span.html) {
+    if (options.skipHtml) {
+      return "";
+    }
     return htmlTableToMarkdown(span.html);
   }
   const content = String(span.content || "");
   if (!content && span.image_path) {
+    if (options.skipImagePath) {
+      return "";
+    }
     return `![image](${span.image_path})`;
   }
   if (span.type === "inline_equation") {
@@ -6693,10 +7037,13 @@ function collectBBoxes(node, boxes) {
 }
 
 function htmlTableToMarkdown(html) {
-  const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
-  const rows = Array.from(doc.querySelectorAll("tr")).map((row) =>
-    Array.from(row.querySelectorAll("th,td")).map((cell) => cell.textContent.trim().replace(/\s+/g, " "))
-  );
+  const source = String(html || "");
+  const rows =
+    typeof DOMParser !== "undefined"
+      ? Array.from(new DOMParser().parseFromString(source, "text/html").querySelectorAll("tr")).map((row) =>
+          Array.from(row.querySelectorAll("th,td")).map((cell) => cell.textContent.trim().replace(/\s+/g, " "))
+        )
+      : fallbackHtmlTableRows(source);
   if (!rows.length) {
     return "";
   }
@@ -6707,6 +7054,23 @@ function htmlTableToMarkdown(html) {
     `| ${Array(width).fill("---").join(" | ")} |`,
     ...normalized.slice(1).map((row) => `| ${row.join(" | ")} |`),
   ].join("\n");
+}
+
+function fallbackHtmlTableRows(html) {
+  return Array.from(String(html || "").matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi))
+    .map((rowMatch) =>
+      Array.from(rowMatch[1].matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)).map((cellMatch) =>
+        cellMatch[1]
+          .replace(/<[^>]+>/g, " ")
+          .replace(/&nbsp;/gi, " ")
+          .replace(/&amp;/gi, "&")
+          .replace(/&lt;/gi, "<")
+          .replace(/&gt;/gi, ">")
+          .replace(/\s+/g, " ")
+          .trim()
+      )
+    )
+    .filter((row) => row.length);
 }
 
 function fencedCode(text) {
@@ -7305,10 +7669,11 @@ function renderDisplayMathBlock(lines) {
   const raw = lines.join("\n").trim();
   const labels = displayMathTagLabels(raw);
   const mathSource = stripDisplayMathTags(raw);
+  const tagAttribute = labels.length ? ' data-equation-tag="true"' : "";
   const labelHtml = labels.length
     ? `<span class="math-display-equation-tag" aria-label="公式编号">${labels.map((label) => `(${escapeHtml(label)})`).join(" ")}</span>`
     : "";
-  return `<div class="math-display"><div class="math-display-formula">$$\n${escapeHtml(mathSource)}\n$$</div>${labelHtml}</div>`;
+  return `<div class="math-display"${tagAttribute}><div class="math-display-formula">$$\n${escapeHtml(mathSource)}\n$$</div>${labelHtml}</div>`;
 }
 
 function displayMathTagLabels(markdown) {

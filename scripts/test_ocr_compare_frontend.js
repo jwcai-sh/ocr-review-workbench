@@ -99,6 +99,8 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareCss.includes(".review-needs-correction-nav-group"));
   assert(ocrCompareCss.includes(".review-needs-correction-link"));
   assert(ocrCompareCss.includes(".math-display-equation-tag"));
+  assert(ocrCompareCss.includes("align-items: end"));
+  assert(ocrCompareCss.includes('.math-display-formula mjx-container[display="true"]'));
   assert(ocrCompareCss.includes(".review-page-block.is-selected"));
   assert(ocrCompareCss.includes(".page-block-hotspot"));
   assert(ocrCompareCss.includes(".selected-block-toolbar"));
@@ -125,8 +127,8 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('class="upload-icon"'));
   assert(ocrCompareHtml.includes('viewBox="0 0 24 24"'));
   assert(!ocrCompareHtml.includes("cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"), "MathJax CDN should be lazy-loaded by ocr-compare.js");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260626-orphan-inline-math"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260626-orphan-inline-math"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260626-file-runtime-api-fallback"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260626-file-runtime-api-fallback"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
@@ -173,6 +175,26 @@ function runOcrCompareInContext(testContext) {
     JSON.parse(vm.runInContext("JSON.stringify(localApiBaseFallbacks())", fileContext)),
     ["http://127.0.0.1:8790", "http://127.0.0.1:8787"],
     "file:// workbench should retain 8787 as a fallback local backend",
+  );
+
+  const fileRuntimeOriginContext = runOcrCompareInContext(
+    createOcrCompareContext({
+      window: {
+        __UMA_RUNTIME_CONFIG__: { apiBaseUrl: "file://", backendUrl: "file://" },
+        location: { protocol: "file:", port: "", origin: "file://" },
+        setTimeout() {},
+      },
+    }),
+  );
+  assert.strictEqual(
+    vm.runInContext("apiUrl('/api/health')", fileRuntimeOriginContext),
+    "http://127.0.0.1:8790/api/health",
+    "file:// runtime-config origin should be ignored and fall back to local backend",
+  );
+  assert.deepStrictEqual(
+    JSON.parse(vm.runInContext("JSON.stringify(localApiBaseFallbacks())", fileRuntimeOriginContext)),
+    ["http://127.0.0.1:8790", "http://127.0.0.1:8787"],
+    "invalid file:// runtime config should not suppress local backend fallbacks",
   );
 
   const configuredContext = runOcrCompareInContext(
@@ -495,6 +517,31 @@ const bareTableHtml = call(`renderMarkdownHtml(normalizeMathMarkdown(${JSON.stri
 const wrappedTableHtml = call(`renderMarkdownHtml(normalizeMathMarkdown(${JSON.stringify(`$$\n${latexTable}\n$$`)}))`);
 assert(bareTableHtml.includes("latex-table-wrap"), "bare LaTeX table should render as a table");
 assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX table should render as a table");
+
+{
+  const tableWithTrailingText = {
+    type: "table",
+    lines: [
+      {
+        spans: [
+          {
+            html: "<table><tr><th>Star</th><th>a</th></tr><tr><td>S2</td><td>1020</td></tr></table>"
+          }
+        ]
+      },
+      {
+        spans: [
+          {
+            content: "rather to provide the first test of the black hole no-hair theorem."
+          }
+        ]
+      }
+    ]
+  };
+  const markdown = call(`blockToMarkdown(${JSON.stringify(tableWithTrailingText)})`);
+  assert(markdown.includes("| Star | a |"), "table markdown should preserve the table body");
+  assert(markdown.includes("rather to provide the first test"), "table markdown should preserve prose after the table");
+}
 
 const latexArray = "\\begin{array}{cc}\na & b \\\\ c & d\n\\end{array}";
 const arrayHtml = call(`renderMarkdownHtml(normalizeMathMarkdown(${JSON.stringify(latexArray)}))`);
@@ -1156,6 +1203,70 @@ function assertOcrPatchShape(patch) {
 {
   const result = JSON.parse(
     call(`(() => {
+      state.currentPage = 1;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [919, 1256],
+            para_blocks: [
+              {
+                type: "text",
+                bbox: [40, 100, 840, 360],
+                lines: [
+                  { bbox: [44, 100, 835, 126], spans: [{ bbox: [44, 100, 835, 126], content: "For the quadrupole precessions to be observable, it is clear that the black hole must have" }] },
+                  { bbox: [44, 128, 835, 154], spans: [{ bbox: [44, 128, 835, 154], content: "a decent angular momentum and that the star must be in a short-period high-" }] },
+                  { bbox: [44, 156, 835, 182], spans: [{ bbox: [44, 156, 835, 182], content: "eccentricity orbit. For example, the three amplitudes listed in Eq. (12.71) have" }] },
+                  { bbox: [44, 184, 835, 210], spans: [{ bbox: [44, 184, 835, 210], content: "the values 5200, 195 and 8 microseconds per year, respectively." }] },
+                  { bbox: [82, 228, 835, 254], spans: [{ bbox: [82, 228, 835, 254], content: "Although the pericenter advance is the largest relativistic orbital effect, it is not the most" }] },
+                  { bbox: [44, 256, 835, 282], spans: [{ bbox: [44, 256, 835, 282], content: "suitable effect for testing the no-hair theorems." }] }
+                ]
+              }
+            ]
+          }
+        ]
+      };
+      const directSourceMarkdown = blockToMarkdown(state.mineruInfo.pdf_info[0].para_blocks[0]);
+      const correctedMarkdown = autoCorrectPlainMineruMarkdown(directSourceMarkdown);
+      const automaticCount = applyAutomaticLocalCorrectionsForPage(1);
+      const preview = buildAcceptedPatchPreviewForPage(1);
+      return JSON.stringify({
+        directSourceMarkdown,
+        correctedMarkdown,
+        automaticCount,
+        patches: state.ocrPatches.map((patch) => ({ status: patch.status, newText: patch.newText, autoCorrection: patch.metadata?.autoCorrection || "" })),
+        preview
+      });
+    })()`),
+  );
+  assert(result.directSourceMarkdown.includes("respectively.\n\nAlthough"), "visual indentation should become a markdown paragraph break before cleanup");
+  assert(result.correctedMarkdown.includes("respectively.\n\nAlthough"), "plain text cleanup should preserve visual paragraph boundaries");
+  assert.strictEqual(result.automaticCount, 1, "visual paragraph boundary cleanup should create one accepted patch");
+  assert(result.patches.some((patch) => patch.status === "accepted" && patch.newText.includes("respectively.\n\nAlthough")), "accepted patch should keep the paragraph break");
+  assert(result.preview.markdown.includes("respectively.\n\nAlthough"), "accepted preview/download source should keep the paragraph break");
+}
+
+{
+  const continuousBlock = {
+    type: "text",
+    bbox: [40, 100, 840, 240],
+    lines: [
+      { bbox: [44, 100, 835, 126], spans: [{ bbox: [44, 100, 835, 126], content: "This paragraph uses ordinary wrapped lines that should remain part of the" }] },
+      { bbox: [44, 128, 835, 154], spans: [{ bbox: [44, 128, 835, 154], content: "same paragraph even though the previous line did not end the idea." }] }
+    ]
+  };
+  const markdown = call(`blockToMarkdown(${JSON.stringify(continuousBlock)})`);
+  assert(!markdown.includes("\n\n"), "ordinary wrapped prose should not receive a paragraph break");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
       ${setupPreviewPageExpression(["where$Z$and$A$are the atomic number and mass number, respectively, parameters$\\\\eta^A$by the best tests, where$\\\\delta=1$if$(Z,A)=(odd, even)."])}
       state.currentPage = 1;
       state.ocrPatches = [];
@@ -1214,6 +1325,26 @@ function assertOcrPatchShape(patch) {
 }
 
 {
+  const collapsedReferences =
+    "325 References Kapner, D. J., Cook, T. S., Adelberger, E. G., Gundlach, J. H., et al. 2007. Tests of the gravitational inverse-square law below the dark-energy length scale. Phys. Rev. Lett., 98, 021101, ArXiv e-prints hep-ph/0611184. Kates, R. E. 1980. Motion of a small body through an external field in general relativity calculated by matched asymptotic expansions. Phys. Rev. D, 22, 1853-1870. Katz, J. I. 1999. Comment on Indication, from Pioneer 10/11, Galileo, and Ulysses data, of an apparent anomalous, weak, long-range acceleration. Phys. Rev. Lett., 83, 1892, ArXiv e-prints gr-qc/9809070.";
+  const result = call(`formatBibliographyText(${JSON.stringify(collapsedReferences)})`);
+  assert(!result.includes("325 References"), "bibliography formatter should remove leading page/reference noise");
+  assert(result.includes("Kapner, D. J."));
+  assert(result.includes("\n\nKates, R. E. 1980."), "collapsed bibliography entries should split at author-year starts");
+  assert(result.includes("\n\nKatz, J. I. 1999."), "multiple collapsed bibliography entries should remain readable");
+}
+
+{
+  const latePageReferences =
+    "prints astro-ph/0210426. Schutz, B. F. 2009. A First Course in General Relativity. Cambridge: Cambridge Univer- sity Press. Schwarzschild, K. 1916. Uber das Gravitationsfeld eines Massenpunktes nach der Einsteinschen Theorie. Sitzungsberichte der Koniglich Preussischen Akademie der Wissenschaften (Berlin), 1916, Seite 189-196. Sennett, N., Marsat, S., and Buonanno, A. 2016. Gravitational waveforms in scalar-tensor gravity at 2PN relative order. Phys. Rev. D, 94, 084003, ArXiv e-prints 1607.01420.";
+  const result = call(`formatBibliographyText(${JSON.stringify(latePageReferences)})`);
+  assert(result.includes("prints astro-ph/0210426."), "bibliography formatter should keep a carry-over reference tail");
+  assert(result.includes("\n\nSchutz, B. F. 2009."), "bibliography formatter should split a new entry after a carried-over tail");
+  assert(result.includes("\n\nSchwarzschild, K. 1916."), "bibliography formatter should split collapsed adjacent entries");
+  assert(result.includes("\n\nSennett, N., Marsat, S., and Buonanno, A. 2016."), "bibliography formatter should split multi-author collapsed entries");
+}
+
+{
   const result = JSON.parse(
     call(`(() => {
       state.currentPage = 43;
@@ -1252,6 +1383,44 @@ function assertOcrPatchShape(patch) {
   assert.strictEqual(pdfReferenceCandidate.syntheticLabel, "PDF 参考文献候选");
   assert(pdfReferenceCandidate.text.includes("Anninos"));
   assert(pdfReferenceCandidate.text.includes("\n\nAntia"), "PDF reference entries should remain separated by entry");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 58;
+      state.contentListItems = [];
+      state.pdfTextPageCache.clear();
+      state.mineruInfo = {
+        pdf_info: Array.from({ length: 58 }, (_unused, index) => index === 57
+          ? {
+              page_size: [612, 792],
+              para_blocks: [
+                { type: "title", bbox: [250, 96, 360, 120], lines: [{ spans: [{ content: "References" }] }] }
+              ]
+            }
+          : { page_size: [612, 792], para_blocks: [] })
+      };
+      state.pdfTextPageCache.set(58, {
+        pageSize: [612, 792],
+        textBlocks: [
+          { text: "References", bbox: [250, 96, 360, 120] },
+          { text: "325 References Kapner, D. J., Cook, T. S., Adelberger, E. G., Gundlach, J. H., et al. 2007. Tests of the gravitational inverse-square law below the dark-energy length scale. Phys. Rev. Lett., 98, 021101, ArXiv e-prints hep-ph/0611184. Kates, R. E. 1980. Motion of a small body through an external field in general relativity calculated by matched asymptotic expansions. Phys. Rev. D, 22, 1853-1870. Katz, J. I. 1999. Comment on Indication, from Pioneer 10/11, Galileo, and Ulysses data, of an apparent anomalous, weak, long-range acceleration. Phys. Rev. Lett., 83, 1892, ArXiv e-prints gr-qc/9809070.", bbox: [80, 160, 540, 300] }
+        ]
+      });
+      const risks = detectRiskCandidatesForPage(58);
+      return JSON.stringify(risks.map((risk) => ({
+        blockIndex: risk.blockIndex,
+        text: risk.text,
+        reasons: risk.reasons,
+        syntheticLabel: risk.syntheticLabel
+      })));
+    })()`),
+  );
+  const pdfReferenceCandidate = result.find((risk) => risk.blockIndex === "pdf-reference-text-58");
+  assert(pdfReferenceCandidate, "PDF text layer collapsed reference page should become a supplemental review candidate");
+  assert(pdfReferenceCandidate.text.includes("\n\nKates"), "collapsed PDF reference text should split entries");
+  assert(pdfReferenceCandidate.text.includes("\n\nKatz"), "collapsed PDF reference text should expose later entries");
 }
 
 {
@@ -1981,6 +2150,26 @@ function assertOcrPatchShape(patch) {
   assert.strictEqual(result.dirtyState.dirty, true);
   assert.strictEqual(result.dirtyState.disabled, false);
   assert.strictEqual(result.dirtyState.text, "保持修改");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      const editor = { value: "edited", defaultValue: "original" };
+      const pageBlock = {
+        querySelector(selector) {
+          return selector === "[data-mathpix-edit]" ? editor : null;
+        }
+      };
+      const trigger = {
+        closest(selector) {
+          return selector.includes(".block-source-detail") ? null : pageBlock;
+        }
+      };
+      return JSON.stringify({ found: findReviewEditorForTrigger(trigger, "[data-mathpix-edit]") === editor });
+    })()`),
+  );
+  assert.strictEqual(result.found, true, "save actions inside page blocks should find their Markdown editor");
 }
 
 function setupPreviewPageExpression(blocks) {
@@ -2725,6 +2914,101 @@ function setupPreviewBookExpression(pages) {
 }
 
 {
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 18;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.riskByPage.clear();
+      state.mineruInfo = {
+        pdf_info: Array.from({ length: 18 }, (_unused, index) => {
+          if (index === 16) {
+            return {
+              page_size: [919, 1256],
+              para_blocks: [
+                {
+                  type: "text",
+                  lines: [
+                    { bbox: [195, 510, 850, 860], spans: [{ bbox: [195, 510, 850, 860], content: "(see Table 12.2). In Figure 12.3, the line labeled R is that mass ratio.", cross_page: true }] }
+                  ]
+                }
+              ]
+            };
+          }
+          if (index === 17) {
+            return {
+              page_size: [919, 1256],
+              para_blocks: [
+                {
+                  type: "image",
+                  bbox: [190, 58, 850, 470],
+                  lines: [{ bbox: [190, 58, 850, 470], spans: [{ bbox: [190, 58, 850, 470], image_path: "fig-12-3.jpg" }] }]
+                }
+              ]
+            };
+          }
+          return { page_size: [919, 1256], para_blocks: [] };
+        })
+      };
+      const risks = detectRiskCandidatesForPage(18);
+      const entries = buildReviewEntriesForPage(risks, reviewSegmentsForPage(18), 18);
+      return JSON.stringify(entries.map((entry) => ({
+        key: entry.key,
+        markdown: entry.segment.markdown,
+        label: entry.risk?.syntheticLabel || ""
+      })));
+    })()`),
+  );
+  assert.strictEqual(result[0].key, "0", "top figure block should remain before lower cross-page continuation text");
+  assert(result[0].markdown.includes("fig-12-3.jpg"), "first review entry should be the figure");
+  assert.strictEqual(result[1].key, "cross-page-continuation-18-0", "lower cross-page continuation should follow the figure by visual order");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 12;
+      state.mineruInfo = {
+        pdf_info: Array.from({ length: 12 }, (_unused, index) => index === 11
+          ? {
+              page_size: [919, 1256],
+              para_blocks: [
+                {
+                  type: "text",
+                  bbox: [20, 35, 760, 70],
+                  lines: [{ bbox: [20, 35, 760, 70], spans: [{ bbox: [20, 35, 760, 70], content: "275 12.1 Binary Pulsars" }] }]
+                },
+                {
+                  type: "text",
+                  bbox: [320, 38, 760, 62],
+                  lines: [{ bbox: [320, 38, 760, 62], spans: [{ bbox: [320, 38, 760, 62], content: "Strong-Field and Dynamical Tests of Relativistic Gravity" }] }]
+                },
+                {
+                  type: "text",
+                  bbox: [110, 130, 820, 260],
+                  lines: [{ bbox: [110, 130, 820, 260], spans: [{ bbox: [110, 130, 820, 260], content: "ever found for pulsed radiation from the companion, so it is either a pulsar whose signal does not intersect the Earth." }] }]
+                }
+              ]
+            }
+          : { page_size: [919, 1256], para_blocks: [] })
+      };
+      return JSON.stringify({
+        original: originalBlockMarkdownsForPage(12).map((entry) => entry.markdown),
+        review: reviewSegmentsForPage(12).map((entry) => entry.markdown)
+      });
+    })()`),
+  );
+  assert(!result.original.some((text) => text.includes("12.1 Binary Pulsars")), "running page headers should be hidden from base page markdown");
+  assert(!result.review.some((text) => text.includes("12.1 Binary Pulsars")), "running page headers should be hidden from right-column review");
+  assert(!result.review.some((text) => text.includes("Strong-Field and Dynamical Tests")), "title-only running headers should also be hidden");
+  assert(result.review.some((text) => text.includes("ever found for pulsed radiation")), "body text below the header should remain visible");
+}
+
+{
   const navHtml = call(`(() => {
     state.currentPage = 2;
     state.pdfPageCount = 4;
@@ -2736,6 +3020,7 @@ function setupPreviewBookExpression(pages) {
   })()`);
   assert(navHtml.includes('data-page-nav="review-workbench"'));
   assert(navHtml.includes("review-font-nav-group"));
+  assert(navHtml.includes("data-review-fit-page"));
   assert(navHtml.includes('data-review-font-scale="out"'));
   assert(navHtml.includes('data-review-font-scale="in"'));
   assert(navHtml.includes("review-page-nav-group"));
@@ -2748,17 +3033,19 @@ function setupPreviewBookExpression(pages) {
   const result = JSON.parse(
     call(`(() => {
       state.reviewFontScale = 1;
+      state.reviewFitToPage = true;
       setReviewFontScale("in");
       const scaledHtml = renderPageReviewCanvas([
         { key: "0", displayIndex: 1, segment: { blockIndex: "0", markdown: "Scaled source", kind: "text" }, risk: { blockIndex: "0", reviewOnly: true } }
       ]);
       setReviewFontScale("out");
       const resetScale = currentReviewFontScale();
-      return JSON.stringify({ scaledHtml, resetScale });
+      return JSON.stringify({ scaledHtml, resetScale, fitAfterFontChange: state.reviewFitToPage });
     })()`),
   );
   assert(result.scaledHtml.includes("--review-font-scale: 1.1"), "review page canvas should carry the current font scale");
   assert.strictEqual(result.resetScale, 1, "review font scale controls should step back down");
+  assert.strictEqual(result.fitAfterFontChange, false, "manual font scaling should exit right-column fit-page mode");
 }
 
 {
@@ -2815,20 +3102,26 @@ function setupPreviewBookExpression(pages) {
       state.riskByPage.clear();
       state.mineruInfo = null;
       state.pdfImageZoom = 1;
+      state.pdfFitToPage = false;
       const normal = renderImageCard({ pageNumber: 6, image: "data:image/png;base64,abc", width: 919, height: 1256 });
       state.pdfImageZoom = 1.75;
       const zoomed = renderImageCard({ pageNumber: 6, image: "data:image/png;base64,abc", width: 919, height: 1256 });
+      state.pdfFitToPage = true;
+      const fitted = renderImageCard({ pageNumber: 6, image: "data:image/png;base64,abc", width: 919, height: 1256 });
       return JSON.stringify({
         normalClass: normal.className,
         zoomedClass: zoomed.className,
+        fittedClass: fitted.className,
         normalHtml: normal.innerHTML,
         zoomedHtml: zoomed.innerHTML,
+        fittedHtml: fitted.innerHTML,
         listeners
       });
     })()`),
   );
   assert(result.normalHtml.includes('data-image-zoom="in"'));
   assert(result.normalHtml.includes('data-image-zoom="out"'));
+  assert(result.normalHtml.includes("data-image-fit-page"));
   assert(!result.normalHtml.includes('data-page-nav="source-page"'));
   assert(!result.normalHtml.includes('data-page-jump="prev"'));
   assert(!result.normalHtml.includes('data-page-jump="next"'));
@@ -2840,6 +3133,9 @@ function setupPreviewBookExpression(pages) {
   assert(result.zoomedHtml.includes("--pdf-image-zoom: 1.75"));
   assert(!result.normalClass.includes("is-zoomed"));
   assert(result.zoomedClass.includes("is-zoomed"));
+  assert(result.fittedClass.includes("is-fit-page"));
+  assert(!result.fittedClass.includes("is-zoomed"));
+  assert(result.fittedHtml.includes("--pdf-page-aspect-ratio: 919 / 1256"));
   assert(result.listeners.includes("click"));
 }
 
@@ -4350,6 +4646,55 @@ function setupPreviewBookExpression(pages) {
 }
 
 {
+  const visualFigureLabel = JSON.parse(
+    call(`(() => {
+      state.currentPage = 12;
+      state.ocrPatches = [];
+      state.reviewExpanded.clear();
+      state.reviewCorrectionOpen.clear();
+      state.reviewNeedsCorrection.clear();
+      state.riskByPage.clear();
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.contentListItems = [];
+      state.pdfTextPageCache.clear();
+      state.mineruInfo = {
+        pdf_info: Array.from({ length: 12 }, (_unused, index) => index === 11
+          ? {
+              page_size: [919, 1256],
+              para_blocks: [
+                {
+                  type: "text",
+                  bbox: [185, 830, 820, 900],
+                  lines: [{ spans: [{ content: "Bounds on scalar-tensor theories from solar-system and binary-pulsar tests. Image reproduced with permission from Freire et al. (2012), copyright by Oxford University Press." }] }]
+                }
+              ]
+            }
+          : { page_size: [919, 1256], para_blocks: [] })
+      };
+      state.pdfTextPageCache.set(12, {
+        pageSize: [919, 1256],
+        textBlocks: [
+          { text: "Fig. 12.4", bbox: [70, 838, 170, 870] }
+        ]
+      });
+      const source = reviewSegmentsForPage(12)[0].markdown;
+      const label = inferMissingFigureLabelForBlock(12, "0", source);
+      const corrected = autoCorrectFigureCaptionLabelMarkdown(12, "0", source);
+      const changed = applyAutomaticLocalCorrectionsForPage(12);
+      const patch = state.ocrPatches[0] || null;
+      return JSON.stringify({ label, corrected, changed, patchText: patch?.newText || "", autoCorrection: patch?.metadata?.autoCorrection || "" });
+    })()`),
+  );
+  assert.strictEqual(visualFigureLabel.label, "Fig. 12.4", "caption should infer a nearby standalone PDF figure label");
+  assert(visualFigureLabel.corrected.startsWith("Fig. 12.4 Bounds on scalar-tensor theories"), "visual figure label should be prepended to caption text");
+  assert.strictEqual(visualFigureLabel.changed, 1, "automatic local corrections should preserve missing figure caption numbers");
+  assert(visualFigureLabel.patchText.startsWith("Fig. 12.4 Bounds on scalar-tensor theories"));
+  assert.strictEqual(visualFigureLabel.autoCorrection, "figure_caption_label_preservation");
+}
+
+{
   const sameA = JSON.parse(call(`JSON.stringify(createLegacyBlockPatchContext(11, "5", "same OCR text"))`));
   const sameB = JSON.parse(call(`JSON.stringify(createLegacyBlockPatchContext(11, "5", "same OCR text"))`));
   const changed = JSON.parse(call(`JSON.stringify(createLegacyBlockPatchContext(11, "5", "changed OCR text"))`));
@@ -4659,6 +5004,8 @@ assert(!numberedDollarDisplayPatch.trimEnd().endsWith("(2.8)"), "display math nu
 
 const renderedNumberedDollarDisplay = call(`renderBlockContent("$$\\nE^S=-15.75A\\n\\\\tag{2.8}\\n$$", { kind: "interline_equation", blockIndex: "0" })`);
 assert(renderedNumberedDollarDisplay.includes("math-display-equation-tag"), "rendered display math should expose a visible equation-number tag");
+assert(renderedNumberedDollarDisplay.includes('class="math-display"'), "numbered display math should keep the stable display-math class");
+assert(renderedNumberedDollarDisplay.includes('data-equation-tag="true"'), "numbered display math should expose an equation-tag layout marker");
 assert(renderedNumberedDollarDisplay.includes("(2.8)"), "rendered display math should show the equation number");
 assert(!renderedNumberedDollarDisplay.includes("\\\\tag{2.8}"), "rendered display math should not rely on raw LaTeX tag visibility");
 
