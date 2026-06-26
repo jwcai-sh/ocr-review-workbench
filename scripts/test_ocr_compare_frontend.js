@@ -125,10 +125,41 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('class="upload-icon"'));
   assert(ocrCompareHtml.includes('viewBox="0 0 24 24"'));
   assert(!ocrCompareHtml.includes("cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"), "MathJax CDN should be lazy-loaded by ocr-compare.js");
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260626-visible-editor-source"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260626-visible-editor-source"'));
+  assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
+  assert(source.includes("ensureMathJaxLoaded().catch((error) => reportMathJaxError(error));"));
   assert(ocrCompareHtml.includes("<div>校对工作台</div>"));
   assert(!ocrCompareHtml.includes("导出原始 MinerU"));
   assert(!ocrCompareHtml.includes("中栏读取已有 MinerU"));
   assert(!source.includes('document.querySelector(".control-band")'), "upload controls should stay visible when the MinerU preview column is collapsed");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      const paragraph = { textContent: "inline $x$" };
+      const displayFormula = { textContent: "$$\\\\Psi = 1$$" };
+      const plain = { textContent: "plain text" };
+      const root = {
+        textContent: "plain text inline $x$ $$\\\\Psi = 1$$",
+        querySelectorAll() {
+          return [paragraph, plain, displayFormula, paragraph];
+        }
+      };
+      const targets = mathTypesetTargetsForRoots([root, paragraph]);
+      return JSON.stringify({
+        count: targets.length,
+        includesParagraph: targets.includes(paragraph),
+        includesDisplay: targets.includes(displayFormula),
+        includesPlain: targets.includes(plain)
+      });
+    })()`),
+  );
+  assert.strictEqual(result.count, 2, "MathJax targets should be isolated to unique math-bearing nodes");
+  assert(result.includesParagraph, "inline math paragraph should be a MathJax target");
+  assert(result.includesDisplay, "display math formula should be a MathJax target");
+  assert(!result.includesPlain, "plain text nodes should not be MathJax targets");
 }
 
 {
@@ -239,6 +270,29 @@ assert(singleLineHtml.includes('class="math-display"'), "single-line display mat
 assert(!singleLineHtml.includes("<p>$$"), "single-line display math should not render as raw paragraph text");
 assert.strictEqual(call("rootHasMathContent({ textContent: 'plain OCR text' })"), false);
 assert.strictEqual(call("rootHasMathContent({ textContent: 'formula $E=mc^2$' })"), true);
+
+{
+  const userCorrectedMathBlock = `For a compact binary system, the waveforms $\\tilde{h}^{j k}$ and $\\Psi$ are given to the required orders (Lang, 2014, 2015) by
+$$\\tilde{h}^{j k} = 4 ( 1 - \\zeta ) \\frac{\\eta m}{R} \\left( v^{j} v^{k} - \\frac{\\mathcal{G} m}{r} n^{j} n^{k} \\right),\\tag{11.115} $$
+where $\\mathcal{G} = 1 - \\zeta + \\zeta \\left( 1 -2 s_{1} \\right) \\left( 1 -2 s_{2} \\right)$ [see Eq. (10.65)], and
+$$\\Psi = 2 \\mathcal{G}^{1 / 2} \\frac{\\zeta \\eta m}{R} \\left[ \\Psi_{-0.5 \\mathrm{PN}} + \\Psi_{0 \\mathrm{PN}} + \\Psi_{+0.5 \\mathrm{PN}} \\right],\\tag{11.116}$$
+where
+$$
+\\begin{aligned}
+\\Psi_{-0.5 \\mathrm{PN}} = & 2 \\mathcal{S}_{-} \\boldsymbol{N} \\cdot \\boldsymbol{v} \\\\
+\\Psi_{0 \\mathrm{PN}} = & - \\left( \\mathcal{S}_{+} + \\Delta \\mathcal{S}_{-} \\right) \\left[ \\frac{1}{2} v^{2} - ( \\boldsymbol{N} \\cdot \\boldsymbol{v} )^{2} + \\frac{\\mathcal{G} m}{r} ( \\boldsymbol{N} \\cdot \\boldsymbol{n} )^{2} \\right] \\\\
+& -2 \\frac{\\mathcal{G} m}{r} \\left[ \\mathcal{S}_{+} - \\frac{4}{\\bar{\\gamma}} \\left( \\mathcal{S}_{+} \\bar{\\beta}_{+} + \\mathcal{S}_{-} \\bar{\\beta}_{-} \\right) \\right]
+\\end{aligned}
+$$`;
+  const html = call(`renderBlockContent(${JSON.stringify(userCorrectedMathBlock)}, { kind: "text", blockIndex: "user-corrected-math" })`);
+  assert(html.includes("For a compact binary system, the waveforms"), "manual corrected math block should preserve first-line prose spacing");
+  assert(html.includes('class="math-display"'), "manual corrected math block should render display formulas as display blocks");
+  assert(html.includes("math-display-equation-tag"), "manual corrected math block should expose equation-number labels outside LaTeX");
+  assert(html.includes("(11.115)") && html.includes("(11.116)"), "manual corrected math block should show both equation labels");
+  assert(!html.includes("Foracompactbinarysystem"), "manual corrected math block should not show stale collapsed prose");
+  assert(!html.includes("<p>$$"), "manual corrected math block should not render display delimiters as paragraph text");
+  assert(!html.includes("\\\\tag{11.115}") && !html.includes("\\\\tag{11.116}"), "manual corrected math block should strip raw LaTeX tags from visible math source");
+}
 
 {
   const result = JSON.parse(
@@ -1148,6 +1202,102 @@ function assertOcrPatchShape(patch) {
 }
 
 {
+  const collapsedMathpixDraft = "Foracompactbinarysystem, thewaveforms$\\tilde{h}^{j k}$and$\\Psi$aregivento therequiredorders (Lang, 2014, 2015) by\n$$\\tilde{h}^{j k} = 4 ( 1 - \\zeta ) \\frac{\\eta m}{R} \\left( v^{j} v^{k} - \\frac{\\mathcal{G} m}{r} n^{j} n^{k} \\right), \\tag{11.115} $$\nwhere$\\mathcal{G} = 1 - \\zeta + \\zeta \\left( 1 - 2 s_{1} \\right) \\left( 1 - 2 s_{2} \\right)$[seeEq. (10.65)], and\n$$\\Psi = 2 \\mathcal{G}^{1 / 2} \\frac{\\zeta \\eta m}{R} \\left[ \\Psi_{-0.5 \\mathrm{PN}} + \\Psi_{0 \\mathrm{PN}} + \\Psi_{+0.5 \\mathrm{PN}} \\right], \\tag{11.116} $$";
+  const result = JSON.parse(
+    call(`(() => {
+      ${setupPreviewPageExpression(["Original source block"])}
+      state.reviewCorrectionOpen.add(reviewBlockKey(1, "0"));
+      getMathpixBlockDrafts(1).set("0", ${JSON.stringify(collapsedMathpixDraft)});
+      const view = buildReviewCorrectionViewModel({
+        mathpixDraftMarkdown: ${JSON.stringify(collapsedMathpixDraft)},
+        fallbackMarkdown: "Original source block"
+      });
+      const html = renderPageReviewCanvas(reviewEntriesForCurrentPage());
+      state.reviewCorrectionOpen.clear();
+      return JSON.stringify({ html, displayMarkdown: view.displayMarkdown, editableMarkdown: view.editableMarkdown });
+    })()`),
+  );
+  assert.strictEqual(result.displayMarkdown, result.editableMarkdown, "page render and editor should share one cleaned correction markdown");
+  assert(result.editableMarkdown.includes("For a compact binary system, the waveforms"), "shared correction view should expose cleaned first line");
+  assert(result.html.includes("For a compact binary system, the waveforms"), "page block render should use the same cleaned Mathpix markdown as the editor");
+  assert(result.html.includes('class="math-display"'), "cleaned Mathpix draft should still render display equations");
+  assert(!result.html.includes("Foracompactbinarysystem"), "raw collapsed Mathpix draft should not leak into block render or editor");
+  assert(!result.html.includes("thewaveforms"), "raw collapsed prose tokens should not leak into block render or editor");
+  assert(!result.html.includes("where$"), "raw inline math boundaries should not leak into block render or editor");
+  assert(!result.html.includes("seeEq."), "raw equation reference spacing should not leak into block render or editor");
+}
+
+{
+  const staleMathpixDraft = "Foracompactbinarysystem,thewaveforms$\\tilde{h}^{j k}$and$\\Psi$aregivento therequiredorders";
+  const cleanManualMarkdown = "For a compact binary system, the waveforms $\\tilde{h}^{j k}$ and $\\Psi$ are given to the required orders (Lang, 2014, 2015) by\n$$\\tilde{h}^{j k} = 4 ( 1 - \\zeta ) \\frac{\\eta m}{R} \\left( v^{j} v^{k} - \\frac{\\mathcal{G} m}{r} n^{j} n^{k} \\right),\\tag{11.115} $$\nwhere $\\mathcal{G} = 1 - \\zeta + \\zeta \\left( 1 -2 s_{1} \\right) \\left( 1 -2 s_{2} \\right)$ [see Eq. (10.65)], and";
+  const result = JSON.parse(
+    call(`(() => {
+      ${setupPreviewPageExpression(["Original source block"])}
+      state.reviewCorrectionOpen.add(reviewBlockKey(1, "0"));
+      getMathpixBlockDrafts(1).set("0", ${JSON.stringify(staleMathpixDraft)});
+      const renderTarget = { innerHTML: "", textContent: "", isConnected: true };
+      const block = {
+        querySelector(selector) {
+          return selector === ".review-page-block-render" ? renderTarget : null;
+        }
+      };
+      const editor = {
+        value: ${JSON.stringify(cleanManualMarkdown)},
+        dataset: { mathpixEdit: "0" },
+        closest(selector) {
+          return selector === "[data-review-page-block]" ? block : null;
+        }
+      };
+      const ok = updateLiveReviewPreviewForEditor(editor);
+      const liveDraft = getLiveReviewDrafts(1, false).get("0");
+      const rerendered = renderPageReviewCanvas(reviewEntriesForCurrentPage());
+      state.reviewCorrectionOpen.clear();
+      return JSON.stringify({ ok, html: renderTarget.innerHTML, liveDraft, rerendered });
+    })()`),
+  );
+  assert.strictEqual(result.ok, true, "manual Mathpix editor input should update the current block preview");
+  assert(result.liveDraft.markdown.includes("For a compact binary system, the waveforms"), "manual editor input should be stored as the live draft for rerenders");
+  assert(result.html.includes("For a compact binary system, the waveforms"), "live preview should use the textarea markdown, not stale draft state");
+  assert(result.rerendered.includes("For a compact binary system, the waveforms"), "rerendered page canvas should prefer live editor draft over stale Mathpix draft");
+  assert(result.html.includes("class=\"math-display\""), "live preview should keep display math rendering wrappers");
+  assert(!result.html.includes("Foracompactbinarysystem"), "live preview should not keep stale collapsed first-line text");
+  assert(!result.rerendered.includes("Foracompactbinarysystem"), "rerendered page canvas should not restore stale collapsed text");
+  assert(!result.html.includes("thewaveforms"), "live preview should not keep stale collapsed waveforms text");
+  assert(!result.html.includes("where$"), "live preview should not keep stale inline math boundaries");
+}
+
+{
+  const staleMathpixDraft = "Foracompactbinarysystem,thewaveforms$\\tilde{h}^{j k}$and$\\Psi$aregivento therequiredorders";
+  const cleanVisibleEditorMarkdown = "For a compact binary system, the waveforms $\\tilde{h}^{j k}$ and $\\Psi$ are given to the required orders (Lang, 2014, 2015) by\n$$\\tilde{h}^{j k} = 4 ( 1 - \\zeta ) \\frac{\\eta m}{R} \\left( v^{j} v^{k} - \\frac{\\mathcal{G} m}{r} n^{j} n^{k} \\right),\\tag{11.115} $$";
+  const result = JSON.parse(
+    call(`(() => {
+      ${setupPreviewPageExpression(["Original source block"])}
+      state.reviewCorrectionOpen.add(reviewBlockKey(1, "0"));
+      getMathpixBlockDrafts(1).set("0", ${JSON.stringify(staleMathpixDraft)});
+      const editor = {
+        value: ${JSON.stringify(cleanVisibleEditorMarkdown)},
+        dataset: { mathpixEdit: "0" }
+      };
+      const currentWorkbench = {
+        querySelectorAll(selector) {
+          return selector === "[data-mathpix-edit], [data-mineru-source-edit]" ? [editor] : [];
+        }
+      };
+      const count = syncLiveReviewDraftsFromEditors(currentWorkbench);
+      const liveDraft = getLiveReviewDrafts(1, false).get("0");
+      const rerendered = renderPageReviewCanvas(reviewEntriesForCurrentPage());
+      state.reviewCorrectionOpen.clear();
+      return JSON.stringify({ count, liveDraft, rerendered });
+    })()`),
+  );
+  assert.strictEqual(result.count, 1, "right workbench refresh should sync visible editor values before rerendering");
+  assert(result.liveDraft.markdown.includes("For a compact binary system, the waveforms"), "visible editor sync should store the current textarea markdown");
+  assert(result.rerendered.includes("For a compact binary system, the waveforms"), "rerender should prefer the visible textarea markdown over stale Mathpix draft state");
+  assert(result.rerendered.includes("math-display-equation-tag"), "rerendered visible editor markdown should keep display equation labels");
+  assert(!result.rerendered.includes("Foracompactbinarysystem"), "stale Mathpix draft should not return after refresh-time sync");
+}
+
+{
   const result = JSON.parse(
     call(`(() => {
       ${setupPreviewPageExpression(["Assuming the$1\\\\sigma$bound of$\\\\eta$<2\\nfrom parameters$\\\\eta^A$by Table 2.1."])}
@@ -1774,6 +1924,7 @@ function setupPreviewPageExpression(blocks) {
     state.mineruOverrides.clear();
     state.mineruBlockOverrides.clear();
     state.mathpixBlockDrafts.clear();
+    state.liveReviewDrafts.clear();
     state.mineruInfo = {
       pdf_info: [
         {

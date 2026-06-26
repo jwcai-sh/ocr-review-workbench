@@ -8,6 +8,8 @@ const API_BASE =
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
+const OCR_COMPARE_BUILD_ID = "20260626-visible-editor-source";
+document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
   pdfFile: null,
@@ -23,6 +25,7 @@ const state = {
   mineruOverrides: new Map(),
   mineruBlockOverrides: new Map(),
   mathpixBlockDrafts: new Map(),
+  liveReviewDrafts: new Map(),
   mathpixBlockErrors: new Map(),
   ocrPatches: [],
   acceptedPatchPreview: null,
@@ -338,6 +341,7 @@ function initialize() {
   window.addEventListener("resize", schedulePdfFocusSync);
   window.addEventListener("mathjax-ready", () => typesetMath(els.pageList));
   updateAcceptedPatchTopControls();
+  ensureMathJaxLoaded().catch((error) => reportMathJaxError(error));
   refreshRuntimeCapabilities();
 }
 
@@ -391,6 +395,7 @@ async function handleMineruChange() {
     state.mineruOverrides.clear();
     state.mineruBlockOverrides.clear();
     state.mathpixBlockDrafts.clear();
+    state.liveReviewDrafts.clear();
     state.ocrPatches = [];
     state.acceptedPatchPreview = null;
     state.acceptedPatchBookPreview = null;
@@ -488,6 +493,7 @@ async function loadPdfFile(file) {
   state.pdfTextPageCache.clear();
   state.mathpixCache.clear();
   state.mathpixBlockDrafts.clear();
+  state.liveReviewDrafts.clear();
   state.mineruOverrides.clear();
   state.mineruBlockOverrides.clear();
   state.ocrPatches = [];
@@ -528,6 +534,7 @@ async function loadMineruFile(file) {
   state.mineruOverrides.clear();
   state.mineruBlockOverrides.clear();
   state.mathpixBlockDrafts.clear();
+  state.liveReviewDrafts.clear();
   state.ocrPatches = [];
   state.acceptedPatchPreview = null;
   state.acceptedPatchBookPreview = null;
@@ -583,6 +590,7 @@ function resetPage() {
   state.mineruOverrides.clear();
   state.mineruBlockOverrides.clear();
   state.mathpixBlockDrafts.clear();
+  state.liveReviewDrafts.clear();
   state.ocrPatches = [];
   state.acceptedPatchPreview = null;
   state.acceptedPatchBookPreview = null;
@@ -1672,14 +1680,14 @@ function renderReviewCard() {
     ["click", "pointerdown", "keydown"].forEach((eventName) => {
       editor.addEventListener(eventName, (event) => event.stopPropagation());
     });
-    editor.addEventListener("input", () => updateReviewEditorActionState(editor));
+    editor.addEventListener("input", () => handleReviewEditorInput(editor));
     updateReviewEditorActionState(editor);
   });
   if (typeof card.addEventListener === "function") {
     card.addEventListener("input", (event) => {
       const editor = event.target?.closest?.("[data-mathpix-edit], [data-mineru-source-edit]");
       if (editor && card.contains(editor)) {
-        updateReviewEditorActionState(editor);
+        handleReviewEditorInput(editor);
       }
     });
   }
@@ -2056,14 +2064,25 @@ function renderPageReviewBlock(entry) {
   const risk = entry.risk || reviewRiskFromSegment(segment, state.currentPage);
   const blockOverrides = getBlockOverrides(state.currentPage, false);
   const mathpixDrafts = getMathpixBlockDrafts(state.currentPage, false);
+  const liveDrafts = getLiveReviewDrafts(state.currentPage, false);
   const ocrPatch = getLatestOcrPatchForBlock(state.currentPage, blockKey, segment.markdown);
   const patchMarkdown = reviewPatchMarkdown(ocrPatch);
   const draftMarkdown = mathpixDrafts.get(blockKey) || "";
+  const liveDraft = liveDrafts.get(blockKey) || null;
   const correctedMarkdown = blockOverrides.get(blockKey) || "";
-  const displayMarkdown = draftMarkdown || patchMarkdown || correctedMarkdown || segment.markdown || risk.text || "";
+  const correctionView = buildReviewCorrectionViewModel({
+    liveDraft,
+    mathpixDraftMarkdown: draftMarkdown,
+    patchMarkdown,
+    correctedMarkdown,
+    corrected: blockOverrides.has(blockKey),
+    ocrPatch,
+    fallbackMarkdown: segment.markdown || risk.text || "",
+  });
+  const displayMarkdown = correctionView.displayMarkdown;
   const selected = isActiveReviewBlockKey(fullKey);
-  const corrected = blockOverrides.has(blockKey) || Boolean(ocrPatch?.status === "accepted");
-  const hasDraft = Boolean(draftMarkdown || ocrPatch?.status === "draft");
+  const corrected = correctionView.isCorrected;
+  const hasDraft = correctionView.hasMathpixDraft;
   const itemState = hasDraft ? "mathpix-draft" : corrected ? "corrected" : risk.reviewOnly ? "normal" : "candidate";
   const correctionOpen = state.reviewCorrectionOpen.has(fullKey);
   const actionsOpen = state.reviewActionsOpen.has(fullKey) || correctionOpen;
@@ -2101,7 +2120,7 @@ function renderPageReviewBlock(entry) {
               blockOverrides.has(blockKey),
               draftMarkdown,
               ocrPatch,
-              { displayIndex: entry.displayIndex, mathpixError },
+              { displayIndex: entry.displayIndex, mathpixError, correctionView },
             )
           : ""
       }
@@ -2125,14 +2144,24 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
   const mathpixUnavailableReason = state.mathpixConfigError || "未配置 MATHPIX_APP_ID/MATHPIX_APP_KEY";
   const mathpixTitle = mathpixUnavailable ? `title="${escapeHtml(mathpixUnavailableReason)}"` : "";
   const patchMarkdown = reviewPatchMarkdown(ocrPatch);
-  const hasPatchDraft = Boolean(patchMarkdown && ocrPatch?.status === "draft");
-  const hasAcceptedPatchMarkdown = Boolean(patchMarkdown && ocrPatch?.status === "accepted");
-  const hasMathpixDraft = Boolean(String(mathpixDraftMarkdown || "").trim()) || hasPatchDraft;
-  const isCorrected = Boolean(corrected || hasAcceptedPatchMarkdown);
-  const editableMarkdown = cleanMathpixEditableMarkdown(prepareMathpixMarkdown(mathpixDraftMarkdown || patchMarkdown || correctedMarkdown || ""));
-  const hasEditableMarkdown = Boolean(editableMarkdown.trim());
-  const previewMarkdown = hasMathpixDraft || hasAcceptedPatchMarkdown ? editableMarkdown : correctedMarkdown;
-  const mathpixEditorIsSaved = Boolean(hasAcceptedPatchMarkdown && !hasMathpixDraft && editableMarkdown === prepareMathpixMarkdown(patchMarkdown));
+  const correctionView = options.correctionView || buildReviewCorrectionViewModel({
+    liveDraft: getLiveReviewDrafts(state.currentPage, false).get(String(segment.blockIndex)) || null,
+    mathpixDraftMarkdown,
+    patchMarkdown,
+    correctedMarkdown,
+    corrected,
+    ocrPatch,
+    fallbackMarkdown: segment.markdown || risk.text || "",
+  });
+  const {
+    hasAcceptedPatchMarkdown,
+    hasMathpixDraft,
+    isCorrected,
+    editableMarkdown,
+    hasEditableMarkdown,
+    previewMarkdown,
+    mathpixEditorIsSaved,
+  } = correctionView;
   const reviewKey = reviewBlockKey(state.currentPage, segment.blockIndex);
   const expanded = state.reviewExpanded.has(reviewKey);
   const itemState = hasMathpixDraft ? "mathpix-draft" : isCorrected ? "corrected" : isReviewOnly ? "normal" : "candidate";
@@ -2267,6 +2296,62 @@ function renderSelectedBlockToolbar(segment, risk, correctedMarkdown, corrected,
   });
 }
 
+function buildReviewCorrectionViewModel({
+  liveDraft = null,
+  mathpixDraftMarkdown = "",
+  patchMarkdown = "",
+  correctedMarkdown = "",
+  corrected = false,
+  ocrPatch = null,
+  fallbackMarkdown = "",
+} = {}) {
+  const liveDraftText = String(liveDraft?.markdown || "");
+  const draftText = String(mathpixDraftMarkdown || "");
+  const patchText = String(patchMarkdown || "");
+  const correctedText = String(correctedMarkdown || "");
+  const activeCorrectionMarkdown = liveDraftText || draftText || patchText || correctedText || "";
+  const editableMarkdown = activeCorrectionMarkdown
+    ? liveDraftText
+      ? liveDraftText
+      : normalizedReviewMarkdownForActiveCorrection(activeCorrectionMarkdown)
+    : "";
+  const hasEditableMarkdown = Boolean(editableMarkdown.trim());
+  const hasPatchDraft = Boolean(patchText.trim() && ocrPatch?.status === "draft");
+  const hasAcceptedPatchMarkdown = Boolean(patchText.trim() && ocrPatch?.status === "accepted");
+  const hasMathpixDraft = Boolean(liveDraftText.trim() || draftText.trim()) || hasPatchDraft;
+  const isCorrected = Boolean(corrected || hasAcceptedPatchMarkdown);
+  const previewMarkdown = hasMathpixDraft || hasAcceptedPatchMarkdown ? editableMarkdown : correctedText;
+  const mathpixEditorIsSaved = Boolean(
+    hasAcceptedPatchMarkdown &&
+      !hasMathpixDraft &&
+      editableMarkdown === normalizedReviewMarkdownForActiveCorrection(patchText),
+  );
+  return {
+    activeCorrectionMarkdown,
+    displayMarkdown: hasEditableMarkdown ? editableMarkdown : String(fallbackMarkdown || ""),
+    editableMarkdown,
+    hasEditableMarkdown,
+    hasPatchDraft,
+    hasAcceptedPatchMarkdown,
+    hasMathpixDraft,
+    isCorrected,
+    previewMarkdown,
+    mathpixEditorIsSaved,
+  };
+}
+
+function normalizedReviewMarkdownForActiveCorrection(markdown) {
+  return cleanMathpixEditableMarkdown(prepareMathpixMarkdown(markdown));
+}
+
+function liveReviewMarkdownForEditor(editor) {
+  const value = String(editor?.value || "");
+  if (!editor?.dataset?.mathpixEdit) {
+    return value;
+  }
+  return cleanMathpixEditableMarkdown(value);
+}
+
 function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditableMarkdown, mathpixEditorIsSaved }) {
   const blockIndex = escapeHtml(String(segment?.blockIndex ?? ""));
   const mineruMarkdown = escapeHtml(String(segment?.markdown || ""));
@@ -2325,6 +2410,47 @@ function updateReviewEditorActionState(editor) {
     return isDirty;
   }
   return isDirty;
+}
+
+function handleReviewEditorInput(editor) {
+  updateReviewEditorActionState(editor);
+  updateLiveReviewPreviewForEditor(editor);
+}
+
+function storeLiveReviewDraftForEditor(editor) {
+  const blockKey = String(editor?.dataset?.mathpixEdit || editor?.dataset?.mineruSourceEdit || "");
+  if (!blockKey) {
+    return false;
+  }
+  const isMathpixEditor = Boolean(editor.dataset?.mathpixEdit);
+  const markdown = liveReviewMarkdownForEditor(editor);
+  getLiveReviewDrafts(state.currentPage).set(blockKey, {
+    markdown,
+    source: isMathpixEditor ? "mathpix" : "mineru",
+  });
+  return true;
+}
+
+function updateLiveReviewPreviewForEditor(editor) {
+  const blockKey = String(editor?.dataset?.mathpixEdit || editor?.dataset?.mineruSourceEdit || "");
+  if (!blockKey) {
+    return false;
+  }
+  storeLiveReviewDraftForEditor(editor);
+  const block = editor.closest?.("[data-review-page-block]");
+  const renderTarget = block?.querySelector?.(".review-page-block-render");
+  if (!renderTarget) {
+    return false;
+  }
+  const segment =
+    reviewSegmentsForPage(state.currentPage).find((item) => String(item.blockIndex) === blockKey) ||
+    { blockIndex: blockKey, kind: "text" };
+  const isMathpixEditor = Boolean(editor.dataset?.mathpixEdit);
+  const liveDraft = getLiveReviewDrafts(state.currentPage, false).get(blockKey) || null;
+  const markdown = liveDraft?.markdown || (isMathpixEditor ? liveReviewMarkdownForEditor(editor) : String(editor.value || ""));
+  renderTarget.innerHTML = renderBlockContent(markdown, segment);
+  typesetMath(renderTarget);
+  return true;
 }
 
 function renderOcrPatchStatusControls(patch) {
@@ -2498,6 +2624,7 @@ function refreshRightWorkbenchOnly(options = {}) {
     return false;
   }
   const scrollState = options.preserveReviewScroll ? captureRightWorkbenchScrollState(current, options.preserveReviewAnchorKey) : null;
+  syncLiveReviewDraftsFromEditors(current);
   const next = renderRightWorkbench(state.pageCache.get(state.currentPage) || null);
   current.replaceWith(next);
   typesetMath(next);
@@ -2505,6 +2632,19 @@ function refreshRightWorkbenchOnly(options = {}) {
   scheduleRightWorkbenchScrollRestore(next, scrollState);
   updateAcceptedPatchTopControls();
   return true;
+}
+
+function syncLiveReviewDraftsFromEditors(root) {
+  if (!root?.querySelectorAll) {
+    return 0;
+  }
+  let count = 0;
+  root.querySelectorAll("[data-mathpix-edit], [data-mineru-source-edit]").forEach((editor) => {
+    if (storeLiveReviewDraftForEditor(editor)) {
+      count += 1;
+    }
+  });
+  return count;
 }
 
 function captureRightWorkbenchScrollState(current, anchorKey = "") {
@@ -3292,6 +3432,7 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
     updateOcrPatchStatus(patchResult.patch.patchId, "accepted");
   }
   getMathpixBlockDrafts(state.currentPage).delete(blockKey);
+  clearLiveReviewDraftForBlock(state.currentPage, blockKey);
   clearReviewNeedsCorrectionForBlock(state.currentPage, blockKey);
   // TODO: next step will switch display/export to accepted patches.
   getBlockOverrides(state.currentPage).set(blockKey, markdown);
@@ -3347,7 +3488,7 @@ function renderBlockContent(markdown, entry) {
   }
   const normalizedMarkdown = normalizeReferenceSpacing(
     normalizeMathpixCollapsedProse(
-      normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(markdown)),
+      normalizeSingleLineDisplayMath(normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(markdown))),
     ),
   );
   const imagePreview = renderBlockImagePreview(normalizedMarkdown, entry);
@@ -3938,7 +4079,7 @@ async function recognizeRiskBlockWithMathpix(blockIndex) {
     if (!data.ok) {
       throw new Error(data.error || "Mathpix 块级请求失败");
     }
-    const preparedMarkdown = prepareMathpixMarkdown(data.markdown || data.answer || "");
+    const preparedMarkdown = normalizedReviewMarkdownForActiveCorrection(data.markdown || data.answer || "");
     if (!preparedMarkdown.trim()) {
       throw new Error("Mathpix 块级响应为空");
     }
@@ -3954,6 +4095,7 @@ async function recognizeRiskBlockWithMathpix(blockIndex) {
     const markdown = patchResult.normalizedText;
     // TODO: next step will switch display/export to accepted patches.
     getMathpixBlockDrafts(state.currentPage).set(blockKey, markdown);
+    clearLiveReviewDraftForBlock(state.currentPage, blockKey);
     clearMathpixBlockError(state.currentPage, blockKey);
     saveOcrWorkspaceState();
     expandOnlyReviewBlock(state.currentPage, blockKey);
@@ -4169,6 +4311,18 @@ function getMathpixBlockDrafts(pageNumber, create = true) {
     state.mathpixBlockDrafts.set(pageNumber, new Map());
   }
   return state.mathpixBlockDrafts.get(pageNumber) || new Map();
+}
+
+function getLiveReviewDrafts(pageNumber, create = true) {
+  if (!state.liveReviewDrafts.has(pageNumber) && create) {
+    state.liveReviewDrafts.set(pageNumber, new Map());
+  }
+  return state.liveReviewDrafts.get(pageNumber) || new Map();
+}
+
+function clearLiveReviewDraftForBlock(pageNumber, blockIndex) {
+  const drafts = getLiveReviewDrafts(pageNumber, false);
+  return drafts.delete(String(blockIndex || ""));
 }
 
 function createLegacyBlockPatchContext(pageNo, blockIndex, oldText) {
@@ -7577,17 +7731,72 @@ function flushPendingMathTypeset() {
     return;
   }
   if (window.MathJax?.typesetPromise) {
-    window.MathJax.typesetPromise(roots).catch(() => {});
+    typesetMathRoots(roots).catch((error) => reportMathJaxError(error));
     return;
   }
   ensureMathJaxLoaded()
     .then(() => {
       if (window.MathJax?.typesetPromise) {
-        return window.MathJax.typesetPromise(roots);
+        return typesetMathRoots(roots);
       }
       return null;
     })
-    .catch(() => {});
+    .catch((error) => reportMathJaxError(error));
+}
+
+async function typesetMathRoots(roots) {
+  const targets = mathTypesetTargetsForRoots(roots);
+  if (!targets.length || !window.MathJax?.typesetPromise) {
+    return;
+  }
+  const failures = [];
+  for (const target of targets) {
+    try {
+      window.MathJax.typesetClear?.([target]);
+      await window.MathJax.typesetPromise([target]);
+      target.removeAttribute?.("data-mathjax-render-error");
+    } catch (error) {
+      target.setAttribute?.("data-mathjax-render-error", "1");
+      failures.push(error);
+    }
+  }
+  if (failures.length) {
+    throw failures[0];
+  }
+}
+
+function mathTypesetTargetsForRoots(roots) {
+  const seen = new Set();
+  const targets = [];
+  (Array.isArray(roots) ? roots : [roots]).forEach((root) => {
+    mathTypesetTargetsForRoot(root).forEach((target) => {
+      if (!target || seen.has(target)) {
+        return;
+      }
+      seen.add(target);
+      targets.push(target);
+    });
+  });
+  return targets;
+}
+
+function mathTypesetTargetsForRoot(root) {
+  if (!root || !rootHasMathContent(root)) {
+    return [];
+  }
+  if (typeof root.querySelectorAll !== "function") {
+    return [root];
+  }
+  const candidates = Array.from(
+    root.querySelectorAll(".math-display-formula, p, li, td, th, figcaption"),
+  ).filter((node) => rootHasMathContent(node));
+  return candidates.length ? candidates : [root];
+}
+
+function reportMathJaxError(error) {
+  const message = error?.message || String(error || "MathJax 渲染失败");
+  setStatus("MathJax 渲染失败", "error", message);
+  console.warn?.("[OCR Review] MathJax 渲染失败", error);
 }
 
 function rootHasMathContent(root) {
