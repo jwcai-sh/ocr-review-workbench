@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260626-file-runtime-api-fallback";
+const OCR_COMPARE_BUILD_ID = "20260627-correction-actions";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -76,6 +76,8 @@ let riskAnalysisTimer = null;
 let riskAnalysisRunId = 0;
 let renderCurrentPageRunId = 0;
 let pagePrefetchTimer = null;
+let liveReviewPreviewTimer = null;
+let liveReviewPreviewRunId = 0;
 const pendingPagePreviewRequests = new Map();
 const pendingMathTypesetRoots = new Set();
 let mathTypesetTimer = null;
@@ -1790,6 +1792,24 @@ function renderReviewCard() {
       autoAddFigureLabelForBlock(button.dataset.autoAddFigureLabel);
     });
   });
+  card.querySelectorAll("[data-convert-code-block]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await convertCodeBlockToMarkdownForBlock(button.dataset.convertCodeBlock);
+    });
+  });
+  card.querySelectorAll("[data-structure-formula-block]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await structureFormulaBlock(button.dataset.structureFormulaBlock);
+    });
+  });
+  card.querySelectorAll("[data-revert-mathpix-block-edit]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await discardMathpixCorrectionForBlock(button.dataset.revertMathpixBlockEdit);
+    });
+  });
   card.querySelectorAll(".selected-block-toolbar, .block-source-detail").forEach((container) => {
     ["click", "pointerdown", "dblclick"].forEach((eventName) => {
       container.addEventListener(eventName, (event) => event.stopPropagation());
@@ -2274,6 +2294,8 @@ function renderPageReviewBlock(entry) {
   const actionsOpen = state.reviewActionsOpen.has(fullKey) || correctionOpen;
   const needsCorrection = state.reviewNeedsCorrection.has(fullKey);
   const missingFigureLabel = inferMissingFigureLabelForBlock(state.currentPage, blockKey, segment.markdown || "");
+  const codeConversionAvailable = canConvertCodeLikeMarkdownToPlainMarkdown(displayMarkdown, segment);
+  const formulaStructureAvailable = canStructureFormulaMarkdown(displayMarkdown);
   const mathpixError = getMathpixBlockError(state.currentPage, blockKey);
   const actionsHtml = actionsOpen
     ? `<div class="review-page-block-actions">
@@ -2283,6 +2305,16 @@ function renderPageReviewBlock(entry) {
         ${
           missingFigureLabel
             ? `<button class="review-page-local-button" type="button" data-auto-add-figure-label="${escapeHtml(blockKey)}">补图号</button>`
+            : ""
+        }
+        ${
+          codeConversionAvailable
+            ? `<button class="review-page-local-button" type="button" data-convert-code-block="${escapeHtml(blockKey)}">转普通文本</button>`
+            : ""
+        }
+        ${
+          formulaStructureAvailable
+            ? `<button class="review-page-local-button" type="button" data-structure-formula-block="${escapeHtml(blockKey)}">结构化公式</button>`
             : ""
         }
         <button class="review-page-correct-button" type="button" data-review-correction-toggle="${escapeHtml(fullKey)}" aria-expanded="${correctionOpen ? "true" : "false"}">
@@ -2400,6 +2432,7 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
               <button class="text-button" type="button" data-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="${hasMathpixDraft ? "保持修改" : "未修改"}" data-dirty-label="保持修改" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>
                 ${hasMathpixDraft ? "保持修改" : "未修改"}
               </button>
+              ${hasMathpixDraft ? `<button class="text-button" type="button" data-revert-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}">撤销修改</button>` : ""}
             </div>
           </details>
         </section>`
@@ -2421,6 +2454,9 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
     const saveActionHtml = hasEditableMarkdown
       ? `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="${hasMathpixDraft ? "保持修改" : "未修改"}" data-dirty-label="保持修改" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>${hasMathpixDraft ? "保持修改" : "未修改"}</button>`
       : `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保持修改" disabled>未修改</button>`;
+    const revertActionHtml = hasMathpixDraft
+      ? `<button class="text-button selected-save-action" type="button" data-revert-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}">撤销修改</button>`
+      : "";
     return `
       <div class="selected-block-toolbar review-item ${isReviewOnly ? "is-normal" : ""} ${isCorrected ? "is-corrected" : ""} ${hasMathpixDraft ? "has-mathpix-draft" : ""} ${isCrossPage ? "is-cross-page" : ""} is-expanded" data-review-item-state="${escapeHtml(itemState)}" data-source-block-id="${escapeHtml(String(segment.blockIndex))}">
         <div class="selected-block-toolbar-head">
@@ -2432,6 +2468,7 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
             <button class="text-button review-toolbar-collapse" type="button" data-review-correction-toggle="${escapeHtml(reviewKey)}" aria-label="收起校正面板" title="收起">⌃</button>
             ${mathpixActionHtml}
             ${saveActionHtml}
+            ${revertActionHtml}
           </div>
         </div>
         <div class="selected-block-toolbar-body">
@@ -2440,6 +2477,7 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
             segment,
             editableMarkdown,
             hasEditableMarkdown,
+            hasMathpixDraft,
             mathpixEditorIsSaved,
           })}
         </div>
@@ -2537,7 +2575,7 @@ function liveReviewMarkdownForEditor(editor) {
   return cleanMathpixEditableMarkdown(value);
 }
 
-function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditableMarkdown, mathpixEditorIsSaved }) {
+function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditableMarkdown, hasMathpixDraft, mathpixEditorIsSaved }) {
   const blockIndex = escapeHtml(String(segment?.blockIndex ?? ""));
   const mineruMarkdown = escapeHtml(String(segment?.markdown || ""));
   const mathpixMarkdown = escapeHtml(String(editableMarkdown || ""));
@@ -2549,6 +2587,7 @@ function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditab
           <button class="text-button" type="button" data-apply-mathpix-block-edit="${blockIndex}" data-clean-label="${mathpixEditorIsSaved ? "未修改" : "保持修改"}" data-dirty-label="保持修改" ${mathpixEditorIsSaved ? 'data-disable-when-clean="1" disabled' : ""}>
             ${mathpixEditorIsSaved ? "未修改" : "保持修改"}
           </button>
+          ${hasMathpixDraft ? `<button class="text-button" type="button" data-revert-mathpix-block-edit="${blockIndex}">撤销修改</button>` : ""}
         </div>
       </details>`
     : `<details class="block-source-detail selected-source-detail">
@@ -2599,7 +2638,24 @@ function updateReviewEditorActionState(editor) {
 
 function handleReviewEditorInput(editor) {
   updateReviewEditorActionState(editor);
-  updateLiveReviewPreviewForEditor(editor);
+  storeLiveReviewDraftForEditor(editor);
+  scheduleLiveReviewPreviewForEditor(editor);
+}
+
+function scheduleLiveReviewPreviewForEditor(editor) {
+  liveReviewPreviewRunId += 1;
+  const runId = liveReviewPreviewRunId;
+  const scheduler = window.setTimeout || setTimeout;
+  const clearer = window.clearTimeout || clearTimeout;
+  if (liveReviewPreviewTimer) {
+    clearer(liveReviewPreviewTimer);
+  }
+  liveReviewPreviewTimer = scheduler(() => {
+    if (runId !== liveReviewPreviewRunId || editor?.isConnected === false) {
+      return;
+    }
+    updateLiveReviewPreviewForEditor(editor);
+  }, 180);
 }
 
 function storeLiveReviewDraftForEditor(editor) {
@@ -2633,8 +2689,14 @@ function updateLiveReviewPreviewForEditor(editor) {
   const isMathpixEditor = Boolean(editor.dataset?.mathpixEdit);
   const liveDraft = getLiveReviewDrafts(state.currentPage, false).get(blockKey) || null;
   const markdown = liveDraft?.markdown || (isMathpixEditor ? liveReviewMarkdownForEditor(editor) : String(editor.value || ""));
+  if (renderTarget.__umaLivePreviewMarkdown === markdown) {
+    return true;
+  }
+  renderTarget.__umaLivePreviewMarkdown = markdown;
   renderTarget.innerHTML = renderBlockContent(markdown, segment);
-  typesetMath(renderTarget);
+  if (rootHasMathContent(renderTarget)) {
+    typesetMath(renderTarget);
+  }
   return true;
 }
 
@@ -3075,6 +3137,78 @@ async function autoAddFigureLabelForBlock(blockIndex) {
   await saveHumanAcceptedBlockEdit(blockKey, `${label} ${String(sourceMarkdown || "").trim()}`);
 }
 
+async function convertCodeBlockToMarkdownForBlock(blockIndex) {
+  const blockKey = String(blockIndex || "");
+  if (!blockKey) {
+    return;
+  }
+  const segment = reviewSegmentsForPage(state.currentPage).find((item) => String(item.blockIndex) === blockKey);
+  const sourceMarkdown = activeReviewMarkdownForBlock(state.currentPage, blockKey, segment);
+  const converted = convertCodeLikeMarkdownToPlainMarkdown(sourceMarkdown);
+  if (!converted.trim() || converted === String(sourceMarkdown || "").replace(/\r\n?/g, "\n").trim()) {
+    setStatus("该块不适合转换为普通文本", "error");
+    return;
+  }
+  await saveHumanAcceptedBlockEdit(blockKey, converted);
+}
+
+async function structureFormulaBlock(blockIndex) {
+  const blockKey = String(blockIndex || "");
+  if (!blockKey) {
+    return;
+  }
+  const segment = reviewSegmentsForPage(state.currentPage).find((item) => String(item.blockIndex) === blockKey);
+  const sourceMarkdown = activeReviewMarkdownForBlock(state.currentPage, blockKey, segment);
+  const structured = cleanMathpixEditableMarkdown(sourceMarkdown);
+  if (!structured.trim() || structured === String(sourceMarkdown || "").replace(/\r\n?/g, "\n").trim()) {
+    setStatus("该公式块暂无可自动结构化的修改", "error");
+    return;
+  }
+  await saveHumanAcceptedBlockEdit(blockKey, structured);
+}
+
+async function discardMathpixCorrectionForBlock(blockIndex) {
+  const blockKey = String(blockIndex || "");
+  if (!blockKey) {
+    return;
+  }
+  const segment = reviewSegmentsForPage(state.currentPage).find((item) => String(item.blockIndex) === blockKey);
+  const latestPatch = getLatestOcrPatchForBlock(state.currentPage, blockKey, segment?.markdown || "");
+  if (latestPatch?.source === "mathpix" && latestPatch.status === "draft") {
+    updateOcrPatchStatus(latestPatch.patchId, "rejected");
+  }
+  getMathpixBlockDrafts(state.currentPage, false).delete(blockKey);
+  clearLiveReviewDraftForBlock(state.currentPage, blockKey);
+  clearMathpixBlockError(state.currentPage, blockKey);
+  state.acceptedPatchPreview = null;
+  state.acceptedPatchBookPreview = null;
+  saveOcrWorkspaceState();
+  expandOnlyReviewBlock(state.currentPage, blockKey);
+  updateCorrectionSummary();
+  setStatus("Mathpix 修改已撤销", "ok");
+  await renderCurrentPage();
+}
+
+function activeReviewMarkdownForBlock(pageNumber, blockKey, segment = null) {
+  const pageNo = Number(pageNumber) || state.currentPage;
+  const key = String(blockKey || "");
+  const sourceSegment = segment || reviewSegmentsForPage(pageNo).find((item) => String(item.blockIndex) === key) || null;
+  const blockOverrides = getBlockOverrides(pageNo, false);
+  const mathpixDrafts = getMathpixBlockDrafts(pageNo, false);
+  const liveDrafts = getLiveReviewDrafts(pageNo, false);
+  const ocrPatch = getLatestOcrPatchForBlock(pageNo, key, sourceSegment?.markdown || "");
+  const correctionView = buildReviewCorrectionViewModel({
+    liveDraft: liveDrafts.get(key) || null,
+    mathpixDraftMarkdown: mathpixDrafts.get(key) || "",
+    patchMarkdown: reviewPatchMarkdown(ocrPatch),
+    correctedMarkdown: blockOverrides.get(key) || "",
+    corrected: blockOverrides.has(key),
+    ocrPatch,
+    fallbackMarkdown: sourceSegment?.markdown || "",
+  });
+  return correctionView.displayMarkdown;
+}
+
 function applyAutomaticLocalCorrectionsForPage(pageNumber) {
   const pageNo = Number(pageNumber) || 0;
   if (!pageNo || !state.mineruInfo) {
@@ -3403,7 +3537,7 @@ function autoCorrectPlainMineruMarkdown(markdown) {
     return String(markdown || "").replace(/\r\n?/g, "\n").trim();
   }
   const source = String(markdown || "").replace(/\r\n?/g, "\n");
-  const lineAdjusted = source.includes("\n") ? autoUnwrapMineruLineBreaks(source) : source.trim();
+  const lineAdjusted = source.includes("\n") ? normalizeEditableProseLineBreaksOutsideStructuredBlocks(source) : source.trim();
   return normalizeInlineMathSpacing(lineAdjusted).trim();
 }
 
@@ -3419,6 +3553,9 @@ function canAutoCorrectPlainMineruMarkdown(markdown) {
     /(^|\n)\s*```/.test(text) ||
     /<\s*(?:table|tr|td|th)\b/i.test(text)
   ) {
+    return false;
+  }
+  if (isLikelyBibliographyText(text)) {
     return false;
   }
   const lines = text.split("\n");
@@ -3830,8 +3967,10 @@ function renderBlockContent(markdown, entry) {
     return renderAlgorithmBlock(markdownToAlgorithmLines(markdown));
   }
   const normalizedMarkdown = normalizeReferenceSpacing(
-    normalizeMathpixCollapsedProse(
-      normalizeSingleLineDisplayMath(normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(markdown))),
+    normalizeEditableProseLineBreaksOutsideStructuredBlocks(
+      normalizeMathpixCollapsedProse(
+        normalizeSingleLineDisplayMath(normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(markdown))),
+      ),
     ),
   );
   const imagePreview = renderBlockImagePreview(normalizedMarkdown, entry);
@@ -3878,12 +4017,16 @@ function normalizeInlineMathSpacingOutsideDisplayMath(markdown) {
 }
 
 function cleanMathpixEditableMarkdown(markdown) {
-  const proseRepaired = normalizeMathpixEditableSource(
-    normalizeInlineMathSpacingOutsideDisplayMath(normalizeMathpixCollapsedProse(String(markdown || ""))),
+  const lineBreakRepaired = normalizeEditableProseLineBreaksOutsideStructuredBlocks(
+    normalizeMathpixCollapsedProse(String(markdown || "")),
   );
-  return formatDisplayMathSourceForEditing(
+  const proseRepaired = normalizeMathpixEditableSource(
+    normalizeInlineMathSpacingOutsideDisplayMath(lineBreakRepaired),
+  );
+  const formatted = formatDisplayMathSourceForEditing(
     normalizeInlineMathSpacingOutsideDisplayMath(compactLatexSourceSpacing(proseRepaired)),
-  ).trim();
+  );
+  return normalizeEditableProseLineBreaksOutsideStructuredBlocks(formatted).trim();
 }
 
 function normalizeMathpixOcrArtifacts(markdown) {
@@ -3899,6 +4042,88 @@ function normalizeMathpixCollapsedProse(markdown) {
     .replace(/\brequiredorders\b/gi, "required orders")
     .replace(/\s+([,.;:])/g, "$1")
     .replace(/[ \t]{2,}/g, " ");
+}
+
+function normalizeEditableProseLineBreaksOutsideStructuredBlocks(markdown) {
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+  const output = [];
+  let buffer = [];
+  let inCodeFence = false;
+  let inDisplayMath = false;
+
+  const flushBuffer = () => {
+    if (!buffer.length) {
+      return;
+    }
+    const source = buffer.join("\n");
+    output.push(canNormalizeEditableProseBuffer(source) ? autoUnwrapMineruLineBreaks(source) : source);
+    buffer = [];
+  };
+
+  lines.forEach((line) => {
+    const trimmed = String(line || "").trim();
+    if (isCodeFenceStart(line)) {
+      flushBuffer();
+      inCodeFence = !inCodeFence;
+      output.push(line);
+      return;
+    }
+    if (inCodeFence) {
+      output.push(line);
+      return;
+    }
+    if (trimmed === "$$" || trimmed === "\\[" || trimmed === "\\]") {
+      flushBuffer();
+      output.push(line);
+      inDisplayMath = trimmed === "\\]" ? false : trimmed === "\\[" ? true : !inDisplayMath;
+      return;
+    }
+    if (inDisplayMath) {
+      output.push(line);
+      return;
+    }
+    if (!trimmed) {
+      flushBuffer();
+      if (output.length && output[output.length - 1] !== "") {
+        output.push("");
+      }
+      return;
+    }
+    if (isStructuredMarkdownLine(line)) {
+      flushBuffer();
+      output.push(line);
+      return;
+    }
+    buffer.push(line);
+  });
+  flushBuffer();
+  return output.join("\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function canNormalizeEditableProseBuffer(markdown) {
+  const text = String(markdown || "").replace(/\r\n?/g, "\n");
+  return (
+    text.includes("\n") &&
+    canAutoCorrectPlainMineruMarkdown(text) &&
+    !hasStandaloneEquationLine(text) &&
+    !isLikelyBibliographyText(text)
+  );
+}
+
+function isStructuredMarkdownLine(line) {
+  const trimmed = String(line || "").trim();
+  return (
+    isSingleLineDisplayMath(line) ||
+    isBareDisplayMathStart(line) ||
+    isLikelyStandaloneMathLine(trimmed) ||
+    hasLatexMathEnvironment(trimmed) ||
+    hasMarkdownImageReference(trimmed) ||
+    isLikelyMarkdownTableLine(line) ||
+    /^#{1,6}\s+/.test(trimmed) ||
+    /^\s*[-*+]\s+/.test(line) ||
+    /^\s*>\s?/.test(line) ||
+    /<\s*(?:table|tr|td|th)\b/i.test(trimmed)
+  );
 }
 
 function normalizeMathpixEditableSource(markdown) {
@@ -3962,7 +4187,8 @@ function isSingleLineDisplayMath(line) {
 
 function compactSingleLineDisplayMathSource(line) {
   return String(line || "").replace(/^(\s*)\$\$([\s\S]*?)\$\$(\s*)$/, (_match, leading, body, trailing) => {
-    return `${leading}$$${formatLatexDisplayMathBody(body)}$$${trailing}`;
+    const formatted = formatLatexDisplayMathBody(body);
+    return formatted.includes("\n") ? `${leading}$$\n${formatted}\n$$${trailing}` : `${leading}$$${formatted}$$${trailing}`;
   });
 }
 
@@ -3983,6 +4209,10 @@ function isLatexDenseSourceLine(line) {
 
 function compactLatexSourceLine(line) {
   return unwrapRedundantWholeLatexDoubleBraces(collapseRedundantLatexDoubleBraces(String(line || "")))
+    .replace(/\{\\([A-Za-z]+)\}/g, "\\$1")
+    .replace(/\{([=+\-*/<>])\}/g, "$1")
+    .replace(/\\pmb\s*(\\[A-Za-z]+)/g, "\\pmb{$1}")
+    .replace(/\\pmb\s+([A-Za-z])\b/g, "\\pmb{$1}")
     .replace(/\\([A-Za-z]+)\s+\*/g, "\\$1*")
     .replace(/\\([A-Za-z]+\*)\s+\{/g, "\\$1{")
     .replace(/\\([A-Za-z]+)\s+\{/g, "\\$1{")
@@ -3991,6 +4221,7 @@ function compactLatexSourceLine(line) {
     .replace(/\{\s+/g, "{")
     .replace(/\s+\}/g, "}")
     .replace(/\}\s+\{/g, "}{")
+    .replace(/\s*~\s*/g, " ")
     .replace(/\s+([_^])/g, "$1")
     .replace(/\\begin\{array\}\s*\{([^}]*)\}/g, (_match, columns) => `\\begin{array}{${String(columns || "").replace(/\s+/g, "")}}`)
     .replace(/\\operatorname\*\{([^}]*)\}/g, (_match, name) => `\\operatorname*{${compactSpacedLetters(name)}}`)
@@ -4291,6 +4522,10 @@ function formatLatexDisplayMathLines(lines) {
 function formatLatexDisplayMathBody(body) {
   const expanded = collapseRedundantLatexDoubleBraces(String(body || ""))
     .replace(/\r\n?/g, "\n")
+    .replace(/(\\right[\])}]|[\])}])\s*\\\s*\{\s*\\displaystyle/g, "$1 \\\\\n{\\displaystyle")
+    .replace(/\}\s*\\\s*\{\s*\\displaystyle/g, "} \\\\\n{\\displaystyle")
+    .replace(/\}\s*\{\s*\\displaystyle/g, "} \\\\\n{\\displaystyle")
+    .replace(/(\\begin\{array\}\{[^}]*\})\s*\\\\\n\s*(\{\\displaystyle)/g, "$1\n$2")
     .replace(/(\\begin\{array\}(?:\{[^}\n]*\})?)/g, "\n$1\n")
     .replace(/(\\end\{array\})/g, "\n$1\n")
     .replace(/\\\\(?![A-Za-z])\s*/g, "\\\\\n")
@@ -4313,7 +4548,10 @@ function shouldRenderAsAlgorithmBlock(markdown, entry) {
   if (entry?.kind !== "algorithm") {
     return false;
   }
-  return !hasLatexMathEnvironment(markdown);
+  if (hasLatexMathEnvironment(markdown) || looksLikeNaturalLanguageCodeFence(markdown)) {
+    return false;
+  }
+  return looksLikeAlgorithmLines(String(markdown || "").replace(/\r\n?/g, "\n").split("\n"));
 }
 
 function hasLatexMathEnvironment(markdown) {
@@ -4853,7 +5091,7 @@ function reviewBlockMarkdownsForPage(pageNumber) {
     return [];
   }
   const blocks = Array.isArray(page.para_blocks) ? page.para_blocks : [];
-  return blocks
+  const entries = blocks
     .map((block, blockIndex) => {
       const scopedBlock = filterBlockLines(block, (line) => !lineHasCrossPageContent(line));
       return {
@@ -4865,10 +5103,107 @@ function reviewBlockMarkdownsForPage(pageNumber) {
       };
     })
     .filter((entry) => !isLikelyPageHeaderEntry(entry));
+  return sortEntriesByVisualReadingOrder(augmentTableCaptionsForEntries(entries, pageNumber));
 }
 
 function reviewSegmentsForPage(pageNumber) {
   return segmentEntries(reviewBlockMarkdownsForPage(pageNumber));
+}
+
+function augmentTableCaptionsForEntries(entries, pageNumber) {
+  return (Array.isArray(entries) ? entries : []).map((entry) => {
+    if (entry?.block?.type !== "table") {
+      return entry;
+    }
+    const currentMarkdown = String(entry.markdown || "");
+    const label = tableLabelFromText(currentMarkdown);
+    if (!label) {
+      return entry;
+    }
+    const longerCaption = findLongerTableCaptionForEntry(pageNumber, label, currentMarkdown, entry);
+    if (!longerCaption) {
+      return entry;
+    }
+    const updatedMarkdown = replaceOrPrependTableCaption(currentMarkdown, label, longerCaption);
+    return updatedMarkdown === currentMarkdown ? entry : { ...entry, markdown: updatedMarkdown };
+  });
+}
+
+function findLongerTableCaptionForEntry(pageNumber, label, currentMarkdown, entry) {
+  const currentCaption = leadingTableCaptionLine(currentMarkdown);
+  const currentCanon = normalizeTextForComparison(currentCaption || label);
+  const candidates = contentListItemsForPage(pageNumber)
+    .map((item) => ({
+      text: contentListTableCaptionText(item),
+      bbox: normalizedBBox(item?.bbox),
+    }))
+    .filter((candidate) => tableLabelMatches(candidate.text, label));
+  const entryBox = normalizedBBox(entry?.bbox);
+  return candidates
+    .map((candidate) => ({
+      ...candidate,
+      distance: bboxVerticalDistance(entryBox, candidate.bbox),
+      canon: normalizeTextForComparison(candidate.text),
+    }))
+    .filter((candidate) => candidate.text.length > currentCaption.length + 8 && candidate.canon && !currentCanon.includes(candidate.canon))
+    .sort((left, right) => left.distance - right.distance || right.text.length - left.text.length)[0]?.text || "";
+}
+
+function contentListTableCaptionText(item) {
+  if (!item || typeof item !== "object") {
+    return "";
+  }
+  const values = [];
+  ["table_caption", "caption", "text"].forEach((key) => {
+    const value = item[key];
+    if (typeof value === "string") {
+      values.push(value);
+    } else if (Array.isArray(value)) {
+      values.push(...value.map((entry) => (typeof entry === "string" ? entry : contentListItemText(entry))));
+    }
+  });
+  return values.map((value) => String(value || "").replace(/\s+/g, " ").trim()).filter(Boolean).join(" ").trim();
+}
+
+function tableLabelFromText(text) {
+  const match = String(text || "").match(/\bTable\s*\.?\s*(\d+(?:\.\d+)*)\b/i);
+  return match ? `Table ${match[1]}` : "";
+}
+
+function tableLabelMatches(text, label) {
+  const normalizedLabel = tableLabelFromText(label);
+  return Boolean(normalizedLabel && tableLabelFromText(text) === normalizedLabel);
+}
+
+function leadingTableCaptionLine(markdown) {
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean);
+  return lines.find((line) => tableLabelFromText(line)) || "";
+}
+
+function replaceOrPrependTableCaption(markdown, label, caption) {
+  const source = String(markdown || "").replace(/\r\n?/g, "\n").trim();
+  const lines = source.split("\n");
+  const captionIndex = lines.findIndex((line) => tableLabelFromText(line) === tableLabelFromText(label));
+  if (captionIndex >= 0 && !isLikelyMarkdownTableLine(lines[captionIndex])) {
+    lines[captionIndex] = caption;
+    return lines.join("\n").trim();
+  }
+  return `${caption}\n\n${source}`.trim();
+}
+
+function bboxVerticalDistance(left, right) {
+  const a = normalizedBBox(left);
+  const b = normalizedBBox(right);
+  if (!a || !b) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  if (a[3] < b[1]) {
+    return b[1] - a[3];
+  }
+  if (b[3] < a[1]) {
+    return a[1] - b[3];
+  }
+  return 0;
 }
 
 function segmentEntries(entries) {
@@ -4921,6 +5256,40 @@ function segmentEntries(entries) {
     });
   }
   return segments;
+}
+
+function sortEntriesByVisualReadingOrder(entries) {
+  return (Array.isArray(entries) ? entries : [])
+    .map((entry, index) => ({ entry, index, geometry: bboxReadingGeometry(entry?.bbox, entry?.pageSize) }))
+    .sort((left, right) => {
+      if (!left.geometry || !right.geometry) {
+        return left.geometry ? -1 : right.geometry ? 1 : left.index - right.index;
+      }
+      const rowGap = left.geometry.top - right.geometry.top;
+      const rowTolerance = Math.max(left.geometry.height, right.geometry.height, left.geometry.pageHeight * 0.018, 18);
+      if (Math.abs(rowGap) > rowTolerance) {
+        return rowGap;
+      }
+      return left.geometry.left - right.geometry.left || left.index - right.index;
+    })
+    .map((item) => item.entry);
+}
+
+function bboxReadingGeometry(bbox, pageSize) {
+  const normalized = normalizedBBox(bbox);
+  if (!normalized) {
+    return null;
+  }
+  return {
+    left: normalized[0],
+    top: normalized[1],
+    right: normalized[2],
+    bottom: normalized[3],
+    width: Math.max(1, normalized[2] - normalized[0]),
+    height: Math.max(1, normalized[3] - normalized[1]),
+    pageWidth: pageSizeWidth(pageSize) || Math.max(1, normalized[2]),
+    pageHeight: pageSizeHeight(pageSize) || Math.max(1, normalized[3]),
+  };
 }
 
 function filterBlockLines(block, includeLine) {
@@ -5000,7 +5369,14 @@ function isLikelyPageHeaderText(text, bbox, pageSize) {
 }
 
 function isAlgorithmStartEntry(entry) {
-  return /^for\b/i.test(entryAlgorithmText(entry));
+  const text = entryAlgorithmText(entry);
+  if (!/^for\b/i.test(text) || looksLikeNaturalLanguageCodeFence(entry?.markdown)) {
+    return false;
+  }
+  if (entry?.block?.type === "code" || entry?.block?.type === "algorithm") {
+    return true;
+  }
+  return looksLikeAlgorithmForLine(text);
 }
 
 function entryAlgorithmText(entry) {
@@ -5011,6 +5387,17 @@ function entryAlgorithmText(entry) {
       .filter((line) => line.trim() && line.trim() !== "$$")
       .join(" ")
   );
+}
+
+function looksLikeAlgorithmForLine(line) {
+  const value = String(line || "").trim();
+  if (!/^for\b/i.test(value)) {
+    return false;
+  }
+  if (/^for\s+(?:the|a|an|these|those|this|example|recent|detailed|large|small|such)\b/i.test(value)) {
+    return false;
+  }
+  return /[:;]|(?:^|\s)(?:in|from|to|do)\s+\S/i.test(value) && /[=<>_{}()[\]]|\\[A-Za-z]+|\bend\b/i.test(value);
 }
 
 function mergeBBoxes(boxes) {
@@ -5074,8 +5461,11 @@ function createAndStoreDraftOcrPatch({ pageNo, blockIndex, oldText, newText, sou
   const preservationSource = [oldText, preserveText].filter(Boolean).join("\n\n");
   const normalizedNewText = source === "mathpix" ? normalizeMathpixOcrArtifacts(newText) : String(newText || "");
   const completeNewText = preserveMathpixPlainTextCompleteness(oldText, normalizedNewText, source);
+  const captionPreservedText = source === "mathpix"
+    ? preserveTableCaptionFromOriginal(preservationSource, completeNewText)
+    : completeNewText;
   const preservedNewText = source === "mathpix"
-    ? normalizeMathpixOcrArtifacts(preserveEquationNumbersFromOriginal(preservationSource, completeNewText))
+    ? normalizeMathpixOcrArtifacts(preserveEquationNumbersFromOriginal(preservationSource, captionPreservedText))
     : preserveEquationNumbersFromOriginal(preservationSource, completeNewText);
   if (!context || !createOcrPatch) {
     warnOcrCorePatch("createOcrPatch 不可用，已跳过 OCR draft patch 记录。");
@@ -5103,6 +5493,48 @@ function createAndStoreDraftOcrPatch({ pageNo, blockIndex, oldText, newText, sou
   state.ocrPatches.push(patch);
   saveOcrWorkspaceState();
   return { patch, normalizedText, renderValidation };
+}
+
+function preserveTableCaptionFromOriginal(oldText, newText) {
+  const originalCaption = longestTableCaptionLine(oldText);
+  if (!originalCaption) {
+    return String(newText || "");
+  }
+  const output = String(newText || "").replace(/\r\n?/g, "\n").trim();
+  if (!output) {
+    return output;
+  }
+  const originalLabel = tableLabelFromText(originalCaption);
+  const currentCaption = leadingTableCaptionLine(output);
+  if (currentCaption && tableLabelFromText(currentCaption) === originalLabel) {
+    if (currentCaption.length >= originalCaption.length - 8) {
+      return output;
+    }
+    return output.replace(currentCaption, originalCaption);
+  }
+  if (hasMarkdownTable(output) || /<\s*table\b/i.test(output)) {
+    return `${originalCaption}\n\n${output}`.trim();
+  }
+  return output;
+}
+
+function longestTableCaptionLine(text) {
+  return String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .filter((line) => tableLabelFromText(line))
+    .sort((left, right) => right.length - left.length)[0] || "";
+}
+
+function hasMarkdownTable(markdown) {
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    if (isMarkdownTableStart(lines, index)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function preserveEquationNumbersFromOriginal(oldText, newText) {
@@ -7238,7 +7670,9 @@ function blockToMarkdown(block) {
   if (block.type === "table") {
     const html = firstSpanValue(block, "html");
     if (html) {
-      return [htmlTableToMarkdown(html), collectBlockText(block, { skipHtml: true }).trim()].filter(Boolean).join("\n\n");
+      const tableMarkdown = htmlTableToMarkdown(html);
+      const extraText = tableBlockExtraMarkdown(block, html, tableMarkdown);
+      return [extraText, tableMarkdown].filter(Boolean).join("\n\n");
     }
   }
   if (block.type === "image") {
@@ -7506,6 +7940,58 @@ function firstSpanValue(block, key) {
   return "";
 }
 
+function tableBlockExtraMarkdown(block, html = "", tableMarkdown = "") {
+  const candidates = [
+    htmlTableContextText(html),
+    collectTableMetadataText(block),
+    collectBlockText(block, { skipHtml: true }).trim(),
+  ];
+  const tableCanon = normalizeTextForComparison(tableMarkdown);
+  const seen = new Set();
+  return candidates
+    .flatMap((value) => String(value || "").replace(/\r\n?/g, "\n").split(/\n{2,}/))
+    .map((value) => value.replace(/[ \t]+/g, " ").trim())
+    .filter((value) => {
+      if (!value) {
+        return false;
+      }
+      const canon = normalizeTextForComparison(value);
+      if (!canon || seen.has(canon) || (tableCanon && tableCanon.includes(canon))) {
+        return false;
+      }
+      seen.add(canon);
+      return true;
+    })
+    .join("\n\n");
+}
+
+function collectTableMetadataText(node, values = []) {
+  if (!node || typeof node !== "object") {
+    return "";
+  }
+  ["table_caption", "table_footnote", "caption", "text"].forEach((key) => {
+    const value = node[key];
+    if (typeof value === "string" && value.trim()) {
+      values.push(value.trim());
+    } else if (Array.isArray(value)) {
+      const text = value.map((entry) => (typeof entry === "string" ? entry : contentListItemText(entry))).filter(Boolean).join("\n");
+      if (text.trim()) {
+        values.push(text.trim());
+      }
+    }
+  });
+  if (Array.isArray(node.lines)) {
+    node.lines.forEach((line) => collectTableMetadataText(line, values));
+  }
+  if (Array.isArray(node.spans)) {
+    node.spans.forEach((span) => collectTableMetadataText(span, values));
+  }
+  if (Array.isArray(node.blocks)) {
+    node.blocks.forEach((child) => collectTableMetadataText(child, values));
+  }
+  return values.join("\n\n");
+}
+
 function getBlockBBox(block) {
   const boxes = [];
   collectBBoxes(block, boxes);
@@ -7543,7 +8029,7 @@ function htmlTableToMarkdown(html) {
   const rows =
     typeof DOMParser !== "undefined"
       ? Array.from(new DOMParser().parseFromString(source, "text/html").querySelectorAll("tr")).map((row) =>
-          Array.from(row.querySelectorAll("th,td")).map((cell) => cell.textContent.trim().replace(/\s+/g, " "))
+          Array.from(row.querySelectorAll("th,td")).map(htmlTableCellText)
         )
       : fallbackHtmlTableRows(source);
   if (!rows.length) {
@@ -7558,25 +8044,111 @@ function htmlTableToMarkdown(html) {
   ].join("\n");
 }
 
+function htmlTableContextText(html) {
+  const source = String(html || "");
+  if (!source.trim()) {
+    return "";
+  }
+  const captions = Array.from(source.matchAll(/<caption\b[^>]*>([\s\S]*?)<\/caption>/gi)).map((match) =>
+    htmlTableCellTextFromHtml(match[1])
+  );
+  const outsideTable = source
+    .replace(/<table\b[\s\S]*?<\/table>/gi, "\n")
+    .replace(/<caption\b[\s\S]*?<\/caption>/gi, "\n");
+  const outsideText = htmlTableCellTextFromHtml(outsideTable);
+  return [...captions, outsideText].filter(Boolean).join("\n\n");
+}
+
 function fallbackHtmlTableRows(html) {
   return Array.from(String(html || "").matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi))
     .map((rowMatch) =>
       Array.from(rowMatch[1].matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)).map((cellMatch) =>
-        cellMatch[1]
-          .replace(/<[^>]+>/g, " ")
-          .replace(/&nbsp;/gi, " ")
-          .replace(/&amp;/gi, "&")
-          .replace(/&lt;/gi, "<")
-          .replace(/&gt;/gi, ">")
-          .replace(/\s+/g, " ")
-          .trim()
+        htmlTableCellTextFromHtml(cellMatch[1])
       )
     )
     .filter((row) => row.length);
 }
 
+function htmlTableCellText(cell) {
+  const directText = decodeHtmlEntities(String(cell?.textContent || "").replace(/\s+/g, " ").trim());
+  if (directText) {
+    return directText;
+  }
+  const attrTexts = [];
+  cell?.querySelectorAll?.("[alt], [title], [aria-label], [data-content]").forEach((node) => {
+    ["alt", "title", "aria-label", "data-content"].forEach((name) => {
+      const value = node.getAttribute?.(name);
+      if (value) {
+        attrTexts.push(value);
+      }
+    });
+  });
+  return decodeHtmlEntities(attrTexts.join(" ").replace(/\s+/g, " ").trim());
+}
+
+function htmlTableCellTextFromHtml(html) {
+  const source = String(html || "");
+  const attrTexts = Array.from(source.matchAll(/\b(?:alt|title|aria-label|data-content)=["']([^"']+)["']/gi)).map((match) => match[1]);
+  const visibleText = source
+    .replace(/<\s*br\s*\/?\s*>/gi, " ")
+    .replace(/<\s*(?:script|style)\b[\s\S]*?<\/\s*(?:script|style)\s*>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return decodeHtmlEntities([visibleText, ...attrTexts].filter(Boolean).join(" ").replace(/\s+/g, " ").trim());
+}
+
+function decodeHtmlEntities(text) {
+  return String(text || "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#(\d+);/g, (_match, value) => String.fromCharCode(Number(value) || 0));
+}
+
 function fencedCode(text) {
   return `\`\`\`\n${text}\n\`\`\``;
+}
+
+function fencedCodeBody(markdown) {
+  const match = String(markdown || "").trim().match(/^```[^\n]*\n([\s\S]*?)\n?```$/);
+  return match ? match[1].trim() : "";
+}
+
+function convertCodeLikeMarkdownToPlainMarkdown(markdown) {
+  const body = fencedCodeBody(markdown);
+  const source = body || String(markdown || "").replace(/\r\n?/g, "\n").trim();
+  if (!source || hasExecutableCodeSignal(source) || !looksLikeNaturalLanguageCodeFence(source)) {
+    return "";
+  }
+  return cleanMathpixEditableMarkdown(source);
+}
+
+function canConvertCodeLikeMarkdownToPlainMarkdown(markdown, segment = null) {
+  const body = fencedCodeBody(markdown);
+  const source = body || String(markdown || "").replace(/\r\n?/g, "\n").trim();
+  if (!source || hasExecutableCodeSignal(source)) {
+    return false;
+  }
+  if ((segment?.kind === "code" || segment?.kind === "algorithm") && shouldTreatCodeBlockAsMarkdown(source)) {
+    return true;
+  }
+  return (body || segment?.kind === "algorithm") && looksLikeNaturalLanguageCodeFence(source);
+}
+
+function canStructureFormulaMarkdown(markdown) {
+  const source = String(markdown || "").replace(/\r\n?/g, "\n").trim();
+  if (!source || (!hasDisplayMathBlock(source) && !hasLatexMathEnvironment(source))) {
+    return false;
+  }
+  const structured = cleanMathpixEditableMarkdown(source);
+  if (!structured || structured === source) {
+    return false;
+  }
+  return /\n\\begin\{array\}|\n\{\\displaystyle|\\\\\n|\\pmb\{/.test(structured);
 }
 
 function shouldTreatCodeBlockAsMarkdown(text) {
@@ -7584,9 +8156,7 @@ function shouldTreatCodeBlockAsMarkdown(text) {
   if (!value) {
     return false;
   }
-  const executableCodeSignal =
-    /(?:^|\n)\s*(?:function|class|const|let|var|import|export|def|if\s*\(|for\s*\(|while\s*\(|return\b|#include|public\s+class|SELECT\b|CREATE\b|BEGIN\b|END\b)/.test(value);
-  if (executableCodeSignal) {
+  if (hasExecutableCodeSignal(value)) {
     return false;
   }
   const wordCount = (value.match(/[A-Za-zÀ-ÖØ-öø-ÿ]{3,}/g) || []).length;
@@ -7598,6 +8168,24 @@ function shouldTreatCodeBlockAsMarkdown(text) {
   const hasMathSignal = /\\[A-Za-z]+|[$]|[A-Za-z]_\{|[A-Za-z]\^\{|(?:^|\s)\(\d+(?:\.\d+)+\)/.test(value);
   const hasSentenceFlow = /[.!?]\s+[A-Z]/.test(value.replace(/\n+/g, " "));
   return hasScientificProseSignal && hasMathSignal && hasSentenceFlow;
+}
+
+function hasExecutableCodeSignal(text) {
+  return /(?:^|\n)\s*(?:function|class|const|let|var|import|export|def|if\s*\(|for\s*\(|while\s*\(|return\b|#include|public\s+class|SELECT\b|CREATE\b|BEGIN\b|END\b)/.test(String(text || ""));
+}
+
+function looksLikeNaturalLanguageCodeFence(text) {
+  const value = String(text || "").replace(/\r\n?/g, "\n").trim();
+  const compact = value.replace(/\n+/g, " ");
+  const wordCount = (compact.match(/[A-Za-zÀ-ÖØ-öø-ÿ]{3,}/g) || []).length;
+  if (wordCount < 24) {
+    return false;
+  }
+  const sentenceCount = (compact.match(/[.!?]\s+(?:[A-ZÀ-Ö]|###|\d)/g) || []).length;
+  const headingSignal = /^#{1,6}\s+\d+(?:\.\d+)*\s+\S+/m.test(value);
+  const proseSignal = /\b(?:the|that|this|these|those|from|until|present|model|universe|observations?|theor(?:y|ies)|gravity|relativity|neutron|black hole|cosmological|physics)\b/i.test(compact);
+  const codePunctuationRatio = ((value.match(/[{};=<>]/g) || []).length / Math.max(value.length, 1));
+  return proseSignal && (sentenceCount >= 1 || headingSignal) && codePunctuationRatio < 0.08;
 }
 
 function getMineruPageCount() {
@@ -8370,7 +8958,7 @@ function formatLatexTableCell(cell) {
 }
 
 function renderParagraph(lines) {
-  const text = lines.join("\n").trim();
+  const text = normalizeRenderedParagraphText(lines.join("\n"));
   if (!text) {
     return "";
   }
@@ -8378,10 +8966,23 @@ function renderParagraph(lines) {
     const imageHtml = extractMarkdownImageReferences(text)
       .map((image) => renderMarkdownImage(image.alt || "image", image.src))
       .join("");
-    const textWithoutImages = stripMarkdownImageReferences(text).trim();
+    const textWithoutImages = normalizeRenderedParagraphText(stripMarkdownImageReferences(text));
     return `${imageHtml}${textWithoutImages ? `<p>${escapeHtml(textWithoutImages).replace(/\n/g, "<br>")}</p>` : ""}`;
   }
   return `<p>${escapeHtml(text).replace(/\n/g, "<br>")}</p>`;
+}
+
+function normalizeRenderedParagraphText(text) {
+  const source = String(text || "").replace(/\r\n?/g, "\n").trim();
+  if (!source || !source.includes("\n") || shouldPreserveRenderedParagraphBreaks(source)) {
+    return source;
+  }
+  return unwrapPlainTextParagraph(source);
+}
+
+function shouldPreserveRenderedParagraphBreaks(text) {
+  const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n");
+  return lines.some((line) => /(?: {2,}|\\)$/.test(line) || /<br\s*\/?>/i.test(line));
 }
 
 function renderHeading(line) {

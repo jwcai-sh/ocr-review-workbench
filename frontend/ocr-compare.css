@@ -1038,10 +1038,13 @@ textarea {
 
 .review-card.is-fit-page .review-page-canvas {
   overflow: hidden;
-  padding: 8px;
+  padding: 8px 10px 10px;
 }
 
 .review-card.is-fit-page .review-page-paper {
+  width: 100%;
+  max-width: none;
+  padding: 20px 22px 24px;
   zoom: var(--review-fit-scale, 1);
 }
 

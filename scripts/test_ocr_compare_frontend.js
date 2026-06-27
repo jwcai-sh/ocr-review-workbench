@@ -96,6 +96,9 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareCss.includes("grid-template-rows: auto minmax(0, 1fr);"));
   assert(ocrCompareCss.includes(".review-page-canvas"));
   assert(ocrCompareCss.includes("--review-font-scale"));
+  assert(/\.review-card\.is-fit-page\s+\.review-page-paper\s*\{[^}]*width:\s*100%/.test(ocrCompareCss), "fit-page review paper should use the current right-column width as its scale base");
+  assert(/\.review-card\.is-fit-page\s+\.review-page-paper\s*\{[^}]*max-width:\s*none/.test(ocrCompareCss), "fit-page review paper should not keep the wider normal-page max width");
+  assert(/\.review-card\.is-fit-page\s+\.review-page-canvas\s*\{[^}]*padding:\s*8px 10px 10px/.test(ocrCompareCss), "fit-page review canvas should avoid large unused bottom padding");
   assert(ocrCompareCss.includes(".review-needs-correction-nav-group"));
   assert(ocrCompareCss.includes(".review-needs-correction-link"));
   assert(ocrCompareCss.includes(".math-display-equation-tag"));
@@ -137,8 +140,8 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('class="upload-icon"'));
   assert(ocrCompareHtml.includes('viewBox="0 0 24 24"'));
   assert(!ocrCompareHtml.includes("cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"), "MathJax CDN should be lazy-loaded by ocr-compare.js");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260626-file-runtime-api-fallback"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260626-file-runtime-api-fallback"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260627-correction-actions"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260627-correction-actions"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
@@ -529,6 +532,13 @@ assert(bareTableHtml.includes("latex-table-wrap"), "bare LaTeX table should rend
 assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX table should render as a table");
 
 {
+  const htmlTableWithAttributeText = '<table><tr><th><span data-content="Star"></span></th><th><img alt="a (a.u)"></th></tr><tr><td>S2</td><td><span aria-label="1020 ± 8"></span></td></tr></table>';
+  const markdown = call(`htmlTableToMarkdown(${JSON.stringify(htmlTableWithAttributeText)})`);
+  assert(markdown.includes("| Star | a (a.u) |"), "HTML table conversion should preserve cell text stored in data-content/alt attributes");
+  assert(markdown.includes("| S2 | 1020 ± 8 |"), "HTML table conversion should preserve cell text stored in aria-label attributes");
+}
+
+{
   const tableWithTrailingText = {
     type: "table",
     lines: [
@@ -551,6 +561,72 @@ assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX tab
   const markdown = call(`blockToMarkdown(${JSON.stringify(tableWithTrailingText)})`);
   assert(markdown.includes("| Star | a |"), "table markdown should preserve the table body");
   assert(markdown.includes("rather to provide the first test"), "table markdown should preserve prose after the table");
+}
+
+{
+  const tableWithOuterCaption = {
+    type: "table",
+    lines: [
+      {
+        spans: [
+          {
+            html: '<div>Table 12.3 Orbital parameters of selected stars orbiting the galactic center black hole SgrA*. Data taken from Gillessen et al. (2009) and Meyer et al. (2012).</div><table><tr><th>Star</th><th>a (a.u)</th></tr><tr><td>S2</td><td>1020 ± 8</td></tr></table>'
+          }
+        ]
+      }
+    ]
+  };
+  const markdown = call(`blockToMarkdown(${JSON.stringify(tableWithOuterCaption)})`);
+  assert(markdown.includes("Table 12.3 Orbital parameters"), "table markdown should preserve text next to the table title");
+  assert(markdown.includes("| Star | a (a.u) |"), "table markdown should still preserve the table body after keeping caption text");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.contentListItems = [
+        {
+          page_idx: 0,
+          type: "table",
+          bbox: [40, 90, 860, 230],
+          table_caption: "Table 12.3 Orbital parameters of selected stars orbiting the galactic center black hole Sgr A*. Data taken from Gillessen et al. (2009) and Meyer et al. (2012)."
+        }
+      ];
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [900, 1200],
+            para_blocks: [
+              {
+                type: "text",
+                bbox: [70, 540, 830, 700],
+                lines: [{ bbox: [70, 540, 830, 560], spans: [{ content: "To see how such a test might be carried out, we work in the post-Newtonian limit." }] }]
+              },
+              {
+                type: "table",
+                bbox: [45, 100, 850, 250],
+                lines: [
+                  { bbox: [45, 100, 850, 120], spans: [{ content: "Table12.3" }] },
+                  { bbox: [45, 130, 850, 250], spans: [{ html: "<table><tr><th>Star</th><th>a</th></tr><tr><td>S2</td><td>1020</td></tr></table>" }] }
+                ]
+              },
+              {
+                type: "text",
+                bbox: [70, 300, 830, 395],
+                lines: [{ bbox: [70, 300, 830, 330], spans: [{ content: "rather to provide the first test of the black hole no-hair uniqueness theorems of general relativity." }] }]
+              }
+            ]
+          }
+        ]
+      };
+      const entries = reviewBlockMarkdownsForPage(1);
+      return JSON.stringify(entries.map((entry) => entry.markdown));
+    })()`),
+  );
+  assert(result[0].includes("Table 12.3 Orbital parameters"), "review table blocks should recover long same-label captions from content_list");
+  assert(result[1].startsWith("rather to provide the first test"), "review blocks should follow visual bbox order instead of raw MinerU block order");
+  assert(result[2].startsWith("To see how such a test"), "lower text should stay after the visually higher table-following paragraph");
 }
 
 const latexArray = "\\begin{array}{cc}\na & b \\\\ c & d\n\\end{array}";
@@ -908,6 +984,7 @@ function assertOcrPatchShape(patch) {
   assert(!parsed.draftHtml.includes(">接受<"));
   assert(!parsed.draftHtml.includes(">拒绝<"));
   assert(parsed.draftHtml.includes("保持修改"), "draft edits should be accepted through the single save action");
+  assert(parsed.draftHtml.includes('data-revert-mathpix-block-edit="3"'), "Mathpix draft edits should expose an explicit undo action");
   assert(!parsed.draftHtml.includes("确认 MinerU 有误后"));
   assert(!parsed.acceptedHtml.includes("Patch：accepted"));
   assert(!parsed.acceptedHtml.includes("已接受 patch"));
@@ -1308,6 +1385,112 @@ function assertOcrPatchShape(patch) {
 }
 
 {
+  const codeFencedProse = [
+    "```",
+    "For detailed reviews of strong-field tests of GR involving neutron stars and black holes",
+    "using electromagnetic observations, see Psaltis (2008) and Johannsen (2016).",
+    "### 12.4 Cosmological Tests",
+    "From a few seconds after the Big Bang until the present, the underlying physics of",
+    "the universe is well understood in terms of a standard model of a nearly spatially flat",
+    "universe, 13.6 billion years old, dominated by cold dark matter and dark energy.",
+    "```"
+  ].join("\n");
+  const result = JSON.parse(
+    call(`(() => {
+      const converted = convertCodeLikeMarkdownToPlainMarkdown(${JSON.stringify(codeFencedProse)});
+      const canConvert = canConvertCodeLikeMarkdownToPlainMarkdown(${JSON.stringify(codeFencedProse)}, { kind: "code" });
+      state.currentPage = 1;
+      state.reviewActionsOpen.clear();
+      const closedHtml = renderPageReviewCanvas([
+        {
+          key: "0",
+          displayIndex: 1,
+          segment: { blockIndex: "0", markdown: ${JSON.stringify(codeFencedProse)}, kind: "code", bbox: [10, 20, 180, 220], pageSize: [200, 300] },
+          risk: { pageNumber: 1, blockIndex: "0", bbox: [10, 20, 180, 220], pageSize: [200, 300], text: ${JSON.stringify(codeFencedProse)}, reasons: [], reviewOnly: true }
+        }
+      ]);
+      state.reviewActionsOpen.add("1:0");
+      const openHtml = renderPageReviewCanvas([
+        {
+          key: "0",
+          displayIndex: 1,
+          segment: { blockIndex: "0", markdown: ${JSON.stringify(codeFencedProse)}, kind: "code", bbox: [10, 20, 180, 220], pageSize: [200, 300] },
+          risk: { pageNumber: 1, blockIndex: "0", bbox: [10, 20, 180, 220], pageSize: [200, 300], text: ${JSON.stringify(codeFencedProse)}, reasons: [], reviewOnly: true }
+        }
+      ]);
+      return JSON.stringify({ converted, canConvert, closedHtml, openHtml });
+    })()`),
+  );
+  assert.strictEqual(result.canConvert, true, "natural-language fenced code should be eligible for one-click conversion");
+  assert(!result.converted.includes("```"), "conversion should remove fenced code markers");
+  assert(result.converted.includes("For detailed reviews"), "conversion should preserve prose content");
+  assert(result.converted.includes("### 12.4 Cosmological Tests"), "conversion should preserve markdown headings");
+  assert(!result.closedHtml.includes('data-convert-code-block="0"'), "conversion action should stay hidden until block actions are opened");
+  assert(result.openHtml.includes('data-convert-code-block="0"'), "opened block actions should expose a code-to-text conversion button");
+  assert.strictEqual(call(`canConvertCodeLikeMarkdownToPlainMarkdown(${JSON.stringify("```\nfunction add(a, b) {\n  return a + b;\n}\n```")}, { kind: "code" })`), false, "real executable code should not expose the prose conversion action");
+}
+
+{
+  const algorithmProse = [
+    "For the quadrupole precessions to be observable, it is clear that the black hole must have",
+    "a decent angular momentum and that the star must be in a short-period high-eccentricity orbit.",
+    "Although the pericenter advance is the largest relativistic orbital effect, it is not the most",
+    "suitable effect for testing the no-hair theorems."
+  ].join("\n");
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.reviewActionsOpen.clear();
+      const entry = {
+        key: "algo-9-10",
+        displayIndex: 9,
+        segment: { blockIndex: "algo-9-10", markdown: ${JSON.stringify(algorithmProse)}, kind: "algorithm", bbox: [10, 20, 180, 220], pageSize: [200, 300] },
+        risk: { pageNumber: 1, blockIndex: "algo-9-10", bbox: [10, 20, 180, 220], pageSize: [200, 300], text: ${JSON.stringify(algorithmProse)}, reasons: [], reviewOnly: true }
+      };
+      const closedHtml = renderPageReviewCanvas([entry]);
+      state.reviewActionsOpen.add("1:algo-9-10");
+      const openHtml = renderPageReviewCanvas([entry]);
+      const converted = convertCodeLikeMarkdownToPlainMarkdown(${JSON.stringify(algorithmProse)});
+      return JSON.stringify({ closedHtml, openHtml, converted, rendered: renderBlockContent(${JSON.stringify(algorithmProse)}, entry.segment) });
+    })()`),
+  );
+  assert(result.openHtml.includes('data-convert-code-block="algo-9-10"'), "natural-language algorithm blocks should expose the conversion button");
+  assert(!result.closedHtml.includes('data-convert-code-block="algo-9-10"'), "algorithm conversion action should stay hidden until actions are opened");
+  assert(!result.rendered.includes("algorithm-block"), "natural-language algorithm blocks should render as prose, not programming-style blocks");
+  assert(result.converted.includes("black hole must have a decent angular momentum"), "algorithm prose conversion should merge OCR hard line breaks");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      const entries = [
+        {
+          block: { type: "text" },
+          blockIndex: 9,
+          bbox: [40, 200, 820, 260],
+          markdown: "For the quadrupole precessions to be observable, it is clear that the black hole must have a decent angular momentum."
+        },
+        {
+          block: { type: "text" },
+          blockIndex: 10,
+          bbox: [40, 270, 820, 330],
+          markdown: "Although the pericenter advance is the largest relativistic orbital effect, it is not the most suitable effect."
+        }
+      ];
+      const segments = segmentEntries(entries);
+      return JSON.stringify({
+        start: isAlgorithmStartEntry(entries[0]),
+        kinds: segments.map((segment) => segment.kind),
+        blockIndexes: segments.map((segment) => segment.blockIndex)
+      });
+    })()`),
+  );
+  assert.strictEqual(result.start, false, "ordinary prose beginning with 'For the' should not start an algorithm block");
+  assert.deepStrictEqual(result.kinds, ["text", "text"], "ordinary prose should remain normal text segments");
+  assert.deepStrictEqual(result.blockIndexes, ["9", "10"], "ordinary prose blocks should not be merged into an algo-* segment");
+}
+
+{
   const result = JSON.parse(
     call(`(() => {
       ${setupPreviewPageExpression(["where$Z$and$A$are the atomic number and mass number, respectively, parameters$\\\\eta^A$by the best tests, where$\\\\delta=1$if$(Z,A)=(odd, even)."])}
@@ -1328,6 +1511,56 @@ function assertOcrPatchShape(patch) {
   assert(result.corrected.includes("parameters $\\\\eta^A$ by the best tests"), "inline math should be spaced before and after adjacent prose");
   assert(result.corrected.includes("where $\\\\delta=1$ if $(Z,A)=(odd, even)."), "multiple inline math spans should be spaced without changing content");
   assert.strictEqual(result.displayBlocked, false, "display math blocks should not be auto-cleaned");
+}
+
+{
+  const hardWrappedProse = [
+    "companion that were considered early on were a helium main-sequence star, a white dwarf,",
+    "a neutron star and a black hole. Any of these would be consistent with the evolutionary",
+    "models for binary systems of two massive stars that were popular at the time. In these",
+    "models, one massive star evolves more rapidly, undergoing a supernova explosion and",
+    "leaving a neutron star remnant."
+  ].join("\n");
+  const result = JSON.parse(
+    call(`(() => {
+      const source = ${JSON.stringify(hardWrappedProse)};
+      return JSON.stringify({
+        cleaned: cleanMathpixEditableMarkdown(source),
+        rendered: renderBlockContent(source, { kind: "text", blockIndex: "hard-wrapped-prose" })
+      });
+    })()`),
+  );
+  assert(result.cleaned.includes("white dwarf, a neutron star"), "editable cleanup should merge artificial OCR prose line breaks");
+  assert(result.cleaned.includes("evolutionary models for binary systems"), "editable cleanup should keep continuous prose on one line");
+  assert(!result.cleaned.includes("white dwarf,\\na neutron"), "editable cleanup should remove hard OCR line breaks inside one paragraph");
+  assert(!result.rendered.includes("<br>"), "rendered prose should not preserve artificial OCR line breaks");
+}
+
+{
+  const inlineMathWrappedProse = [
+    "where $\\\\Phi_c$ is a constant. Thus we have an accurate prediction",
+    "(under the chosen",
+    "assumptions) for the gravitational-wave signal at the detector. This is essential for",
+    "confirming a detection and for the measurement of the source",
+    "parameters (Cutler et al.,",
+    "1993), which include distance, position in the sky, orientation of",
+    "the orbital plane, and the masses and spins of the companions.",
+    "The theoretical signal is expressed as a function of an abstract",
+    "vector $\\\\theta$, which collectively represents the source parameters."
+  ].join("\n");
+  const result = JSON.parse(
+    call(`(() => {
+      const source = ${JSON.stringify(inlineMathWrappedProse)};
+      const rendered = renderBlockContent(source, { kind: "text", blockIndex: "inline-math-hard-wrapped-prose" });
+      const explicitBreak = renderMarkdownHtml("first line  \\nsecond line");
+      return JSON.stringify({ rendered, explicitBreak });
+    })()`),
+  );
+  assert(!result.rendered.includes("<br>"), "rendered inline-math prose should not preserve OCR hard line breaks");
+  assert(result.rendered.includes("(under the chosen assumptions)"), "renderer should merge parenthetical OCR line splits");
+  assert(result.rendered.includes("parameters (Cutler et al., 1993)"), "renderer should merge citation year line splits");
+  assert(result.rendered.includes("vector $\\\\theta$, which"), "renderer should keep inline math source while unwrapping prose");
+  assert(result.explicitBreak.includes("<br>"), "explicit markdown hard breaks should still render as line breaks");
 }
 
 {
@@ -1548,6 +1781,26 @@ function assertOcrPatchShape(patch) {
   assert(!result.html.includes("thewaveforms"), "raw collapsed prose tokens should not leak into block render or editor");
   assert(!result.html.includes("where$"), "raw inline math boundaries should not leak into block render or editor");
   assert(!result.html.includes("seeEq."), "raw equation reference spacing should not leak into block render or editor");
+}
+
+{
+  const noisyLatexSource = "$$\n{\\cos} f {=} \\frac{\\cos u - e}{1 - e \\cos u}, ~ {\\sin} f {=} \\frac{\\sqrt{1 - e^{2}} \\sin u}{1 - e \\cos u}.\\tag{12.2}\n$$";
+  const result = call(`cleanMathpixEditableMarkdown(${JSON.stringify(noisyLatexSource)})`);
+  assert(result.includes("\\cos f = \\frac{\\cos u - e}{1 - e \\cos u}, \\sin f = \\frac{\\sqrt{1 - e^{2}} \\sin u}{1 - e \\cos u}.\\tag{12.2}"), "display math cleanup should remove redundant command/operator braces and noisy spacing");
+  assert(!result.includes("{\\cos}"), "display math cleanup should not keep redundant command braces");
+  assert(!result.includes("{=}"), "display math cleanup should not keep redundant operator braces");
+  assert(!result.includes("~ {\\sin}"), "display math cleanup should remove noisy tilde spacing");
+}
+
+{
+  const compressedArrayFormula = "$$ \\begin{array}{l} {\\displaystyle \\frac{d \\pmb\\nu}{d t}= \\frac{m \\pmb n}{r^{2}} \\left[1 + \\nu^{2} - \\frac{4 m}{r}\\right] \\ {\\displaystyle - \\frac{2 J}{r^{3}} \\left[5 \\pmb n - \\pmb n\\right]} \\end{array} \\tag{12.67} $$";
+  const cleaned = call(`cleanMathpixEditableMarkdown(${JSON.stringify(compressedArrayFormula)})`);
+  assert(cleaned.includes("\\begin{array}{l}\n{\\displaystyle"), "compressed array formulas should put array begin on its own editable line");
+  assert(cleaned.includes("\\\\\n{\\displaystyle -"), "lost array row separators before displaystyle groups should become explicit row breaks");
+  assert(cleaned.includes("\\pmb{\\nu}"), "bold vector commands should wrap LaTeX commands in braces for MathJax");
+  assert(cleaned.includes("\\pmb{n}"), "bold vector commands should wrap bare vector symbols in braces for MathJax");
+  assert(cleaned.includes("\\tag{12.67}"), "formula numbering should be preserved during array cleanup");
+  assert(!cleaned.includes("\\pmb\\nu"), "compressed array cleanup should remove unstable unbraced pmb command syntax");
 }
 
 {
