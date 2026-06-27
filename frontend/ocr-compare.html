@@ -90,7 +90,11 @@
   <script src="./runtime-config.js"></script>
   <script>
     window.MathJax = {
+      loader: {
+        load: ["[tex]/boldsymbol"]
+      },
       tex: {
+        packages: { "[+]": ["boldsymbol"] },
         inlineMath: [["$", "$"], ["\\(", "\\)"]],
         displayMath: [["$$", "$$"], ["\\[", "\\]"]],
         processEscapes: true
@@ -107,6 +111,6 @@
       }
     };
   </script>
-  <script src="./ocr-compare.js?v=20260627-correction-actions"></script>
+  <script src="./ocr-compare.js?v=20260627-width-fit-rules"></script>
 </body>
 </html>

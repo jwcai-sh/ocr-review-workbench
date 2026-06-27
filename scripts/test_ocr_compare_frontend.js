@@ -96,9 +96,12 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareCss.includes("grid-template-rows: auto minmax(0, 1fr);"));
   assert(ocrCompareCss.includes(".review-page-canvas"));
   assert(ocrCompareCss.includes("--review-font-scale"));
-  assert(/\.review-card\.is-fit-page\s+\.review-page-paper\s*\{[^}]*width:\s*100%/.test(ocrCompareCss), "fit-page review paper should use the current right-column width as its scale base");
-  assert(/\.review-card\.is-fit-page\s+\.review-page-paper\s*\{[^}]*max-width:\s*none/.test(ocrCompareCss), "fit-page review paper should not keep the wider normal-page max width");
-  assert(/\.review-card\.is-fit-page\s+\.review-page-canvas\s*\{[^}]*padding:\s*8px 10px 10px/.test(ocrCompareCss), "fit-page review canvas should avoid large unused bottom padding");
+  assert(/\.review-card\.is-fit-page\s*\{[^}]*grid-template-rows:\s*auto minmax\(0,\s*1fr\)/.test(ocrCompareCss), "fit-page review card should reserve height for a single page canvas");
+  assert(/\.review-card\.is-fit-page\s+\.review-page-canvas\s*\{[^}]*display:\s*grid/.test(ocrCompareCss), "fit-page review canvas should use a stable single-page grid");
+  assert(/\.review-card\.is-fit-page\s+\.review-page-canvas\s*\{[^}]*overflow:\s*auto/.test(ocrCompareCss), "right-column fit mode should allow vertical access to every review block");
+  assert(/\.review-card\.is-fit-page\s+\.review-page-paper\s*\{[^}]*width:\s*min\(100%,\s*920px\)/.test(ocrCompareCss), "right-column fit mode should fit the review paper to readable column width");
+  assert(/\.review-card\.is-fit-page\s+\.review-page-paper\s*\{[^}]*overflow:\s*visible/.test(ocrCompareCss), "right-column fit mode should not clip later blocks");
+  assert(!/\.review-card\.is-fit-page\s+\.review-page-paper\s*\{[^}]*aspect-ratio:/.test(ocrCompareCss), "right-column fit mode should not force a PDF aspect ratio onto reflowed Markdown");
   assert(ocrCompareCss.includes(".review-needs-correction-nav-group"));
   assert(ocrCompareCss.includes(".review-needs-correction-link"));
   assert(ocrCompareCss.includes(".math-display-equation-tag"));
@@ -140,8 +143,10 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('class="upload-icon"'));
   assert(ocrCompareHtml.includes('viewBox="0 0 24 24"'));
   assert(!ocrCompareHtml.includes("cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"), "MathJax CDN should be lazy-loaded by ocr-compare.js");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260627-correction-actions"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260627-correction-actions"'));
+  assert(ocrCompareHtml.includes('load: ["[tex]/boldsymbol"]'), "MathJax should load boldsymbol for vector formulas converted from pmb");
+  assert(ocrCompareHtml.includes('packages: { "[+]": ["boldsymbol"] }'), "MathJax should enable the boldsymbol TeX package");
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260627-width-fit-rules"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260627-width-fit-rules"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
@@ -896,6 +901,8 @@ function assertOcrPatchShape(patch) {
       state.mineruOverrides.clear();
       state.mineruBlockOverrides.clear();
       state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      state.reviewNeedsCorrection.clear();
       state.mineruInfo = {
         pdf_info: [
           {
@@ -1231,6 +1238,8 @@ function assertOcrPatchShape(patch) {
       state.mineruOverrides.clear();
       state.mineruBlockOverrides.clear();
       state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      state.reviewNeedsCorrection.clear();
       state.mineruInfo = {
         pdf_info: [
           {
@@ -1537,6 +1546,298 @@ function assertOcrPatchShape(patch) {
 }
 
 {
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      state.reviewNeedsCorrection.clear();
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [900, 1200],
+            para_blocks: [
+              {
+                type: "text",
+                bbox: [70, 650, 830, 676],
+                lines: [{ bbox: [70, 650, 830, 676], spans: [{ bbox: [70, 650, 830, 676], content: "where $\\\\Phi_c$ is a constant. Thus we have an accurate prediction" }] }]
+              },
+              {
+                type: "text",
+                bbox: [70, 678, 830, 704],
+                lines: [{ bbox: [70, 678, 830, 704], spans: [{ bbox: [70, 678, 830, 704], content: "(under the chosen" }] }]
+              },
+              {
+                type: "text",
+                bbox: [70, 706, 830, 732],
+                lines: [{ bbox: [70, 706, 830, 732], spans: [{ bbox: [70, 706, 830, 732], content: "assumptions) for the gravitational-wave signal at the detector." }] }]
+              },
+              {
+                type: "text",
+                bbox: [92, 770, 830, 796],
+                lines: [{ bbox: [92, 770, 830, 796], spans: [{ bbox: [92, 770, 830, 796], content: "This indented sentence starts a new visual paragraph." }] }]
+              }
+            ]
+          }
+        ]
+      };
+      els.statusBadge = { textContent: "", className: "" };
+      const segmentsBeforePatch = reviewSegmentsForPage(1);
+      const mergedSegment = segmentsBeforePatch[0];
+      const rendered = renderBlockContent(mergedSegment.markdown, mergedSegment);
+      const automaticCount = applyAutomaticLocalCorrectionsForPage(1);
+      const segmentsAfterPatch = reviewSegmentsForPage(1);
+      const preview = buildAcceptedPatchPreviewForPage(1);
+      return JSON.stringify({
+        blockIndexes: segmentsBeforePatch.map((segment) => segment.blockIndex),
+        mergedMarkdown: mergedSegment.markdown,
+        rendered,
+        automaticCount,
+        patches: state.ocrPatches.map((patch) => ({
+          blockId: patch.blockId,
+          status: patch.status,
+          newText: patch.newText,
+          autoCorrection: patch.metadata?.autoCorrection || ""
+        })),
+        override: getBlockOverrides(1, false).get("merged-0-2"),
+        blockIndexesAfterPatch: segmentsAfterPatch.map((segment) => segment.blockIndex),
+        previewMarkdown: preview.markdown
+      });
+    })()`),
+  );
+  assert.deepStrictEqual(result.blockIndexes, ["merged-0-2", "3"], "visually adjacent prose fragments should become one review segment while a new indented paragraph stays separate");
+  assert(result.mergedMarkdown.includes("prediction\n(under the chosen\nassumptions)"), "merged prose segment should keep source block boundaries for patch generation");
+  assert(!result.rendered.includes("<br>"), "merged prose render should not expose artificial block-boundary line breaks");
+  assert(result.rendered.includes("(under the chosen assumptions)"), "merged prose render should read as a continuous paragraph");
+  assert.strictEqual(result.automaticCount, 1, "merged prose should still be corrected through an accepted OcrPatch");
+  assert(result.patches.some((patch) => patch.blockId.includes("_bmerged-0-2_") && patch.status === "accepted" && patch.autoCorrection === "plain_text_cleanup"), "merged prose cleanup should create an accepted patch for the merged review block");
+  assert(result.override.includes("(under the chosen assumptions)"), "merged prose accepted override should be unwrapped");
+  assert.deepStrictEqual(result.blockIndexesAfterPatch, ["merged-0-2", "3"], "accepted merged prose patch should not break review segmentation");
+  assert(result.previewMarkdown.includes("where $\\Phi_c$ is a constant. Thus we have an accurate prediction (under the chosen assumptions)"), "accepted preview should use the unwrapped merged prose patch");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      state.reviewNeedsCorrection.clear();
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [900, 1200],
+            para_blocks: [
+              {
+                type: "text",
+                bbox: [70, 650, 830, 676],
+                lines: [{ bbox: [70, 650, 830, 676], spans: [{ bbox: [70, 650, 830, 676], content: "to show that the equation takes the form □Ψ = -8πζρ*(1 - 2s), where the sensitivity" }] }]
+              },
+              {
+                type: "text",
+                bbox: [70, 678, 830, 704],
+                lines: [{ bbox: [70, 678, 830, 704], spans: [{ bbox: [70, 678, 830, 704], content: "arises from the derivative ∂T/∂ϕ." }] }]
+              }
+            ]
+          }
+        ]
+      };
+      const originalSegment = reviewSegmentsForPage(1)[0];
+      const patchResult = createAndStoreDraftOcrPatch({
+        pageNo: 1,
+        blockIndex: "0",
+        oldText: originalSegment.markdown,
+        newText: "to show that the equation takes the form $\\\\Box\\\\Psi = -8\\\\pi\\\\zeta\\\\rho^*(1 - 2s)$, where the sensitivity",
+        source: "human"
+      });
+      updateOcrPatchStatus(patchResult.patch.patchId, "accepted");
+      getBlockOverrides(1).set("0", patchResult.normalizedText);
+      const segments = reviewSegmentsForPage(1);
+      const entries = buildReviewEntriesForPage([], segments, 1);
+      const html = renderPageReviewCanvas(entries);
+      const preview = buildAcceptedPatchPreviewForPage(1);
+      return JSON.stringify({
+        blockIndexes: segments.map((segment) => segment.blockIndex),
+        html,
+        previewMarkdown: preview.markdown
+      });
+    })()`),
+  );
+  assert.deepStrictEqual(result.blockIndexes, ["0", "1"], "blocks with existing accepted human edits must not be merged into a new block key");
+  assert(result.html.includes("$\\Box\\Psi"), "existing accepted human edit should remain visible in the review page");
+  assert(!result.html.includes("form □Ψ"), "review page must not fall back to the uncorrected MinerU text when an accepted edit exists");
+  assert(result.previewMarkdown.includes("$\\Box\\Psi"), "accepted preview should preserve the existing human edit");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      state.reviewNeedsCorrection.clear();
+      const source0 = "to show that the equation takes the form □Ψ = -8πζρ*(1 - 2s), where the sensitivity";
+      const source1 = "arises from the derivative ∂T/∂ϕ.";
+      const patchResult = createAndStoreDraftOcrPatch({
+        pageNo: 1,
+        blockIndex: "0",
+        oldText: source0,
+        newText: "to show that the equation takes the form $\\\\Box\\\\Psi = -8\\\\pi\\\\zeta\\\\rho^{*}(1 - 2s)$, where the sensitivity",
+        source: "human"
+      });
+      updateOcrPatchStatus(patchResult.patch.patchId, "accepted");
+      getBlockOverrides(1).set("0", patchResult.normalizedText);
+      const mergedEntry = {
+        key: "merged-0-1",
+        displayIndex: 1,
+        segment: {
+          blockIndex: "merged-0-1",
+          blockIndexes: ["0", "1"],
+          componentEntries: [
+            { blockIndex: "0", markdown: source0, bbox: [70, 650, 830, 676], pageSize: [900, 1200] },
+            { blockIndex: "1", markdown: source1, bbox: [70, 678, 830, 704], pageSize: [900, 1200] }
+          ],
+          markdown: source0 + "\\n" + source1,
+          kind: "text",
+          bbox: [70, 650, 830, 704],
+          pageSize: [900, 1200],
+          mergedPlainProse: true
+        },
+        risk: { pageNumber: 1, blockIndex: "merged-0-1", text: source0 + "\\n" + source1, reviewOnly: true }
+      };
+      const html = renderPageReviewCanvas([mergedEntry]);
+      return JSON.stringify({ html });
+    })()`),
+  );
+  assert(result.html.includes("$\\Box\\Psi"), "a stale merged block must render saved component-level accepted edits first");
+  assert(!result.html.includes("form □Ψ"), "a stale merged block must not cover saved component edits with MinerU source text");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      state.reviewNeedsCorrection.clear();
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [900, 1200],
+            para_blocks: [
+              {
+                type: "text",
+                bbox: [70, 650, 830, 676],
+                lines: [{ bbox: [70, 650, 830, 676], spans: [{ bbox: [70, 650, 830, 676], content: "to show that the equation takes the form □Ψ = -8πζρ*(1 - 2s), where the sensitivity" }] }]
+              },
+              {
+                type: "text",
+                bbox: [70, 678, 830, 704],
+                lines: [{ bbox: [70, 678, 830, 704], spans: [{ bbox: [70, 678, 830, 704], content: "arises from the derivative ∂T/∂ϕ." }] }]
+              }
+            ]
+          }
+        ]
+      };
+      els.statusBadge = { textContent: "", className: "" };
+      const segments = reviewSegmentsForPage(1);
+      const automaticCount = applyAutomaticLocalCorrectionsForPage(1);
+      return JSON.stringify({
+        blockIndexes: segments.map((segment) => segment.blockIndex),
+        canAuto: canAutoCorrectPlainMineruMarkdown(segments.map((segment) => segment.markdown).join("\\n")),
+        automaticCount,
+        patches: state.ocrPatches
+      });
+    })()`),
+  );
+  assert.deepStrictEqual(result.blockIndexes, ["0", "1"], "plain-prose merge must not combine blocks that contain unwrapped scientific math symbols");
+  assert.strictEqual(result.canAuto, false, "unwrapped scientific math symbols should not be treated as safe plain-text cleanup");
+  assert.strictEqual(result.automaticCount, 0, "unwrapped scientific math symbols should not create automatic accepted cleanup patches");
+  assert.deepStrictEqual(result.patches, [], "unsafe math-like prose should remain a manual/Mathpix correction target");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.contentListItems = [];
+      state.contentListFileName = "";
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      state.reviewNeedsCorrection.clear();
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [600, 800],
+            para_blocks: [
+              {
+                type: "interline_equation",
+                bbox: [120, 240, 420, 290],
+                lines: [{ spans: [{ content: "$$\\\\n\\\\Psi = \\\\frac{2\\\\zeta}{R}\\\\sum_a m_a(1-2s_a)(1+\\\\mathcal{N}\\\\cdot v_a+\\\\ldots)\\\\n$$" }] }]
+              },
+              {
+                type: "text",
+                bbox: [525, 250, 565, 272],
+                lines: [{ spans: [{ content: "(11.113)" }] }]
+              },
+              {
+                type: "interline_equation",
+                bbox: [120, 340, 420, 390],
+                lines: [{ spans: [{ content: "$$\\\\n\\\\Psi = \\\\frac{4\\\\zeta}{R}\\\\eta m(s_2-s_1)\\\\mathcal N\\\\cdot v\\\\n$$" }] }]
+              },
+              {
+                type: "text",
+                bbox: [525, 350, 565, 372],
+                lines: [{ spans: [{ content: "(11.114)" }] }]
+              }
+            ]
+          }
+        ]
+      };
+      const automaticCount = applyAutomaticLocalCorrectionsForPage(1);
+      const preview = buildAcceptedPatchPreviewForPage(1);
+      return JSON.stringify({
+        automaticCount,
+        patches: state.ocrPatches.map((patch) => ({ blockId: patch.blockId, status: patch.status, newText: patch.newText, autoCorrection: patch.metadata?.autoCorrection || "" })),
+        previewMarkdown: preview.markdown
+      });
+    })()`),
+  );
+  assert.strictEqual(result.automaticCount, 2, "11.113 and 11.114 should receive automatic known-equation OCR cleanup patches");
+  assert(result.patches.every((patch) => patch.status === "accepted"), "known equation cleanup patches should be accepted");
+  assert(result.patches.some((patch) => patch.autoCorrection === "equation_number_preservation"), "known equation cleanup should compose with equation-number preservation");
+  assert(!result.previewMarkdown.includes("\\mathcal{N}"), "accepted preview should not keep mathcal N in equation 11.113");
+  assert(!result.previewMarkdown.includes("\\mathcal N"), "accepted preview should not keep mathcal N in equation 11.114");
+  assert(result.previewMarkdown.includes("(1+N\\cdot v_a+\\ldots)"), "equation 11.113 should use ordinary N");
+  assert(result.previewMarkdown.includes("(s_2-s_1)N\\cdot v"), "equation 11.114 should use ordinary N");
+}
+
+{
   const inlineMathWrappedProse = [
     "where $\\\\Phi_c$ is a constant. Thus we have an accurate prediction",
     "(under the chosen",
@@ -1797,10 +2098,29 @@ function assertOcrPatchShape(patch) {
   const cleaned = call(`cleanMathpixEditableMarkdown(${JSON.stringify(compressedArrayFormula)})`);
   assert(cleaned.includes("\\begin{array}{l}\n{\\displaystyle"), "compressed array formulas should put array begin on its own editable line");
   assert(cleaned.includes("\\\\\n{\\displaystyle -"), "lost array row separators before displaystyle groups should become explicit row breaks");
-  assert(cleaned.includes("\\pmb{\\nu}"), "bold vector commands should wrap LaTeX commands in braces for MathJax");
-  assert(cleaned.includes("\\pmb{n}"), "bold vector commands should wrap bare vector symbols in braces for MathJax");
+  assert(cleaned.includes("\\boldsymbol{\\nu}"), "bold vector commands should use MathJax-compatible boldsymbol wrappers");
+  assert(cleaned.includes("\\boldsymbol{n}"), "bold vector symbols should use MathJax-compatible boldsymbol wrappers");
   assert(cleaned.includes("\\tag{12.67}"), "formula numbering should be preserved during array cleanup");
-  assert(!cleaned.includes("\\pmb\\nu"), "compressed array cleanup should remove unstable unbraced pmb command syntax");
+  assert(!cleaned.includes("\\pmb"), "compressed array cleanup should remove unstable pmb command syntax");
+  const screenshotFormula = "$$ \\begin{array}{l}{\\displaystyle \\frac{d \\pmb{\\nu}}{d t}=-\\frac{m {\\pmb{n}}}{r^{2}}\\left[1+\\nu^{2}-\\frac{4 m}{r}\\right]+\\frac{4 m \\nu \\dot{r}}{r^{2}}}\\\\ {\\displaystyle -\\frac{2 J}{r^{3}}\\left[2 \\pmb{\\nu}\\times \\pmb{e}-3 \\dot{r}{\\pmb{n}}\\times \\pmb{e}-3 r^{-1}{\\pmb{n}}({\\pmb{h}}\\cdot{\\pmb{e}})\\right]}\\\\ {\\displaystyle -\\frac{3}{2}\\frac{Q_{2}}{r^{4}}\\left[5 {\\pmb{n}}({\\pmb{n}}\\cdot{\\pmb{e}})^{2}-2 {\\pmb{e}}({\\pmb{n}}\\cdot{\\pmb{e}})-{\\pmb{n}}\\right]}\\end{array}\\tag{12.67} $$";
+  const rendered = call(`renderBlockContent(${JSON.stringify(screenshotFormula)}, { kind: "interline_equation", blockIndex: "12.67" })`);
+  assert(rendered.includes('class="math-display'), "compressed screenshot-style array formulas should render as display math");
+  assert(rendered.includes("math-display-equation-tag"), "compressed screenshot-style array formulas should expose equation labels outside raw TeX");
+  assert(rendered.includes("(12.67)"), "compressed screenshot-style array formulas should show the equation number");
+  assert(rendered.includes("\\boldsymbol{\\nu}"), "compressed screenshot-style array formulas should be converted to MathJax-compatible boldsymbol syntax");
+  assert(!rendered.includes("\\pmb"), "compressed screenshot-style array formulas should not leave pmb syntax for MathJax");
+  assert(!rendered.includes("<p>$$"), "compressed screenshot-style array formulas should not render display delimiters as paragraph text");
+  const brokenPersistedArrayFormula = "$$\n\\begin{array}}{l}\n{\\displaystyle \\frac{d \\boldsymbol{\\nu}}{d t} = - \\frac{m {\\boldsymbol{n}}}{r^{2}} \\left[1 + \\nu^{2} - \\frac{4 m}{r} \\right] + \\frac{4 m \\nu \\dot{r}}{r^{2}} \\} \\\\\n{\\displaystyle - \\frac{2 J}{r^{3}} \\left[2 \\boldsymbol{\\nu} \\times \\boldsymbol{e} -3 \\dot{r}{\\boldsymbol{n}} \\times \\boldsymbol{e} -3 r^{-1}{\\boldsymbol{n}} ({\\boldsymbol{h}} \\cdot{\\boldsymbol{e}}) \\right]} \\\\\n{\\displaystyle - \\frac{3}{2} \\frac{Q_{2}}{r^{4}} \\left[5 {\\boldsymbol{n}} ({\\boldsymbol{n}} \\cdot{\\boldsymbol{e}})^{2} -2 {\\boldsymbol{e}} ({\\boldsymbol{n}} \\cdot{\\boldsymbol{e}}) - {\\boldsymbol{n}} \\right],}\n\\end{array}\\tag{12.67}\n$$";
+  const repairedPersisted = call(`cleanMathpixEditableMarkdown(${JSON.stringify(brokenPersistedArrayFormula)})`);
+  assert(repairedPersisted.includes("\\begin{array}{l}\n{\\displaystyle"), "persisted broken array begin arguments should be repaired before editing");
+  assert(!repairedPersisted.includes("\\begin{array}}\{l}"), "persisted broken array begin should not keep an extra closing brace");
+  assert(!repairedPersisted.includes("\\begin{array}\n}{l}"), "persisted broken array begin should not be split into an invalid argument line");
+  assert(!/\\\}\s*\\\\/.test(repairedPersisted), "escaped displaystyle row closers should become real group closers before row breaks");
+  const repairedRendered = call(`renderBlockContent(${JSON.stringify(brokenPersistedArrayFormula)}, { kind: "interline_equation", blockIndex: "12.67" })`);
+  assert(repairedRendered.includes("\\begin{array}{l}"), "render path should repair invalid persisted array begin arguments");
+  assert(!repairedRendered.includes("\\begin{array}\n}{l}"), "render path should not leak split invalid array arguments");
+  assert(!repairedRendered.includes("\\begin{array}}{l}"), "render path should not leak single-line invalid array arguments");
+  assert(!repairedRendered.includes("<p>$$"), "repaired persisted array formulas should not render display delimiters as paragraph text");
 }
 
 {
@@ -1920,6 +2240,8 @@ function assertOcrPatchShape(patch) {
       state.mineruOverrides.clear();
       state.mineruBlockOverrides.clear();
       state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      state.reviewNeedsCorrection.clear();
       state.mineruInfo = {
         pdf_info: [
           {
@@ -2328,6 +2650,8 @@ function assertOcrPatchShape(patch) {
       state.mineruOverrides.clear();
       state.mineruBlockOverrides.clear();
       state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      state.reviewNeedsCorrection.clear();
       state.mineruInfo = {
         pdf_info: [
           {
@@ -2501,6 +2825,8 @@ function assertOcrPatchShape(patch) {
           }
         ]
       };
+      state.liveReviewDrafts.clear();
+      state.reviewNeedsCorrection.clear();
       getMathpixBlockDrafts(1).set("0", "$$\\\\nE^S=-15.75A+17.8A^{2/3}\\\\n$$");
       const automaticCount = applyAutomaticLocalCorrectionsForPage(1);
       const latestPatch = getLatestOcrPatchForBlock(1, "0", reviewSegmentsForPage(1)[0].markdown);
@@ -3512,6 +3838,8 @@ function setupPreviewBookExpression(pages) {
     call(`(() => {
       state.reviewFontScale = 1;
       state.reviewFitToPage = true;
+      state.currentPage = 7;
+      state.pageCache.set(7, { width: 612, height: 792 });
       setReviewFontScale("in");
       const scaledHtml = renderPageReviewCanvas([
         { key: "0", displayIndex: 1, segment: { blockIndex: "0", markdown: "Scaled source", kind: "text" }, risk: { blockIndex: "0", reviewOnly: true } }
@@ -3522,6 +3850,7 @@ function setupPreviewBookExpression(pages) {
     })()`),
   );
   assert(result.scaledHtml.includes("--review-font-scale: 1.1"), "review page canvas should carry the current font scale");
+  assert(!result.scaledHtml.includes("--review-page-aspect-ratio"), "right-column fit mode should not tie reflowed Markdown to the PDF page aspect ratio");
   assert.strictEqual(result.resetScale, 1, "review font scale controls should step back down");
   assert.strictEqual(result.fitAfterFontChange, false, "manual font scaling should exit right-column fit-page mode");
 }

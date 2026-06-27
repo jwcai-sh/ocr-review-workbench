@@ -31,6 +31,7 @@ Rules:
 - Patch modules define stable OCR correction patches and merge accepted patches by block hash only; they must not read/write Markdown files, call APIs, choose conflict winners, or touch UI state.
 - `patch/ocrPatch.browser.js` exposes the patch pure-function contract as `globalThis.OcrCorePatch` for direct browser script loading; it must stay behavior-compatible with the CommonJS patch modules and must not become a separate source of truth.
 - Block parser modules convert MinerU page blocks into stable OCR block records with `blockId` and `oldHash`; they must not normalize Markdown, call validators, generate patches, or touch UI state.
+- When a MathJax display formula renders as raw `$$...$$`, inspect the exact persisted draft/editor Markdown, not only a cleaned manual copy. Known high-risk corruptions include `\begin{array}}{l}`, split array arguments such as `\begin{array}` followed by `}{l}`, and escaped displaystyle row closers such as `{\displaystyle ... \}`. These must be repaired in the OCR cleanup/normalization path before editor preview or accepted patch creation; the renderer must not silently create final manuscript text. Add a regression sample using the exact corrupted persisted text, not only the intended clean LaTeX.
 
 Fixture convention:
 

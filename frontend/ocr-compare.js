@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260627-correction-actions";
+const OCR_COMPARE_BUILD_ID = "20260627-width-fit-rules";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -2251,11 +2251,12 @@ function reviewPatchMarkdown(patch) {
 
 function renderPageReviewCanvas(reviewEntries) {
   const entries = Array.isArray(reviewEntries) ? reviewEntries : [];
+  const canvasStyle = `--review-font-scale: ${currentReviewFontScale()};`;
   if (!entries.length) {
-    return `<div class="review-list review-page-canvas markdown-body" style="--review-font-scale: ${currentReviewFontScale()};"><div class="empty-inline">当前页未发现可校对文本块。</div></div>`;
+    return `<div class="review-list review-page-canvas markdown-body" style="${canvasStyle}"><div class="empty-inline">当前页未发现可校对文本块。</div></div>`;
   }
   return `
-    <div class="review-list review-page-canvas markdown-body" data-review-page-canvas style="--review-font-scale: ${currentReviewFontScale()};">
+    <div class="review-list review-page-canvas markdown-body" data-review-page-canvas style="${canvasStyle}">
       <div class="review-page-paper">
         ${entries.map((entry) => renderPageReviewBlock(entry)).join("")}
       </div>
@@ -2268,23 +2269,13 @@ function renderPageReviewBlock(entry) {
   const fullKey = reviewBlockKey(state.currentPage, blockKey);
   const segment = entry.segment || {};
   const risk = entry.risk || reviewRiskFromSegment(segment, state.currentPage);
-  const blockOverrides = getBlockOverrides(state.currentPage, false);
-  const mathpixDrafts = getMathpixBlockDrafts(state.currentPage, false);
-  const liveDrafts = getLiveReviewDrafts(state.currentPage, false);
-  const ocrPatch = getLatestOcrPatchForBlock(state.currentPage, blockKey, segment.markdown);
-  const patchMarkdown = reviewPatchMarkdown(ocrPatch);
-  const draftMarkdown = mathpixDrafts.get(blockKey) || "";
-  const liveDraft = liveDrafts.get(blockKey) || null;
-  const correctedMarkdown = blockOverrides.get(blockKey) || "";
-  const correctionView = buildReviewCorrectionViewModel({
-    liveDraft,
-    mathpixDraftMarkdown: draftMarkdown,
-    patchMarkdown,
+  const correctionState = reviewCorrectionStateForSegment(state.currentPage, blockKey, segment, risk.text || "");
+  const {
+    correctionView,
     correctedMarkdown,
-    corrected: blockOverrides.has(blockKey),
+    draftMarkdown,
     ocrPatch,
-    fallbackMarkdown: segment.markdown || risk.text || "",
-  });
+  } = correctionState;
   const displayMarkdown = correctionView.displayMarkdown;
   const selected = isActiveReviewBlockKey(fullKey);
   const corrected = correctionView.isCorrected;
@@ -2334,7 +2325,7 @@ function renderPageReviewBlock(entry) {
               segment,
               risk,
               correctedMarkdown,
-              blockOverrides.has(blockKey),
+              corrected,
               draftMarkdown,
               ocrPatch,
               { displayIndex: entry.displayIndex, mathpixError, correctionView },
@@ -2560,6 +2551,96 @@ function buildReviewCorrectionViewModel({
     isCorrected,
     previewMarkdown,
     mathpixEditorIsSaved,
+  };
+}
+
+function reviewCorrectionStateForSegment(pageNumber, blockKey, segment = {}, fallbackMarkdown = "") {
+  const exact = reviewCorrectionStateForBlockKey(pageNumber, blockKey, segment?.markdown || fallbackMarkdown || "");
+  const component = componentCorrectionStateForMergedSegment(pageNumber, segment);
+  if (component?.hasCorrection && !exact.hasLiveDraft && !exact.hasMathpixDraft) {
+    return component;
+  }
+  return exact;
+}
+
+function reviewCorrectionStateForBlockKey(pageNumber, blockKey, sourceMarkdown = "") {
+  const key = String(blockKey || "");
+  const blockOverrides = getBlockOverrides(pageNumber, false);
+  const mathpixDrafts = getMathpixBlockDrafts(pageNumber, false);
+  const liveDrafts = getLiveReviewDrafts(pageNumber, false);
+  const ocrPatch = getLatestOcrPatchForBlock(pageNumber, key, sourceMarkdown);
+  const patchMarkdown = reviewPatchMarkdown(ocrPatch);
+  const draftMarkdown = mathpixDrafts.get(key) || "";
+  const liveDraft = liveDrafts.get(key) || null;
+  const correctedMarkdown = blockOverrides.get(key) || "";
+  const corrected = blockOverrides.has(key);
+  const correctionView = buildReviewCorrectionViewModel({
+    liveDraft,
+    mathpixDraftMarkdown: draftMarkdown,
+    patchMarkdown,
+    correctedMarkdown,
+    corrected,
+    ocrPatch,
+    fallbackMarkdown: sourceMarkdown,
+  });
+  const hasCorrection = Boolean(
+    liveDraft?.markdown ||
+      draftMarkdown ||
+      patchMarkdown ||
+      correctedMarkdown ||
+      correctionView.hasAcceptedPatchMarkdown ||
+      correctionView.hasPatchDraft,
+  );
+  return {
+    correctionView,
+    liveDraft,
+    draftMarkdown,
+    correctedMarkdown,
+    corrected,
+    ocrPatch,
+    hasCorrection,
+    hasLiveDraft: Boolean(liveDraft?.markdown),
+    hasMathpixDraft: Boolean(draftMarkdown || correctionView.hasPatchDraft),
+  };
+}
+
+function componentCorrectionStateForMergedSegment(pageNumber, segment = {}) {
+  const components = componentEntriesForReviewSegment(segment);
+  if (components.length < 2) {
+    return null;
+  }
+  const states = components.map((component) => {
+    const key = String(component.blockIndex ?? "");
+    const sourceMarkdown = String(component.markdown || "");
+    const state = reviewCorrectionStateForBlockKey(pageNumber, key, sourceMarkdown);
+    return {
+      ...state,
+      key,
+      sourceMarkdown,
+      displayMarkdown: state.correctionView.displayMarkdown || sourceMarkdown,
+    };
+  });
+  if (!states.some((state) => state.hasCorrection)) {
+    return null;
+  }
+  const joinedMarkdown = states.map((state) => state.displayMarkdown).filter(Boolean).join("\n");
+  const hasDraft = states.some((state) => state.correctionView.hasMathpixDraft);
+  const correctionView = buildReviewCorrectionViewModel({
+    mathpixDraftMarkdown: hasDraft ? joinedMarkdown : "",
+    correctedMarkdown: hasDraft ? "" : joinedMarkdown,
+    corrected: !hasDraft,
+    fallbackMarkdown: joinedMarkdown,
+  });
+  return {
+    correctionView,
+    liveDraft: null,
+    draftMarkdown: hasDraft ? joinedMarkdown : "",
+    correctedMarkdown: joinedMarkdown,
+    corrected: !hasDraft,
+    ocrPatch: null,
+    hasCorrection: true,
+    hasLiveDraft: false,
+    hasMathpixDraft: hasDraft,
   };
 }
 
@@ -2907,10 +2988,8 @@ function applyReviewFitScale(root = document) {
   }
   canvas.style.setProperty("--review-fit-scale", "1");
   const availableWidth = Math.max(1, canvas.clientWidth - 16);
-  const availableHeight = Math.max(1, canvas.clientHeight - 16);
   const paperWidth = Math.max(1, paper.scrollWidth);
-  const paperHeight = Math.max(1, paper.scrollHeight);
-  const scale = Math.max(0.35, Math.min(1, availableWidth / paperWidth, availableHeight / paperHeight));
+  const scale = Math.max(0.35, Math.min(1, availableWidth / paperWidth));
   canvas.style.setProperty("--review-fit-scale", String(Math.round(scale * 1000) / 1000));
   return true;
 }
@@ -3193,20 +3272,7 @@ function activeReviewMarkdownForBlock(pageNumber, blockKey, segment = null) {
   const pageNo = Number(pageNumber) || state.currentPage;
   const key = String(blockKey || "");
   const sourceSegment = segment || reviewSegmentsForPage(pageNo).find((item) => String(item.blockIndex) === key) || null;
-  const blockOverrides = getBlockOverrides(pageNo, false);
-  const mathpixDrafts = getMathpixBlockDrafts(pageNo, false);
-  const liveDrafts = getLiveReviewDrafts(pageNo, false);
-  const ocrPatch = getLatestOcrPatchForBlock(pageNo, key, sourceSegment?.markdown || "");
-  const correctionView = buildReviewCorrectionViewModel({
-    liveDraft: liveDrafts.get(key) || null,
-    mathpixDraftMarkdown: mathpixDrafts.get(key) || "",
-    patchMarkdown: reviewPatchMarkdown(ocrPatch),
-    correctedMarkdown: blockOverrides.get(key) || "",
-    corrected: blockOverrides.has(key),
-    ocrPatch,
-    fallbackMarkdown: sourceSegment?.markdown || "",
-  });
-  return correctionView.displayMarkdown;
+  return reviewCorrectionStateForSegment(pageNo, key, sourceSegment, sourceSegment?.markdown || "").correctionView.displayMarkdown;
 }
 
 function applyAutomaticLocalCorrectionsForPage(pageNumber) {
@@ -3231,7 +3297,15 @@ function applyAutomaticLocalCorrectionsForPage(pageNumber) {
     const activeMarkdown = mathpixDrafts.get(blockKey) || blockOverrides.get(blockKey) || reviewPatchMarkdown(existingPatch) || sourceMarkdown;
     const numberedMarkdown = autoCorrectMathEquationNumberMarkdown(pageNo, blockKey, activeMarkdown, segment);
     if (numberedMarkdown && numberedMarkdown !== activeMarkdown.replace(/\r\n?/g, "\n").trim()) {
-      if (saveAutomaticAcceptedBlockPatch(pageNo, blockKey, sourceMarkdown, numberedMarkdown, "equation_number_preservation")) {
+      const correctedNumberedMarkdown = autoCorrectKnownEquationOcrMarkdown(numberedMarkdown);
+      if (saveAutomaticAcceptedBlockPatch(pageNo, blockKey, sourceMarkdown, correctedNumberedMarkdown, "equation_number_preservation")) {
+        changedCount += 1;
+      }
+      return;
+    }
+    const knownEquationMarkdown = autoCorrectKnownEquationOcrMarkdown(activeMarkdown);
+    if (knownEquationMarkdown && knownEquationMarkdown !== activeMarkdown.replace(/\r\n?/g, "\n").trim()) {
+      if (saveAutomaticAcceptedBlockPatch(pageNo, blockKey, sourceMarkdown, knownEquationMarkdown, "known_equation_ocr_cleanup")) {
         changedCount += 1;
       }
       return;
@@ -3322,6 +3396,30 @@ function autoCorrectMathEquationNumberMarkdown(pageNo, blockKey, sourceMarkdown,
   return corrected !== source ? corrected : "";
 }
 
+function autoCorrectKnownEquationOcrMarkdown(markdown) {
+  const source = String(markdown || "").replace(/\r\n?/g, "\n").trim();
+  if (!source || !/(?:\\mathcal\s*\{\s*N\s*\}|\\mathcal\s+N\b|\\mathcalN\b)/.test(source)) {
+    return source;
+  }
+  if (!isKnownScalarWaveNVectorEquation(source)) {
+    return source;
+  }
+  return source
+    .replace(/\\mathcal\s*\{\s*N\s*\}/g, "N")
+    .replace(/\\mathcal\s+N\b/g, "N")
+    .replace(/\\mathcalN\b/g, "N")
+    .trim();
+}
+
+function isKnownScalarWaveNVectorEquation(markdown) {
+  const source = String(markdown || "");
+  if (/\\tag\{11\.11[34]\}|\(\s*11\.11[34]\s*\)/.test(source)) {
+    return true;
+  }
+  const compact = source.replace(/\s+/g, "");
+  return /\\Psi=/.test(compact) && /\\sum_?\{?a\}?/.test(compact) && /1-2s/.test(compact);
+}
+
 function autoCorrectFigureCaptionLabelMarkdown(pageNo, blockKey, sourceMarkdown) {
   const source = String(sourceMarkdown || "").replace(/\r\n?/g, "\n").trim();
   if (!source || extractReferenceLabels(source).some((label) => /^fig(?:\.|ure)?/i.test(label))) {
@@ -3372,27 +3470,51 @@ function nearbyEquationNumberTextForBlock(pageNumber, blockIndex, segment = null
   }
   const segments = reviewSegmentsForPage(pageNumber);
   const pageSize = currentSegment?.pageSize || risk?.pageSize;
-  const numberSourceSegments = segments.concat(
-    contentListEquationNumberSegmentsForPage(pageNumber, pageSize),
-    pdfTextEquationNumberSegmentsForPage(pageNumber, pageSize),
-  );
   const nearbyByIndex = segments
-    .filter((item) => {
+    .map((item) => {
       const index = Number(item.blockIndex);
       if (String(item.blockIndex) === blockKey) {
-        return false;
+        return null;
       }
-      return Number.isFinite(index) && Number.isFinite(currentIndex) && Math.abs(index - currentIndex) <= 4;
+      if (!Number.isFinite(index) || !Number.isFinite(currentIndex)) {
+        return null;
+      }
+      const distance = Math.abs(index - currentIndex);
+      if (distance > 4) {
+        return null;
+      }
+      const text = String(item.markdown || "").trim();
+      if (!isEquationNumberOnlyText(text) && !/^\\tag\{[^}]+\}$/.test(text)) {
+        return null;
+      }
+      return { text, distance };
     })
-    .map((item) => String(item.markdown || "").trim())
-    .filter((text) => isEquationNumberOnlyText(text) || /^\\tag\{[^}]+\}$/.test(text));
-  const bboxMatched = nearestEquationNumberSegmentsByBBox(
-    numberSourceSegments,
+    .filter(Boolean)
+    .sort((left, right) => left.distance - right.distance)
+    .slice(0, 1)
+    .map((item) => item.text);
+  const bboxMatchedFromReviewSegments = nearestEquationNumberSegmentsByBBox(
+    segments,
     currentSegment?.bbox || risk?.bbox,
     currentSegment?.pageSize || risk?.pageSize,
     blockKey,
   ).map((item) => String(item.markdown || "").trim());
-  return Array.from(new Set([...nearbyByIndex, ...bboxMatched])).join("\n");
+  if (bboxMatchedFromReviewSegments.length) {
+    return Array.from(new Set(bboxMatchedFromReviewSegments)).join("\n");
+  }
+  const fallbackNumberSourceSegments = contentListEquationNumberSegmentsForPage(pageNumber, pageSize).concat(
+    pdfTextEquationNumberSegmentsForPage(pageNumber, pageSize),
+  );
+  const bboxMatchedFromFallbackSources = nearestEquationNumberSegmentsByBBox(
+    fallbackNumberSourceSegments,
+    currentSegment?.bbox || risk?.bbox,
+    currentSegment?.pageSize || risk?.pageSize,
+    blockKey,
+  ).map((item) => String(item.markdown || "").trim());
+  if (bboxMatchedFromFallbackSources.length) {
+    return Array.from(new Set(bboxMatchedFromFallbackSources)).join("\n");
+  }
+  return Array.from(new Set(nearbyByIndex)).join("\n");
 }
 
 function contentListEquationNumberSegmentsForPage(pageNumber, fallbackPageSize = null) {
@@ -3558,8 +3680,28 @@ function canAutoCorrectPlainMineruMarkdown(markdown) {
   if (isLikelyBibliographyText(text)) {
     return false;
   }
+  if (hasUnwrappedScientificMathSymbolRisk(text)) {
+    return false;
+  }
   const lines = text.split("\n");
   return !lines.some((line) => isLikelyMarkdownTableLine(line) || /^#{1,6}\s+/.test(line.trim()) || /^\s*[-*+]\s+/.test(line));
+}
+
+function hasUnwrappedScientificMathSymbolRisk(markdown) {
+  const text = stripInlineMathSpans(String(markdown || ""))
+    .replace(/\\[a-zA-Z]+(?:\s*\{[^}]*\})?/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) {
+    return false;
+  }
+  return /[□∂∑∫√∞≈≠≤≥±×÷]|[Α-Ωα-ωµμ]/.test(text) && /[A-Za-z]/.test(text);
+}
+
+function stripInlineMathSpans(markdown) {
+  return String(markdown || "")
+    .replace(/\$[^$\n]*\$/g, " ")
+    .replace(/\\\([\s\S]*?\\\)/g, " ");
 }
 
 function normalizeInlineMathSpacing(markdown) {
@@ -4021,12 +4163,12 @@ function cleanMathpixEditableMarkdown(markdown) {
     normalizeMathpixCollapsedProse(String(markdown || "")),
   );
   const proseRepaired = normalizeMathpixEditableSource(
-    normalizeInlineMathSpacingOutsideDisplayMath(lineBreakRepaired),
+    normalizeInlineMathSpacingOutsideDisplayMath(repairLatexDisplayMathStructure(lineBreakRepaired)),
   );
   const formatted = formatDisplayMathSourceForEditing(
     normalizeInlineMathSpacingOutsideDisplayMath(compactLatexSourceSpacing(proseRepaired)),
   );
-  return normalizeEditableProseLineBreaksOutsideStructuredBlocks(formatted).trim();
+  return normalizeEditableProseLineBreaksOutsideStructuredBlocks(repairLatexDisplayMathStructure(formatted)).trim();
 }
 
 function normalizeMathpixOcrArtifacts(markdown) {
@@ -4211,8 +4353,11 @@ function compactLatexSourceLine(line) {
   return unwrapRedundantWholeLatexDoubleBraces(collapseRedundantLatexDoubleBraces(String(line || "")))
     .replace(/\{\\([A-Za-z]+)\}/g, "\\$1")
     .replace(/\{([=+\-*/<>])\}/g, "$1")
-    .replace(/\\pmb\s*(\\[A-Za-z]+)/g, "\\pmb{$1}")
-    .replace(/\\pmb\s+([A-Za-z])\b/g, "\\pmb{$1}")
+    .replace(/\\pmb\s*(\\[A-Za-z]+)/g, (_match, command) => `\\boldsymbol{${command}}`)
+    .replace(/\\pmb\s+([A-Za-z])\b/g, (_match, symbol) => `\\boldsymbol{${symbol}}`)
+    .replace(/\\pmb\s*\{([^{}\n]+)\}/g, (_match, body) => `\\boldsymbol{${String(body || "").trim()}}`)
+    .replace(/\\boldsymbol\s*(\\[A-Za-z]+)/g, (_match, command) => `\\boldsymbol{${command}}`)
+    .replace(/\\boldsymbol\s+([A-Za-z])\b/g, (_match, symbol) => `\\boldsymbol{${symbol}}`)
     .replace(/\\([A-Za-z]+)\s+\*/g, "\\$1*")
     .replace(/\\([A-Za-z]+\*)\s+\{/g, "\\$1{")
     .replace(/\\([A-Za-z]+)\s+\{/g, "\\$1{")
@@ -4520,7 +4665,7 @@ function formatLatexDisplayMathLines(lines) {
 }
 
 function formatLatexDisplayMathBody(body) {
-  const expanded = collapseRedundantLatexDoubleBraces(String(body || ""))
+  const expanded = collapseRedundantLatexDoubleBraces(repairLatexDisplayMathStructure(String(body || "")))
     .replace(/\r\n?/g, "\n")
     .replace(/(\\right[\])}]|[\])}])\s*\\\s*\{\s*\\displaystyle/g, "$1 \\\\\n{\\displaystyle")
     .replace(/\}\s*\\\s*\{\s*\\displaystyle/g, "} \\\\\n{\\displaystyle")
@@ -4537,6 +4682,71 @@ function formatLatexDisplayMathBody(body) {
     .map((line) => compactLatexSourceLine(line.trim()))
     .filter(Boolean)
     .join("\n");
+}
+
+function repairLatexDisplayMathStructure(markdown) {
+  return repairBrokenLatexDisplaystyleRowClosers(repairBrokenLatexEnvironmentArguments(markdown));
+}
+
+function repairBrokenLatexEnvironmentArguments(markdown) {
+  const source = String(markdown || "");
+  const normalizeBegin = (match, env, columns) => {
+    const columnSpec = String(columns || "").replace(/\s+/g, "");
+    return isSimpleLatexArrayColumnSpec(columnSpec) ? `\\begin{${env}}{${columnSpec}}` : match;
+  };
+  return source
+    .replace(/\\begin\s*\{\s*(array|tabular)\s*\}\s*\n\s*\\?}\s*\{\s*([^}\n]+?)\s*\}\s*(?:\\\\)?/g, normalizeBegin)
+    .replace(/\\begin\s*\{\s*(array|tabular)\s*\}\s*\n\s*\{\s*([^}\n]+?)\s*\}\s*(?:\\\\)?/g, normalizeBegin)
+    .replace(/\\begin\s*\{\s*(array|tabular)\s*\}\s*\\?}\s*\{\s*([^}\n]+?)\s*\}/g, normalizeBegin)
+    .replace(/\\begin\s*\{\s*(array|tabular)\s*\}\s*\{\s*([^}\n]+?)\s*\}/g, normalizeBegin);
+}
+
+function isSimpleLatexArrayColumnSpec(columnSpec) {
+  return /^[lcr|]+$/i.test(String(columnSpec || ""));
+}
+
+function repairBrokenLatexDisplaystyleRowClosers(markdown) {
+  return String(markdown || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => {
+      const rowBreakMatch = String(line || "").match(/\s*\\\\\s*$/);
+      const rowBreak = rowBreakMatch ? rowBreakMatch[0] : "";
+      const body = rowBreak ? line.slice(0, line.length - rowBreak.length) : line;
+      if (!/^\s*\{\\displaystyle\b/.test(body) || !/\\\}\s*$/.test(body)) {
+        return line;
+      }
+      const repaired = body.replace(/\\\}\s*$/, "}");
+      if (!latexUnescapedGroupContentIsBalanced(body) && latexUnescapedGroupContentIsBalanced(repaired)) {
+        return `${repaired}${rowBreak}`;
+      }
+      return line;
+    })
+    .join("\n");
+}
+
+function latexUnescapedGroupContentIsBalanced(text) {
+  let depth = 0;
+  const value = String(text || "");
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if ((char !== "{" && char !== "}") || isEscapedLatexChar(value, index)) {
+      continue;
+    }
+    depth += char === "{" ? 1 : -1;
+    if (depth < 0) {
+      return false;
+    }
+  }
+  return depth === 0;
+}
+
+function isEscapedLatexChar(text, index) {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor -= 1) {
+    backslashes += 1;
+  }
+  return backslashes % 2 === 1;
 }
 
 function compactSpacedLetters(text) {
@@ -4559,11 +4769,11 @@ function hasLatexMathEnvironment(markdown) {
 }
 
 function normalizeDisplayMathForRender(markdown) {
-  const normalized = removeDanglingSingleDollarLines(normalizeEscapedDisplayMathNewlines(hoistStandaloneDisplayMathTags(markdown)));
+  const normalized = removeDanglingSingleDollarLines(normalizeEscapedDisplayMathNewlines(hoistStandaloneDisplayMathTags(repairLatexDisplayMathStructure(markdown))));
   const repaired = repairBrokenDisplayMathDelimiters(normalized);
   const mathNormalized = restoreDroppedDisplayMathDelimiters(repaired, normalizeMathMarkdown(repaired));
   const wrapped = wrapBareDisplayMathBlocks(mathNormalized);
-  return removeEmptyDisplayMathBlocks(removeDanglingSingleDollarLines(hoistStandaloneDisplayMathTags(wrapped)));
+  return removeEmptyDisplayMathBlocks(removeDanglingSingleDollarLines(hoistStandaloneDisplayMathTags(repairLatexDisplayMathStructure(wrapped))));
 }
 
 function restoreDroppedDisplayMathDelimiters(originalMarkdown, normalizedMarkdown) {
@@ -5107,7 +5317,193 @@ function reviewBlockMarkdownsForPage(pageNumber) {
 }
 
 function reviewSegmentsForPage(pageNumber) {
-  return segmentEntries(reviewBlockMarkdownsForPage(pageNumber));
+  return segmentEntries(mergeAdjacentPlainProseEntriesForReview(reviewBlockMarkdownsForPage(pageNumber), pageNumber));
+}
+
+function mergeAdjacentPlainProseEntriesForReview(entries, pageNumber = state.currentPage) {
+  const output = [];
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    const previous = output[output.length - 1];
+    if (shouldMergeAdjacentPlainProseEntries(previous, entry, pageNumber)) {
+      output[output.length - 1] = mergePlainProseEntries(previous, entry);
+      return;
+    }
+    output.push(entry);
+  });
+  return output;
+}
+
+function shouldMergeAdjacentPlainProseEntries(previous, current, pageNumber = state.currentPage) {
+  if (!previous || !current) {
+    return false;
+  }
+  if (!isPlainProseReviewEntry(previous) || !isPlainProseReviewEntry(current)) {
+    return false;
+  }
+  if (entryHasReviewPatchState(previous, pageNumber) || entryHasReviewPatchState(current, pageNumber)) {
+    return false;
+  }
+  const geometry = adjacentProseGeometry(previous, current);
+  if (!geometry?.sameColumn || geometry.verticalGap < -Math.max(4, geometry.minHeight * 0.25)) {
+    return false;
+  }
+  if (geometry.verticalGap > geometry.maxGap) {
+    return false;
+  }
+  if (geometry.currentIndented && previousEndsSentence(previous.markdown) && startsLikeNewSentence(current.markdown)) {
+    return false;
+  }
+  return proseTextSuggestsContinuation(previous.markdown, current.markdown) || geometry.veryTight;
+}
+
+function isPlainProseReviewEntry(entry) {
+  const markdown = String(entry?.markdown || "").replace(/\r\n?/g, "\n").trim();
+  if (!markdown || markdown.includes("\n\n") || isLikelyBibliographyText(markdown)) {
+    return false;
+  }
+  const blockType = String(entry?.block?.type || "").toLowerCase();
+  if (["table", "image", "title", "list", "code", "algorithm", "interline_equation"].includes(blockType)) {
+    return false;
+  }
+  if (
+    hasMarkdownImageReference(markdown) ||
+    hasDisplayMathBlock(markdown) ||
+    hasLatexMathEnvironment(markdown) ||
+    hasStandaloneEquationLine(markdown) ||
+    hasUnwrappedScientificMathSymbolRisk(markdown) ||
+    isLikelyMarkdownTableLine(markdown) ||
+    /^#{1,6}\s+/.test(markdown) ||
+    /^\s*[-*+]\s+/.test(markdown) ||
+    /^\s*>\s?/.test(markdown) ||
+    /<\s*(?:table|tr|td|th)\b/i.test(markdown)
+  ) {
+    return false;
+  }
+  return !isPageNumberOnlyText(markdown);
+}
+
+function entryHasReviewPatchState(entry, pageNumber = state.currentPage) {
+  const blockIndexes = Array.isArray(entry?.blockIndexes) && entry.blockIndexes.length ? entry.blockIndexes : [entry?.blockIndex];
+  return blockIndexes.some((blockIndex) => {
+    const key = String(blockIndex ?? "");
+    if (!key) {
+      return false;
+    }
+    if (
+      getBlockOverrides(pageNumber, false).has(key) ||
+      getMathpixBlockDrafts(pageNumber, false).has(key) ||
+      getLiveReviewDrafts(pageNumber, false).has(key) ||
+      state.reviewNeedsCorrection.has(reviewBlockKey(pageNumber, key))
+    ) {
+      return true;
+    }
+    const latestPatch = getLatestOcrPatchForBlock(pageNumber, key, entry?.markdown || "");
+    return Boolean(latestPatch && ["draft", "accepted"].includes(latestPatch.status));
+  });
+}
+
+function adjacentProseGeometry(previous, current) {
+  const left = bboxReadingGeometry(previous?.bbox, previous?.pageSize || current?.pageSize);
+  const right = bboxReadingGeometry(current?.bbox, current?.pageSize || previous?.pageSize);
+  if (!left || !right) {
+    return null;
+  }
+  const horizontalOverlap = Math.max(0, Math.min(left.right, right.right) - Math.max(left.left, right.left));
+  const minWidth = Math.max(1, Math.min(left.width, right.width));
+  const pageWidth = Math.max(left.pageWidth, right.pageWidth, 1);
+  const pageHeight = Math.max(left.pageHeight, right.pageHeight, 1);
+  const minHeight = Math.max(1, Math.min(left.height, right.height));
+  const verticalGap = right.top - left.bottom;
+  const maxGap = Math.max(6, pageHeight * 0.012, minHeight * 0.9);
+  const indentThreshold = Math.max(14, pageWidth * 0.018);
+  return {
+    sameColumn: horizontalOverlap / minWidth >= 0.56,
+    verticalGap,
+    maxGap,
+    minHeight,
+    veryTight: verticalGap <= Math.max(4, minHeight * 0.35),
+    currentIndented: right.left - left.left >= indentThreshold,
+  };
+}
+
+function proseTextSuggestsContinuation(previousMarkdown, currentMarkdown) {
+  const previous = lastNonEmptyLine(previousMarkdown);
+  const current = firstNonEmptyLine(currentMarkdown);
+  if (!previous || !current) {
+    return false;
+  }
+  return (
+    /[-‐‑‒–—]$/.test(previous) ||
+    /[,;:，；：]$/.test(previous) ||
+    !previousEndsSentence(previous) ||
+    /^[a-zà-öø-ÿµμ]/.test(current) ||
+    /^\(/.test(current) ||
+    /^(?:and|or|but|because|which|that|where|with|by|of|to|in|on|for|as|from|than|then|while|under|assuming)\b/i.test(current)
+  );
+}
+
+function previousEndsSentence(markdown) {
+  return /[.!?。！？]["')\]}”’]*$/.test(lastNonEmptyLine(markdown));
+}
+
+function startsLikeNewSentence(markdown) {
+  return /^[A-ZΑ-Ω"“‘]/.test(firstNonEmptyLine(markdown));
+}
+
+function firstNonEmptyLine(markdown) {
+  return String(markdown || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean) || "";
+}
+
+function lastNonEmptyLine(markdown) {
+  const lines = String(markdown || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.length ? lines[lines.length - 1] : "";
+}
+
+function mergePlainProseEntries(previous, current) {
+  const componentEntries = componentEntriesForReviewSegment(previous).concat(componentEntriesForReviewSegment(current));
+  const blockIndexes = componentEntries.map((entry) => entry.blockIndex);
+  const firstIndex = blockIndexes[0];
+  const lastIndex = blockIndexes[blockIndexes.length - 1];
+  return {
+    ...previous,
+    block: { ...(previous?.block || {}), type: "text" },
+    blockIndex: `merged-${firstIndex}-${lastIndex}`,
+    blockIndexes,
+    componentEntries,
+    bbox: mergeBBoxes([previous?.bbox, current?.bbox]),
+    markdown: [previous?.markdown, current?.markdown].map((text) => String(text || "").trim()).filter(Boolean).join("\n"),
+    pageSize: previous?.pageSize || current?.pageSize,
+    mergedPlainProse: true,
+  };
+}
+
+function componentEntriesForReviewSegment(entry = {}) {
+  if (Array.isArray(entry?.componentEntries) && entry.componentEntries.length) {
+    return entry.componentEntries.map((component) => ({
+      blockIndex: String(component.blockIndex ?? ""),
+      markdown: String(component.markdown || ""),
+      bbox: component.bbox || null,
+      pageSize: component.pageSize || entry.pageSize || null,
+    }));
+  }
+  const blockIndexes = Array.isArray(entry?.blockIndexes) && entry.blockIndexes.length ? entry.blockIndexes : [entry?.blockIndex];
+  const firstBlockIndex = String(blockIndexes[0] ?? "");
+  return blockIndexes
+    .map((blockIndex) => ({
+      blockIndex: String(blockIndex ?? ""),
+      markdown: String(blockIndexes.length === 1 || String(blockIndex ?? "") === firstBlockIndex ? entry?.markdown || "" : ""),
+      bbox: entry?.bbox || null,
+      pageSize: entry?.pageSize || null,
+    }))
+    .filter((component) => component.blockIndex);
 }
 
 function augmentTableCaptionsForEntries(entries, pageNumber) {
@@ -8148,7 +8544,7 @@ function canStructureFormulaMarkdown(markdown) {
   if (!structured || structured === source) {
     return false;
   }
-  return /\n\\begin\{array\}|\n\{\\displaystyle|\\\\\n|\\pmb\{/.test(structured);
+  return /\n\\begin\{array\}|\n\{\\displaystyle|\\\\\n|\\boldsymbol\{/.test(structured);
 }
 
 function shouldTreatCodeBlockAsMarkdown(text) {

@@ -1036,14 +1036,23 @@ textarea {
   overflow: hidden;
 }
 
+.review-card.is-fit-page {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .review-card.is-fit-page .review-page-canvas {
-  overflow: hidden;
-  padding: 8px 10px 10px;
+  display: grid;
+  align-items: start;
+  justify-items: center;
+  overflow: auto;
+  padding: 8px 10px;
 }
 
 .review-card.is-fit-page .review-page-paper {
-  width: 100%;
+  width: min(100%, 920px);
   max-width: none;
+  height: auto;
+  overflow: visible;
   padding: 20px 22px 24px;
   zoom: var(--review-fit-scale, 1);
 }
