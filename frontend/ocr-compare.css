@@ -544,18 +544,6 @@ textarea {
   flex-wrap: wrap;
 }
 
-.source-page-title {
-  min-width: 120px;
-}
-
-.source-page-title span {
-  display: block;
-  margin-bottom: 2px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
 .source-page-card-pager {
   min-width: 0;
   flex: 1 1 260px;
@@ -820,9 +808,10 @@ textarea {
 
 .page-block-hotspot:hover,
 .page-block-hotspot:focus-visible {
-  border-color: rgba(37, 99, 235, 0.55);
-  background: rgba(37, 99, 235, 0.06);
+  border-color: transparent;
+  background: transparent;
   outline: none;
+  box-shadow: none;
 }
 
 .page-block-hotspot.is-selected {

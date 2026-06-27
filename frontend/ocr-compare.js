@@ -4,8 +4,6 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const SOURCE_PAGE_WHEEL_DELTA_THRESHOLD = 48;
-const SOURCE_PAGE_WHEEL_COOLDOWN_MS = 260;
 const OCR_COMPARE_BUILD_ID = "20260626-file-runtime-api-fallback";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -81,8 +79,6 @@ let pagePrefetchTimer = null;
 const pendingPagePreviewRequests = new Map();
 const pendingMathTypesetRoots = new Set();
 let mathTypesetTimer = null;
-let sourcePageWheelDelta = 0;
-let sourcePageWheelLockedUntil = 0;
 
 function getOcrCoreNormalizeMathDelimiters() {
   if (ocrCoreNormalizeMathDelimiters) {
@@ -1322,10 +1318,6 @@ function renderImageCard(page) {
     : `<div class="empty-inline">尚未选择 PDF。</div>`;
   card.innerHTML = `
     <div class="card-head image-card-head">
-      <div class="source-page-title">
-        <span>原文单页</span>
-        <strong>第 ${state.currentPage} 页</strong>
-      </div>
       <div class="source-page-card-pager">
         ${renderPageNavigator("source-page")}
       </div>
@@ -1339,7 +1331,6 @@ function renderImageCard(page) {
         <button class="text-button image-zoom-button" type="button" data-image-zoom="in" ${page.image && !atMaxZoom ? "" : "disabled"} aria-label="放大原文页" title="放大">
           <span class="image-zoom-glyph" aria-hidden="true"><span>A</span><span>⌃</span></span>
         </button>
-        <span>${page.width || "-"} × ${page.height || "-"}</span>
       </div>
     </div>
     <div class="source-page-viewer">
@@ -1356,7 +1347,6 @@ function renderImageCard(page) {
   card.querySelectorAll("[data-source-page-thumbnail]").forEach((button) => {
     button.addEventListener("click", () => goToPage(Number(button.dataset.sourcePageThumbnail || state.currentPage)));
   });
-  card.querySelector(".source-page-viewer")?.addEventListener("wheel", handleSourcePageWheelNavigation, { passive: false });
   card.querySelectorAll("[data-image-fit-page]").forEach((button) => {
     button.addEventListener("click", async () => {
       state.pdfFitToPage = !state.pdfFitToPage;
@@ -1374,37 +1364,6 @@ function renderImageCard(page) {
     button.addEventListener("click", () => selectReviewBlock(button.dataset.reviewLeftHotspot));
   });
   return card;
-}
-
-function handleSourcePageWheelNavigation(event) {
-  const total = getReviewPageCount();
-  if (total <= 1) {
-    return;
-  }
-  const deltaY = Number(event?.deltaY) || 0;
-  const deltaX = Number(event?.deltaX) || 0;
-  const delta = Math.abs(deltaY) >= Math.abs(deltaX) ? deltaY : deltaX;
-  if (!delta) {
-    return;
-  }
-  event.preventDefault?.();
-  const now = Date.now();
-  if (now < sourcePageWheelLockedUntil) {
-    return;
-  }
-  sourcePageWheelDelta += delta;
-  if (Math.abs(sourcePageWheelDelta) < SOURCE_PAGE_WHEEL_DELTA_THRESHOLD) {
-    return;
-  }
-  const targetPage = clamp(state.currentPage + (sourcePageWheelDelta > 0 ? 1 : -1), 1, total);
-  sourcePageWheelDelta = 0;
-  if (targetPage === state.currentPage) {
-    return;
-  }
-  sourcePageWheelLockedUntil = now + SOURCE_PAGE_WHEEL_COOLDOWN_MS;
-  goToPage(targetPage).catch((error) => {
-    setStatus("Page", "error", error?.message || String(error || ""));
-  });
 }
 
 function renderSourcePageThumbnailRail() {

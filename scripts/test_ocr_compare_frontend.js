@@ -103,6 +103,11 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareCss.includes('.math-display-formula mjx-container[display="true"]'));
   assert(ocrCompareCss.includes(".review-page-block.is-selected"));
   assert(ocrCompareCss.includes(".page-block-hotspot"));
+  assert(ocrCompareCss.includes(".page-block-hotspot:hover"));
+  assert(!/\.page-block-hotspot:hover,[\s\S]*?background:\s*rgba\(37,\s*99,\s*235,\s*0\.06\)/.test(ocrCompareCss), "left PDF hover hotspots should not draw an inaccurate bbox preview");
+  assert(!/\.page-block-hotspot:hover,[^{]*\{[^}]*outline:\s*2px/.test(ocrCompareCss), "left PDF hover hotspots should not draw an outline bbox preview");
+  assert(/\.page-block-hotspot:hover,[^{]*\{[^}]*outline:\s*none/.test(ocrCompareCss), "left PDF hover hotspots should suppress visible hover outlines");
+  assert(/\.page-block-hotspot:hover,[^{]*\{[^}]*box-shadow:\s*none/.test(ocrCompareCss), "left PDF hover hotspots should suppress visible hover shadows");
   assert(ocrCompareCss.includes(".selected-block-toolbar"));
   assert(ocrCompareCss.includes(".block-step-button"));
   assert(ocrCompareCss.includes(".preview-panel"));
@@ -113,6 +118,8 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('id="pickContentListButton"'));
   assert(ocrCompareHtml.includes('id="pickRequiredFilesButton"'));
   assert(ocrCompareHtml.includes('class="control-column control-column-pdf"'));
+  assert(ocrCompareHtml.includes("<div>原文</div>"));
+  assert(!ocrCompareHtml.includes("每页 OCR 截图"));
   assert(ocrCompareHtml.includes("上传 PDF"));
   assert(ocrCompareHtml.includes("上传 middle.json"));
   assert(ocrCompareHtml.includes("上传 content_list"));
@@ -3346,6 +3353,9 @@ function setupPreviewBookExpression(pages) {
   assert(result.normalHtml.includes("image-zoom-glyph"));
   assert(result.normalHtml.includes("page-image-surface"));
   assert(result.normalHtml.includes("data-page-image-focus"));
+  assert(!result.normalHtml.includes("source-page-title"));
+  assert(!result.normalHtml.includes("原文单页"));
+  assert(!result.normalHtml.includes("919 × 1256"));
   assert(!result.normalHtml.includes("image-zoom-label"));
   assert(!result.normalHtml.includes("125%"));
   assert(result.zoomedHtml.includes("--pdf-image-zoom: 1.75"));
@@ -3355,40 +3365,9 @@ function setupPreviewBookExpression(pages) {
   assert(!result.fittedClass.includes("is-zoomed"));
   assert(result.fittedHtml.includes("--pdf-page-aspect-ratio: 919 / 1256"));
   assert(result.listeners.includes("click"));
-  assert(result.listeners.includes("wheel"), "left source pane should listen for wheel-driven page navigation");
-}
-
-{
-  const result = JSON.parse(
-    call(`(() => {
-      const visited = [];
-      const originalGoToPage = goToPage;
-      goToPage = (pageNumber) => {
-        visited.push(pageNumber);
-        state.currentPage = pageNumber;
-        return Promise.resolve();
-      };
-      sourcePageWheelDelta = 0;
-      sourcePageWheelLockedUntil = 0;
-      state.currentPage = 2;
-      state.pdfPageCount = 3;
-      state.mineruInfo = null;
-      const event = {
-        deltaY: 60,
-        deltaX: 0,
-        prevented: false,
-        preventDefault() {
-          this.prevented = true;
-        }
-      };
-      handleSourcePageWheelNavigation(event);
-      goToPage = originalGoToPage;
-      return JSON.stringify({ visited, prevented: event.prevented, currentPage: state.currentPage });
-    })()`),
-  );
-  assert.deepStrictEqual(result.visited, [3], "wheel down in the source pane should advance one page");
-  assert.strictEqual(result.currentPage, 3, "wheel page navigation should update the current page through goToPage");
-  assert.strictEqual(result.prevented, true, "source pane wheel page navigation should prevent native scrolling");
+  assert(!result.listeners.includes("wheel"), "left source pane should not bind wheel-driven page navigation");
+  assert(!source.includes("handleSourcePageWheelNavigation"), "left source pane should not keep wheel-driven page navigation code");
+  assert(!source.includes('addEventListener("wheel"'), "left source pane should not register wheel navigation listeners");
 }
 
 {
