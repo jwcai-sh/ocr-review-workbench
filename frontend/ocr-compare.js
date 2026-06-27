@@ -3881,7 +3881,9 @@ function cleanMathpixEditableMarkdown(markdown) {
   const proseRepaired = normalizeMathpixEditableSource(
     normalizeInlineMathSpacingOutsideDisplayMath(normalizeMathpixCollapsedProse(String(markdown || ""))),
   );
-  return normalizeInlineMathSpacingOutsideDisplayMath(compactLatexSourceSpacing(proseRepaired)).trim();
+  return formatDisplayMathSourceForEditing(
+    normalizeInlineMathSpacingOutsideDisplayMath(compactLatexSourceSpacing(proseRepaired)),
+  ).trim();
 }
 
 function normalizeMathpixOcrArtifacts(markdown) {
@@ -3960,7 +3962,7 @@ function isSingleLineDisplayMath(line) {
 
 function compactSingleLineDisplayMathSource(line) {
   return String(line || "").replace(/^(\s*)\$\$([\s\S]*?)\$\$(\s*)$/, (_match, leading, body, trailing) => {
-    return `${leading}$$${compactLatexSourceLine(body)}$$${trailing}`;
+    return `${leading}$$${formatLatexDisplayMathBody(body)}$$${trailing}`;
   });
 }
 
@@ -3980,7 +3982,7 @@ function isLatexDenseSourceLine(line) {
 }
 
 function compactLatexSourceLine(line) {
-  return String(line || "")
+  return unwrapRedundantWholeLatexDoubleBraces(collapseRedundantLatexDoubleBraces(String(line || "")))
     .replace(/\\([A-Za-z]+)\s+\*/g, "\\$1*")
     .replace(/\\([A-Za-z]+\*)\s+\{/g, "\\$1{")
     .replace(/\\([A-Za-z]+)\s+\{/g, "\\$1{")
@@ -3994,10 +3996,312 @@ function compactLatexSourceLine(line) {
     .replace(/\\operatorname\*\{([^}]*)\}/g, (_match, name) => `\\operatorname*{${compactSpacedLetters(name)}}`)
     .replace(/\\operatorname\{([^}]*)\}/g, (_match, name) => `\\operatorname{${compactSpacedLetters(name)}}`)
     .replace(/\\mathrm\{([^}]*)\}/g, (_match, value) => `\\mathrm{${compactSpacedLetters(value)}}`)
+    .replace(/\\left\s+/g, "\\left")
+    .replace(/\\right\s+/g, "\\right")
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")")
+    .replace(/\[\s+/g, "[")
+    .replace(/\s+\]/g, "]")
+    .replace(/\s+\\tag\{/g, "\\tag{")
     .replace(/([+\-])\s+(?=\d)/g, "$1")
     .replace(/\s+([,.;:])/g, "$1")
     .replace(/[ \t]{2,}/g, " ")
     .trimEnd();
+}
+
+function collapseRedundantLatexDoubleBraces(text) {
+  let output = String(text || "");
+  let previous = "";
+  while (output !== previous) {
+    previous = output;
+    output = output.replace(/\{\{([^{}\n]+)\}\}/g, "{$1}");
+  }
+  return output;
+}
+
+function unwrapRedundantWholeLatexDoubleBraces(text) {
+  const source = String(text || "");
+  const rowBreakMatch = source.match(/(\\\\)\s*$/);
+  const rowBreak = rowBreakMatch ? rowBreakMatch[1] : "";
+  let body = rowBreak ? source.slice(0, source.length - rowBreakMatch[0].length).trim() : source.trim();
+  while (body.startsWith("{{") && body.endsWith("}}") && latexGroupContentIsBalanced(body.slice(2, -2))) {
+    body = body.slice(2, -2).trim();
+  }
+  return rowBreak ? `${body} ${rowBreak}` : body;
+}
+
+function latexGroupContentIsBalanced(text) {
+  let depth = 0;
+  for (const char of String(text || "")) {
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth < 0) {
+        return false;
+      }
+    }
+  }
+  return depth === 0;
+}
+
+function formatDisplayMathSourceForEditing(markdown) {
+  const lines = hoistStandaloneDisplayMathTags(markdown).replace(/\r\n?/g, "\n").split("\n");
+  const output = [];
+  let inCodeFence = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (isCodeFenceStart(line)) {
+      inCodeFence = !inCodeFence;
+      output.push(line);
+      continue;
+    }
+    if (inCodeFence) {
+      output.push(line);
+      continue;
+    }
+    const singleLine = trimmed.match(/^\$\$([\s\S]*?)\$\$$/);
+    if (singleLine) {
+      output.push("$$", ...formatLatexDisplayMathLines([singleLine[1]]), "$$");
+      continue;
+    }
+    if (trimmed === "$$") {
+      const body = [];
+      index += 1;
+      while (index < lines.length && lines[index].trim() !== "$$") {
+        body.push(lines[index]);
+        index += 1;
+      }
+      output.push("$$", ...formatLatexDisplayMathLines(body), "$$");
+      continue;
+    }
+    output.push(line);
+  }
+  return removeEmptyDisplayMathBlocks(output.join("\n")).replace(/\n{3,}/g, "\n\n");
+}
+
+function hoistStandaloneDisplayMathTags(markdown) {
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+  const output = [];
+  let inCodeFence = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (isCodeFenceStart(line)) {
+      inCodeFence = !inCodeFence;
+      output.push(line);
+      continue;
+    }
+    if (inCodeFence) {
+      output.push(line);
+      continue;
+    }
+    if (isStandaloneLatexTagLine(trimmed)) {
+      if (!appendTagsToPreviousDisplayMathBlock(output, [trimmed])) {
+        output.push(line);
+      }
+      continue;
+    }
+    const displayBlock = collectRawDisplayMathBlock(lines, index);
+    if (!displayBlock) {
+      output.push(line);
+      continue;
+    }
+    const blockTags = displayMathBlockStandaloneTags(displayBlock.body);
+    if (displayMathBlockIsEmpty(displayBlock.body)) {
+      index = displayBlock.closeIndex;
+      continue;
+    }
+    if (blockTags.length) {
+      if (!appendTagsToPreviousDisplayMathBlock(output, blockTags)) {
+        output.push("$$", ...displayBlock.body, "$$");
+      }
+      index = displayBlock.closeIndex;
+      continue;
+    }
+    const { tags, nextIndex } = collectFollowingStandaloneDisplayMathTags(lines, displayBlock.closeIndex + 1);
+    const body = appendTagsToDisplayMathBody(displayBlock.body, tags);
+    output.push("$$", ...body, "$$");
+    index = Math.max(displayBlock.closeIndex, nextIndex - 1);
+  }
+  return output.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+function collectRawDisplayMathBlock(lines, startIndex) {
+  const first = String(lines[startIndex] || "").trim();
+  const singleLine = first.match(/^\$\$([\s\S]*?)\$\$$/);
+  if (singleLine && first !== "$$") {
+    return { body: [singleLine[1].trim()], closeIndex: startIndex };
+  }
+  if (first !== "$$") {
+    return null;
+  }
+  const body = [];
+  let index = startIndex + 1;
+  while (index < lines.length && String(lines[index] || "").trim() !== "$$") {
+    body.push(lines[index]);
+    index += 1;
+  }
+  if (index >= lines.length) {
+    return null;
+  }
+  return { body, closeIndex: index };
+}
+
+function collectFollowingStandaloneDisplayMathTags(lines, startIndex) {
+  const tags = [];
+  let index = startIndex;
+  while (index < lines.length) {
+    while (index < lines.length && !String(lines[index] || "").trim()) {
+      index += 1;
+    }
+    const trimmed = String(lines[index] || "").trim();
+    if (isStandaloneLatexTagLine(trimmed)) {
+      tags.push(trimmed);
+      index += 1;
+      continue;
+    }
+    const displayBlock = collectRawDisplayMathBlock(lines, index);
+    if (!displayBlock) {
+      break;
+    }
+    if (displayMathBlockIsEmpty(displayBlock.body)) {
+      index = displayBlock.closeIndex + 1;
+      continue;
+    }
+    const blockTags = displayMathBlockStandaloneTags(displayBlock.body);
+    if (!blockTags.length) {
+      break;
+    }
+    tags.push(...blockTags);
+    index = displayBlock.closeIndex + 1;
+  }
+  return { tags, nextIndex: index };
+}
+
+function displayMathBlockIsEmpty(lines) {
+  return !lines.some((line) => String(line || "").trim());
+}
+
+function displayMathBlockStandaloneTags(lines) {
+  const meaningful = lines.map((line) => String(line || "").trim()).filter(Boolean);
+  return meaningful.length && meaningful.every(isStandaloneLatexTagLine) ? meaningful : [];
+}
+
+function isStandaloneLatexTagLine(line) {
+  return /^\\tag\{[^}]+\}$/.test(String(line || "").trim());
+}
+
+function appendTagsToPreviousDisplayMathBlock(output, tags) {
+  const closeIndex = findPreviousDisplayMathCloseIndex(output);
+  if (closeIndex < 0) {
+    return false;
+  }
+  const openIndex = findPreviousDisplayMathOpenIndex(output, closeIndex);
+  if (openIndex < 0) {
+    return false;
+  }
+  const body = output.slice(openIndex + 1, closeIndex);
+  const nextBody = appendTagsToDisplayMathBody(body, tags);
+  output.splice(openIndex + 1, closeIndex - openIndex - 1, ...nextBody);
+  return true;
+}
+
+function appendTagsToDisplayMathBody(lines, tags) {
+  const normalizedTags = Array.from(new Set((tags || []).map((tag) => String(tag || "").trim()).filter(isStandaloneLatexTagLine)));
+  if (!normalizedTags.length) {
+    return lines;
+  }
+  const body = lines.slice();
+  const lastContentIndex = findLastNonEmptyLineIndex(body);
+  if (lastContentIndex < 0) {
+    return body;
+  }
+  const existing = new Set(displayMathTagLabels(body.join("\n")).map((label) => `\\tag{${label}}`));
+  const missingTags = normalizedTags.filter((tag) => !existing.has(tag));
+  if (!missingTags.length) {
+    return body;
+  }
+  body[lastContentIndex] = `${String(body[lastContentIndex] || "").trimEnd()}${missingTags.join("")}`;
+  return body;
+}
+
+function findLastNonEmptyLineIndex(lines) {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (String(lines[index] || "").trim()) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function findPreviousDisplayMathCloseIndex(lines) {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (String(lines[index] || "").trim() === "$$") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function findPreviousDisplayMathOpenIndex(lines, closeIndex) {
+  for (let index = closeIndex - 1; index >= 0; index -= 1) {
+    if (String(lines[index] || "").trim() === "$$") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function removeEmptyDisplayMathBlocks(markdown) {
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+  const output = [];
+  let inCodeFence = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (isCodeFenceStart(line)) {
+      inCodeFence = !inCodeFence;
+      output.push(line);
+      continue;
+    }
+    if (!inCodeFence && trimmed === "$$") {
+      let closeIndex = index + 1;
+      while (closeIndex < lines.length && !String(lines[closeIndex] || "").trim()) {
+        closeIndex += 1;
+      }
+      if (String(lines[closeIndex] || "").trim() === "$$") {
+        index = closeIndex;
+        continue;
+      }
+    }
+    output.push(line);
+  }
+  return output.join("\n");
+}
+
+function formatLatexDisplayMathLines(lines) {
+  return formatLatexDisplayMathBody(lines.join("\n"))
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function formatLatexDisplayMathBody(body) {
+  const expanded = collapseRedundantLatexDoubleBraces(String(body || ""))
+    .replace(/\r\n?/g, "\n")
+    .replace(/(\\begin\{array\}(?:\{[^}\n]*\})?)/g, "\n$1\n")
+    .replace(/(\\end\{array\})/g, "\n$1\n")
+    .replace(/\\\\(?![A-Za-z])\s*/g, "\\\\\n")
+    .replace(/\n[ \t]*(\\tag\{[^}]+\})/g, "$1")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+  return expanded
+    .split("\n")
+    .map((line) => compactLatexSourceLine(line.trim()))
+    .filter(Boolean)
+    .join("\n");
 }
 
 function compactSpacedLetters(text) {
@@ -4017,11 +4321,11 @@ function hasLatexMathEnvironment(markdown) {
 }
 
 function normalizeDisplayMathForRender(markdown) {
-  const normalized = removeDanglingSingleDollarLines(normalizeEscapedDisplayMathNewlines(markdown));
+  const normalized = removeDanglingSingleDollarLines(normalizeEscapedDisplayMathNewlines(hoistStandaloneDisplayMathTags(markdown)));
   const repaired = repairBrokenDisplayMathDelimiters(normalized);
   const mathNormalized = restoreDroppedDisplayMathDelimiters(repaired, normalizeMathMarkdown(repaired));
   const wrapped = wrapBareDisplayMathBlocks(mathNormalized);
-  return removeDanglingSingleDollarLines(wrapped);
+  return removeEmptyDisplayMathBlocks(removeDanglingSingleDollarLines(hoistStandaloneDisplayMathTags(wrapped)));
 }
 
 function restoreDroppedDisplayMathDelimiters(originalMarkdown, normalizedMarkdown) {
@@ -4863,7 +5167,7 @@ function normalizeVisibleEquationNumberAsLatexTag(markdown) {
     return output;
   }
   const number = match[3].replace(/[()\s]/g, "");
-  return output.replace(trailingNumberPattern, `$1\n\\tag{${number}}$2`);
+  return output.replace(trailingNumberPattern, `$1\\tag{${number}}$2`);
 }
 
 function insertEquationNumberIntoDisplayMath(markdown, equationNumber) {
@@ -4878,11 +5182,11 @@ function insertEquationNumberIntoDisplayMath(markdown, equationNumber) {
   if (last && typeof last.index === "number") {
     const environmentEnd = last[0];
     const afterEnvironment = last.index + environmentEnd.length;
-    return `${output.slice(0, afterEnvironment)}\n\\tag{${number}}${output.slice(afterEnvironment)}`;
+    return `${output.slice(0, afterEnvironment)}\\tag{${number}}${output.slice(afterEnvironment)}`;
   }
   const displayClose = findLastDisplayMathClose(output);
   if (displayClose) {
-    return `${output.slice(0, displayClose.index).trimEnd()}\n\\tag{${number}}\n${output.slice(displayClose.index)}`;
+    return `${output.slice(0, displayClose.index).trimEnd()}\\tag{${number}}\n${output.slice(displayClose.index)}`;
   }
   return `${output.trimEnd()} (${number})`;
 }
@@ -7886,13 +8190,25 @@ function collectDisplayMathBlock(lines, startIndex) {
 
 function renderDisplayMathBlock(lines) {
   const raw = lines.join("\n").trim();
-  const labels = displayMathTagLabels(raw);
-  const mathSource = stripDisplayMathTags(raw);
+  const formattedSource = formatLatexDisplayMathBody(raw);
+  const labels = displayMathTagLabels(formattedSource);
+  const mathSource = stripDisplayMathTags(formattedSource);
   const tagAttribute = labels.length ? ' data-equation-tag="true"' : "";
+  const layoutClass = displayMathVisualLineCount(mathSource) > 1 ? " is-multiline" : " is-singleline";
   const labelHtml = labels.length
     ? `<span class="math-display-equation-tag" aria-label="公式编号">${labels.map((label) => `(${escapeHtml(label)})`).join(" ")}</span>`
     : "";
-  return `<div class="math-display"${tagAttribute}><div class="math-display-formula">$$\n${escapeHtml(mathSource)}\n$$</div>${labelHtml}</div>`;
+  return `<div class="math-display${layoutClass}"${tagAttribute}><div class="math-display-formula">$$\n${escapeHtml(mathSource)}\n$$</div>${labelHtml}</div>`;
+}
+
+function displayMathVisualLineCount(mathSource) {
+  const source = String(mathSource || "")
+    .replace(/\\begin\{[^}]+\}(?:\{[^}]*\})?/g, "")
+    .replace(/\\end\{[^}]+\}/g, "")
+    .trim();
+  const rowBreaks = (source.match(/\\\\(?![A-Za-z])/g) || []).length;
+  const explicitLines = source.split("\n").map((line) => line.trim()).filter(Boolean).length;
+  return Math.max(rowBreaks + 1, explicitLines || 1);
 }
 
 function displayMathTagLabels(markdown) {

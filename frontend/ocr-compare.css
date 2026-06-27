@@ -2171,11 +2171,10 @@ mjx-container[display="true"] {
 }
 
 .math-display {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  column-gap: 18px;
+  position: relative;
+  display: block;
   width: 100%;
+  padding-right: clamp(64px, 10%, 112px);
 }
 
 .math-display-formula {
@@ -2188,12 +2187,22 @@ mjx-container[display="true"] {
 }
 
 .math-display-equation-tag {
-  align-self: end;
-  justify-self: end;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
   color: #111827;
   font-family: "Times New Roman", serif;
   font-size: 0.95em;
+  line-height: 1.2;
   white-space: nowrap;
+  pointer-events: none;
+}
+
+.math-display.is-multiline .math-display-equation-tag {
+  top: auto;
+  bottom: 1.45em;
+  transform: none;
 }
 
 @media (max-width: 980px) {

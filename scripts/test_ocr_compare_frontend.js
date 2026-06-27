@@ -99,7 +99,10 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareCss.includes(".review-needs-correction-nav-group"));
   assert(ocrCompareCss.includes(".review-needs-correction-link"));
   assert(ocrCompareCss.includes(".math-display-equation-tag"));
-  assert(ocrCompareCss.includes("align-items: end"));
+  assert(/\.math-display\s*\{[^}]*position:\s*relative/.test(ocrCompareCss));
+  assert(/\.math-display\s*\{[^}]*padding-right:\s*clamp/.test(ocrCompareCss), "display equation labels should reserve inline room without creating a separate row");
+  assert(/\.math-display-equation-tag\s*\{[^}]*position:\s*absolute/.test(ocrCompareCss), "display equation labels should be positioned inside the formula block");
+  assert(/\.math-display\.is-multiline\s+\.math-display-equation-tag\s*\{[^}]*bottom:\s*1\.45em/.test(ocrCompareCss), "multiline display equation labels should be lifted onto the final formula row");
   assert(ocrCompareCss.includes('.math-display-formula mjx-container[display="true"]'));
   assert(ocrCompareCss.includes(".review-page-block.is-selected"));
   assert(ocrCompareCss.includes(".page-block-hotspot"));
@@ -351,7 +354,7 @@ const singleLineDisplay =
 const singleLineHtml = call(
   `renderMarkdownHtml(normalizeMathMarkdown(${JSON.stringify(singleLineDisplay)}))`,
 );
-assert(singleLineHtml.includes('class="math-display"'), "single-line display math should render as display math");
+assert(singleLineHtml.includes('class="math-display'), "single-line display math should render as display math");
 assert(!singleLineHtml.includes("<p>$$"), "single-line display math should not render as raw paragraph text");
 assert.strictEqual(call("rootHasMathContent({ textContent: 'plain OCR text' })"), false);
 assert.strictEqual(call("rootHasMathContent({ textContent: 'formula $E=mc^2$' })"), true);
@@ -373,7 +376,7 @@ $$`;
   const html = call(`renderBlockContent(${JSON.stringify(userCorrectedMathBlock)}, { kind: "text", blockIndex: "user-corrected-math" })`);
   assert(
     cleaned.includes(
-      "where $\\mathcal{G} = 1 - \\zeta + \\zeta \\left( 1 -2 s_{1} \\right) \\left( 1 -2 s_{2} \\right)$ [see Eq. (10.65)], and",
+      "where $\\mathcal{G} = 1 - \\zeta + \\zeta \\left(1 -2 s_{1} \\right) \\left(1 -2 s_{2} \\right)$ [see Eq. (10.65)], and",
     ),
     "manual corrected inline math sentence should keep prose spacing outside $...$",
   );
@@ -381,16 +384,16 @@ $$`;
   assert(html.includes("<p>where $\\mathcal{G}"), "inline where sentence should render as a paragraph, not a display equation");
   assert(html.includes("where $\\mathcal{G}"), "manual corrected math block should keep a space before inline math");
   assert(html.includes("$ [see Eq. (10.65)], and"), "manual corrected math block should keep a space before equation references");
-  assert(html.includes('class="math-display"'), "manual corrected math block should render display formulas as display blocks");
+  assert(html.includes('class="math-display'), "manual corrected math block should render display formulas as display blocks");
   assert(html.includes("math-display-equation-tag"), "manual corrected math block should expose equation-number labels outside LaTeX");
   assert(html.includes("(11.115)") && html.includes("(11.116)"), "manual corrected math block should show both equation labels");
+  assert(!html.includes("\\\\tag{11.115}") && !html.includes("\\\\tag{11.116}"), "manual corrected math block should strip raw LaTeX tags from visible math source");
   assert(!html.includes("Foracompactbinarysystem"), "manual corrected math block should not show stale collapsed prose");
   assert(!html.includes("where$"), "manual corrected math block should not collapse text into inline math delimiters");
   assert(!html.includes("$[seeEq."), "manual corrected math block should not collapse equation reference spacing");
   assert(!html.includes(")],and"), "manual corrected math block should not collapse punctuation and prose after inline math");
   assert(!html.includes('<div class="math-display-formula">$$\nwhere $'), "inline where sentence should not be collected into the following display math");
   assert(!html.includes("<p>$$"), "manual corrected math block should not render display delimiters as paragraph text");
-  assert(!html.includes("\\\\tag{11.115}") && !html.includes("\\\\tag{11.116}"), "manual corrected math block should strip raw LaTeX tags from visible math source");
 }
 
 {
@@ -552,12 +555,12 @@ assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX tab
 
 const latexArray = "\\begin{array}{cc}\na & b \\\\ c & d\n\\end{array}";
 const arrayHtml = call(`renderMarkdownHtml(normalizeMathMarkdown(${JSON.stringify(latexArray)}))`);
-assert(arrayHtml.includes('class="math-display"'), "bare array environments should render as display math");
+assert(arrayHtml.includes('class="math-display'), "bare array environments should render as display math");
 const wrappedArrayHtml = call(`renderMarkdownHtml(normalizeMathMarkdown(${JSON.stringify(`$$\\n${latexArray}\\n$$`)}))`);
-assert(wrappedArrayHtml.includes('class="math-display"'), "explicitly wrapped array should render as display math");
+assert(wrappedArrayHtml.includes('class="math-display'), "explicitly wrapped array should render as display math");
 
 const explicitArrayFromBlock = call(`renderBlockContent(${JSON.stringify(`$$\\n\\begin{array}{cc}\\n a & b \\\\ c & d \\n\\end{array}\\n$$`)}, { blockIndex: "0", kind: "text" })`);
-assert(explicitArrayFromBlock.includes('class="math-display"'), "array blocks from block content should render in page canvas");
+assert(explicitArrayFromBlock.includes('class="math-display'), "array blocks from block content should render in page canvas");
 
 function readFixture(name, kind) {
   return fs
@@ -1288,7 +1291,7 @@ function assertOcrPatchShape(patch) {
   assert(markdown.includes("\\dot{\\omega}_{\\mathrm{proj}}"), "misclassified prose should keep the LaTeX formula source");
   const html = call(`renderBlockContent(${JSON.stringify(markdown)}, { kind: "text", blockIndex: "misclassified-code" })`);
   assert(!html.includes("<pre><code"), "science prose misclassified as code should not render as a code block");
-  assert(html.includes('class="math-display"'), "the formula line in misclassified prose should render as display math");
+  assert(html.includes('class="math-display'), "the formula line in misclassified prose should render as display math");
 }
 
 {
@@ -1343,7 +1346,7 @@ function assertOcrPatchShape(patch) {
   assert(result.normalized.includes("where $\\mathcal { H } = 1 - \\zeta$ [see Eq. (10.66)]"), "unclosed inline math before equation references should be repaired and reference spacing normalized");
   assert(!result.normalized.includes("$["), "inline math should not be glued to bracketed references");
   assert(!result.normalized.includes("seeEq."), "equation references should keep a space between see and Eq.");
-  assert(result.rendered.includes('class="math-display"'), "display math should still render as display math");
+  assert(result.rendered.includes('class="math-display'), "display math should still render as display math");
   assert(!result.rendered.includes("where$"), "rendered mixed blocks should not keep cramped inline math");
 }
 
@@ -1540,7 +1543,7 @@ function assertOcrPatchShape(patch) {
   assert.strictEqual(result.displayMarkdown, result.editableMarkdown, "page render and editor should share one cleaned correction markdown");
   assert(result.editableMarkdown.includes("For a compact binary system, the waveforms"), "shared correction view should expose cleaned first line");
   assert(result.html.includes("For a compact binary system, the waveforms"), "page block render should use the same cleaned Mathpix markdown as the editor");
-  assert(result.html.includes('class="math-display"'), "cleaned Mathpix draft should still render display equations");
+  assert(result.html.includes('class="math-display'), "cleaned Mathpix draft should still render display equations");
   assert(!result.html.includes("Foracompactbinarysystem"), "raw collapsed Mathpix draft should not leak into block render or editor");
   assert(!result.html.includes("thewaveforms"), "raw collapsed prose tokens should not leak into block render or editor");
   assert(!result.html.includes("where$"), "raw inline math boundaries should not leak into block render or editor");
@@ -1579,7 +1582,7 @@ function assertOcrPatchShape(patch) {
   assert(result.liveDraft.markdown.includes("For a compact binary system, the waveforms"), "manual editor input should be stored as the live draft for rerenders");
   assert(result.html.includes("For a compact binary system, the waveforms"), "live preview should use the textarea markdown, not stale draft state");
   assert(result.rerendered.includes("For a compact binary system, the waveforms"), "rerendered page canvas should prefer live editor draft over stale Mathpix draft");
-  assert(result.html.includes("class=\"math-display\""), "live preview should keep display math rendering wrappers");
+  assert(result.html.includes("class=\"math-display"), "live preview should keep display math rendering wrappers");
   assert(!result.html.includes("Foracompactbinarysystem"), "live preview should not keep stale collapsed first-line text");
   assert(!result.rerendered.includes("Foracompactbinarysystem"), "rerendered page canvas should not restore stale collapsed text");
   assert(!result.html.includes("thewaveforms"), "live preview should not keep stale collapsed waveforms text");
@@ -4798,7 +4801,7 @@ function setupPreviewBookExpression(pages) {
   assert(canvasResult.canvas.includes('data-review-page-block="1:0"'), "plain paragraph block should be present in the full-page canvas");
   assert(canvasResult.canvas.includes('data-review-page-block="1:1"'), "formula block should be present in the full-page canvas");
   assert(canvasResult.canvas.includes('data-review-page-block="1:2"'), "image block without bbox should still be present in the full-page canvas");
-  assert(canvasResult.canvas.includes('class="math-display"'), "formula block should render as display math inside the page canvas");
+  assert(canvasResult.canvas.includes('class="math-display'), "formula block should render as display math inside the page canvas");
   assert(canvasResult.canvas.includes("is-selected"), "selected block should keep a visible selection state");
   assert(!canvasResult.canvas.includes("selected-block-toolbar"), "selected block should not render the old correction toolbar in page-comparison mode");
   assert(!canvasResult.canvas.includes('data-risk-mathpix="1"'), "selected block should not show Mathpix correction during block comparison");
@@ -5205,36 +5208,66 @@ assert(inlineImageRenderHtml.includes("See for Fig. 2.2 Caption"), "inline image
 const mixedAlignedRenderHtml = call(`renderBlockContent(${JSON.stringify(
   "For weak interactions, the result is\n\\begin{aligned}\nE &= 2.2 \\\\times 10^{-8} \\\\\\\\\ng &= 0.295\n\\end{aligned}\nwhere N=A-Z.",
 )}, { kind: "text", blockIndex: "last" })`);
-assert(mixedAlignedRenderHtml.includes('class="math-display"'), "bare aligned environment inside a text block should render as display math");
+assert(mixedAlignedRenderHtml.includes('class="math-display'), "bare aligned environment inside a text block should render as display math");
 assert(!mixedAlignedRenderHtml.includes("<p>For weak interactions, the result is<br>\\\\begin{aligned}"), "aligned source must not remain inside the prose paragraph");
 
 const algorithmTaggedMathRenderHtml = call(`renderBlockContent(${JSON.stringify(
   "For weak interactions, while the parity nonconserving part is negligible\n\\begin{aligned}\n\\frac{E^{\\mathrm{W}}}{mc^2} &= 2.2 \\times 10^{-8} g(N,Z) \\\\\\\\\ng(N,Z) &= 0.295 \\left[ \\frac{(N-Z)^2}{2NZ} \\right]\n\\end{aligned}\nwhere N=A-Z.",
 )}, { kind: "algorithm", blockIndex: "weak" })`);
-assert(algorithmTaggedMathRenderHtml.includes('class="math-display"'), "algorithm-tagged OCR blocks containing LaTeX environments should still render as math");
+assert(algorithmTaggedMathRenderHtml.includes('class="math-display'), "algorithm-tagged OCR blocks containing LaTeX environments should still render as math");
 assert(!algorithmTaggedMathRenderHtml.includes("algorithm-block"), "algorithm-tagged math prose should not render as an algorithm code block");
 
 const danglingDollarMathRenderHtml = call(`renderBlockContent(${JSON.stringify(
   "For weak interactions, the result is\n$\n\\begin{aligned}\nE &= mc^2\n\\end{aligned}\nwhere N=A-Z.",
 )}, { kind: "text", blockIndex: "dangling-dollar" })`);
-assert(danglingDollarMathRenderHtml.includes('class="math-display"'), "formula blocks with a dangling single-dollar line should still render as math");
+assert(danglingDollarMathRenderHtml.includes('class="math-display'), "formula blocks with a dangling single-dollar line should still render as math");
 assert(!danglingDollarMathRenderHtml.includes("<p>$</p>"), "dangling single-dollar lines should not render before display math");
 assert(!/>\\s*\\$\\s*</.test(danglingDollarMathRenderHtml), "dangling dollar delimiters should not remain as visible text nodes");
 
 const escapedDanglingDollarMathRenderHtml = call(`renderBlockContent(${JSON.stringify(
   "For weak interactions, the result is\n\\$\n$$\n\\begin{aligned}\nE &= mc^2\n\\end{aligned}\n$$\nwhere N=A-Z.",
 )}, { kind: "text", blockIndex: "escaped-dangling-dollar" })`);
-assert(escapedDanglingDollarMathRenderHtml.includes('class="math-display"'), "escaped dangling dollar lines before display math should still render as math");
+assert(escapedDanglingDollarMathRenderHtml.includes('class="math-display'), "escaped dangling dollar lines before display math should still render as math");
 assert(!/>\\s*\\$\\s*</.test(escapedDanglingDollarMathRenderHtml), "escaped dangling dollar delimiters should not remain as visible text nodes");
 
 const compactedMathpixSource = call(`cleanMathpixEditableMarkdown(${JSON.stringify(
   "$$\n\\begin{array} { r l r } { { \\frac { d P _ { \\mathrm { T } } ^ { 0 } } { d t } = - \\operatorname* { l i m } _ { R \\to \\infty } \\int \\tilde { \\tau } ^ { 0 } d ^ { 2 } S _ { j } } } \\\\ & \\end{array}\n$$",
 )})`);
 assert(compactedMathpixSource.includes("\\begin{array}{rlr}"), "editable Mathpix source should compact spaced array column specs");
+assert(/^\$\$\n\\begin\{array\}\{rlr\}\n/m.test(compactedMathpixSource), "editable Mathpix source should put array begin on its own line");
+assert(/\\\\\n&\n\\end\{array\}\n\$\$$/m.test(compactedMathpixSource), "editable Mathpix source should line-break after LaTeX row separators and put array end on its own line");
 assert(compactedMathpixSource.includes("\\frac{d P_{\\mathrm{T}}^{0}}{d t}"), "editable Mathpix source should compact command/braces/subscript spacing");
 assert(compactedMathpixSource.includes("\\operatorname*{lim}_{R \\to \\infty}"), "editable Mathpix source should compact spaced operator names");
 assert(!compactedMathpixSource.includes("\\frac {"), "editable Mathpix source should not keep spaced command braces");
 assert(!compactedMathpixSource.includes("\\mathrm {"), "editable Mathpix source should not keep spaced roman command braces");
+assert(!compactedMathpixSource.includes("{{\\frac"), "editable Mathpix source should remove redundant whole-expression double braces");
+
+const hoistedStandaloneTagSource = call(`cleanMathpixEditableMarkdown(${JSON.stringify(
+  "$$\n\\begin{array}{l}\nS_{-} \\equiv \\mathcal{G}^{-1 / 2} \\big( s_{2} - s_{1} \\big), \\\\\nS_{+} \\equiv \\mathcal{G}^{-1 / 2} \\big( 1 - s_{1} - s_{2} \\big).\n\\end{array}\n$$\n\\tag{11.118}\n$$\n$$",
+)})`);
+assert(hoistedStandaloneTagSource.includes("\\end{array}\\tag{11.118}"), "standalone equation tags after display math should be hoisted into the previous formula block");
+assert(!/\$\$\s*\\tag\{11\.118\}/.test(hoistedStandaloneTagSource), "standalone equation tags should not remain outside display math");
+assert(!/\$\$\s*\$\$/.test(hoistedStandaloneTagSource), "empty display math blocks after hoisted tags should be removed");
+
+const hoistedStandaloneTagRender = call(`renderBlockContent(${JSON.stringify(
+  "$$\n\\begin{array}{l}\nS_{-} \\equiv \\mathcal{G}^{-1 / 2} \\big( s_{2} - s_{1} \\big), \\\\\nS_{+} \\equiv \\mathcal{G}^{-1 / 2} \\big( 1 - s_{1} - s_{2} \\big).\n\\end{array}\n$$\n\\tag{11.118}\n$$\n$$",
+)}, { kind: "text", blockIndex: "hoisted-standalone-tag" })`);
+assert.strictEqual((hoistedStandaloneTagRender.match(/<div class="math-display(?:\s|")/g) || []).length, 1, "hoisted standalone tags should render as one display math block");
+assert(hoistedStandaloneTagRender.includes("(11.118)"), "hoisted standalone tags should remain visible as equation labels");
+assert(!hoistedStandaloneTagRender.includes("\\\\tag{11.118}"), "hoisted standalone tags should not leak raw LaTeX tag text");
+
+const hoistedTagOnlyDisplaySource = call(`cleanMathpixEditableMarkdown(${JSON.stringify(
+  "$$\nE &= mc^2\n$$\n\n$$\n\\tag{2.14}\n$$\n\n$$\n$$",
+)})`);
+assert(hoistedTagOnlyDisplaySource.includes("E &= mc^2\\tag{2.14}"), "tag-only display math blocks should be merged into the previous formula");
+assert(!/\$\$\s*\\tag\{2\.14\}\s*\$\$/.test(hoistedTagOnlyDisplaySource), "tag-only display math blocks should not remain as standalone formulas");
+assert(!/\$\$\s*\$\$/.test(hoistedTagOnlyDisplaySource), "empty display math blocks after tag-only formulas should be removed");
+
+const hoistedSingleLineTagOnlyDisplaySource = call(`cleanMathpixEditableMarkdown(${JSON.stringify(
+  "$$\nA=B\n$$\n$$\\tag{2.15}$$\n$$\n$$",
+)})`);
+assert(hoistedSingleLineTagOnlyDisplaySource.includes("A=B\\tag{2.15}"), "single-line tag-only display math blocks should be merged into the previous formula");
+assert(!hoistedSingleLineTagOnlyDisplaySource.includes("$$\\tag{2.15}$$"), "single-line tag-only display math should not remain standalone");
 
 const compactedMathpixProseSource = call(`cleanMathpixEditableMarkdown(${JSON.stringify(
   "Assuming the1 \\\\sigma$bound of $| \\\\eta | < 2 \\\\times 10 ^{- 13}$ from the latest summary of Eöt-Wash experiments, we show the various $\\\\eta^{A}$ parameters.",
@@ -5263,14 +5296,17 @@ assert(!numberedAlignedPatch.normalizedText.trimEnd().endsWith("(2.12)"), "equat
 const visibleNumberedAlignedPatch = call(`normalizeVisibleEquationNumberAsLatexTag("For weak interactions\\n\\\\begin{aligned}\\nE &= mc^2\\n\\\\end{aligned}\\n(2.12)")`);
 assert(visibleNumberedAlignedPatch.includes("\\tag{2.12}"), "Mathpix visible equation number should be normalized into a LaTeX tag");
 assert(!visibleNumberedAlignedPatch.trimEnd().endsWith("(2.12)"), "normalized visible equation number should be removed from trailing prose");
+assert(!visibleNumberedAlignedPatch.includes("\n\\tag{2.12}"), "normalized visible equation number should not place the tag on its own line");
 
 const numberedDollarDisplayPatch = call(`insertEquationNumberIntoDisplayMath("$$\\nE^S=-15.75A\\n$$", "(2.8)")`);
 assert(numberedDollarDisplayPatch.includes("\\tag{2.8}"), "display math without an explicit environment should receive a LaTeX tag");
 assert(!numberedDollarDisplayPatch.trimEnd().endsWith("(2.8)"), "display math numbers should not be appended as prose");
+assert(numberedDollarDisplayPatch.includes("E^S=-15.75A\\tag{2.8}"), "display math tags should stay on the formula line instead of a new line");
 
 const renderedNumberedDollarDisplay = call(`renderBlockContent("$$\\nE^S=-15.75A\\n\\\\tag{2.8}\\n$$", { kind: "interline_equation", blockIndex: "0" })`);
 assert(renderedNumberedDollarDisplay.includes("math-display-equation-tag"), "rendered display math should expose a visible equation-number tag");
-assert(renderedNumberedDollarDisplay.includes('class="math-display"'), "numbered display math should keep the stable display-math class");
+assert(renderedNumberedDollarDisplay.includes('class="math-display'), "numbered display math should keep the stable display-math class");
+assert(renderedNumberedDollarDisplay.includes("is-singleline"), "single-line display math should get same-line equation label positioning");
 assert(renderedNumberedDollarDisplay.includes('data-equation-tag="true"'), "numbered display math should expose an equation-tag layout marker");
 assert(renderedNumberedDollarDisplay.includes("(2.8)"), "rendered display math should show the equation number");
 assert(!renderedNumberedDollarDisplay.includes("\\\\tag{2.8}"), "rendered display math should not rely on raw LaTeX tag visibility");
@@ -5278,6 +5314,11 @@ assert(!renderedNumberedDollarDisplay.includes("\\\\tag{2.8}"), "rendered displa
 const renderedNumberedAlignedDisplay = call(`renderBlockContent("\\\\begin{aligned}\\nE &= mc^2\\n\\\\tag{2.12}\\n\\\\end{aligned}", { kind: "text", blockIndex: "aligned-numbered" })`);
 assert(renderedNumberedAlignedDisplay.includes("math-display-equation-tag"), "rendered aligned math should expose a visible equation-number tag");
 assert(renderedNumberedAlignedDisplay.includes("(2.12)"), "rendered aligned math should show the equation number");
+assert(renderedNumberedAlignedDisplay.includes("is-singleline"), "single-row aligned math should get same-line equation label positioning");
+
+const renderedNumberedMultilineDisplay = call(`renderBlockContent("\\\\begin{aligned}\\na &= b \\\\\\\\\\nc &= d\\\\tag{2.13}\\n\\\\end{aligned}", { kind: "text", blockIndex: "aligned-multiline-numbered" })`);
+assert(renderedNumberedMultilineDisplay.includes("is-multiline"), "multi-row aligned math should position the label near the final formula row");
+assert(renderedNumberedMultilineDisplay.includes("(2.13)"), "multi-row aligned math should show the equation number");
 
 const preservedFromPriorPatch = JSON.parse(
   call(`(() => {
