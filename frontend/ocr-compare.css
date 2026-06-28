@@ -126,6 +126,19 @@ label[role="button"] {
   clip-path: inset(50%);
 }
 
+.file-input-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 0;
+}
+
 .primary-button,
 .secondary-button,
 .text-button {
@@ -174,6 +187,7 @@ label[role="button"] {
 }
 
 .upload-button {
+  position: relative;
   min-height: 38px;
   display: inline-flex;
   align-items: center;
@@ -183,6 +197,11 @@ label[role="button"] {
   border-radius: 8px;
   font-weight: 800;
   white-space: nowrap;
+  overflow: hidden;
+}
+
+.upload-button > span {
+  pointer-events: none;
 }
 
 .upload-button:focus-visible {

@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260628-upload-label-mathjax";
+const OCR_COMPARE_BUILD_ID = "20260628-direct-file-input-local-mathjax";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -53,6 +53,7 @@ const PDF_IMAGE_ZOOM_LEVELS = [1, 1.25, 1.5, 1.75, 2, 2.5];
 const REVIEW_FONT_SCALE_LEVELS = [0.9, 1, 1.1, 1.2, 1.35, 1.5];
 const PDF_UPLOAD_CHUNK_SIZE = 1024 * 1024;
 const MATHJAX_SCRIPT_URLS = [
+  "./vendor/mathjax/tex-chtml.js",
   "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js",
   "https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-chtml.min.js",
   "https://unpkg.com/mathjax@3/es5/tex-chtml.js",

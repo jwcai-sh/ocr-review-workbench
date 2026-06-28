@@ -11,6 +11,8 @@ const source = fs
 const patchBrowserSource = fs.readFileSync("frontend/ocr-core/patch/ocrPatch.browser.js", "utf8");
 const ocrCompareHtml = fs.readFileSync("frontend/ocr-compare.html", "utf8");
 const ocrCompareCss = fs.readFileSync("frontend/ocr-compare.css", "utf8");
+const localMathJaxScript = fs.readFileSync("frontend/vendor/mathjax/tex-chtml.js", "utf8");
+const localMathJaxBoldsymbol = fs.readFileSync("frontend/vendor/mathjax/input/tex/extensions/boldsymbol.js", "utf8");
 const { hashBlockText: nodeHashBlockText } = require(path.resolve("frontend/ocr-core/patch/blockHasher"));
 const { createOcrPatch: nodeCreateOcrPatch } = require(path.resolve("frontend/ocr-core/patch/patchGenerator"));
 
@@ -86,8 +88,9 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareCss.includes(".control-column-pdf"));
   assert(ocrCompareCss.includes(".upload-button.primary-button"));
   assert(ocrCompareCss.includes(".upload-all-button"));
-  assert(!/\.hidden-input\s*\{[^}]*display:\s*none/.test(ocrCompareCss), "file inputs must stay label-activatable, not display:none");
-  assert(/\.hidden-input\s*\{[^}]*opacity:\s*0/.test(ocrCompareCss), "file inputs should be visually hidden while remaining activatable by labels");
+  assert(!/\.file-input-overlay\s*\{[^}]*display:\s*none/.test(ocrCompareCss), "file inputs must remain directly clickable, not display:none");
+  assert(/\.file-input-overlay\s*\{[^}]*position:\s*absolute/.test(ocrCompareCss), "file inputs should cover their upload buttons");
+  assert(/\.file-input-overlay\s*\{[^}]*opacity:\s*0/.test(ocrCompareCss), "file inputs should be transparent while remaining clickable");
   assert(ocrCompareCss.includes('label[role="button"]'));
   assert(ocrCompareCss.includes(".upload-button:focus-visible"));
   assert(ocrCompareCss.includes("font-size: calc(17px * var(--review-font-scale, 1));"));
@@ -149,14 +152,19 @@ function runOcrCompareInContext(testContext) {
   assert(!ocrCompareHtml.includes("cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"), "MathJax CDN should be lazy-loaded by ocr-compare.js");
   assert(ocrCompareHtml.includes('load: ["[tex]/boldsymbol"]'), "MathJax should load boldsymbol for vector formulas converted from pmb");
   assert(ocrCompareHtml.includes('packages: { "[+]": ["boldsymbol"] }'), "MathJax should enable the boldsymbol TeX package");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-upload-label-mathjax"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-upload-label-mathjax"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-upload-label-mathjax"'));
+  assert(ocrCompareHtml.includes('paths: {'), "MathJax config should define a local component base path");
+  assert(ocrCompareHtml.includes('mathjax: "./vendor/mathjax"'), "MathJax boldsymbol extension should be served locally");
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-direct-file-input-local-mathjax"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-direct-file-input-local-mathjax"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-direct-file-input-local-mathjax"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
   assert(source.includes("ensureMathJaxLoaded().catch((error) => reportMathJaxError(error));"));
   assert(source.includes("MATHJAX_SCRIPT_URLS"), "MathJax should have fallback script sources");
+  assert(source.includes('"./vendor/mathjax/tex-chtml.js"'), "MathJax should prefer the local bundled component before external CDNs");
+  assert(localMathJaxScript.includes("MathJax.loader"), "local MathJax component should be present in the frontend bundle");
+  assert(localMathJaxBoldsymbol.includes("boldsymbol"), "local MathJax boldsymbol extension should be present in the frontend bundle");
   assert(source.includes("MATHJAX_LOAD_TIMEOUT_MS"), "MathJax loading should time out instead of leaving raw TeX forever");
   assert(source.includes("loadMathJaxScriptFromFallbacks"), "MathJax loader should try fallback CDNs");
   assert(ocrCompareHtml.includes("<div>校对工作台</div>"));
@@ -283,9 +291,9 @@ function runOcrCompareInContext(testContext) {
   assert.strictEqual(pickerResult.opened, true);
   assert.strictEqual(pickerResult.value, "", "file input must reset so selecting the same file fires change again");
   assert.strictEqual(pickerResult.missing, false);
-  assert(ocrCompareHtml.includes('for="pdfInput"'), "PDF upload should use native label activation instead of JS-only click");
-  assert(ocrCompareHtml.includes('for="requiredFilesInput"'), "one-click upload should use native label activation instead of JS-only click");
-  assert(source.includes("bindNativeFilePickerLabel"), "file picker labels should prepare state without relying on JS click for mouse users");
+  assert(ocrCompareHtml.includes('id="pdfInput" class="file-input-overlay"'), "PDF upload should expose a real clickable file input over the button");
+  assert(ocrCompareHtml.includes('id="requiredFilesInput" class="file-input-overlay"'), "one-click upload should expose a real clickable multi-file input over the button");
+  assert(source.includes("bindNativeFilePickerLabel"), "file picker labels should prepare state before the browser file picker opens");
   assert(source.includes('setStatus("上传 PDF", "busy"'));
   assert(source.includes('setStatus("渲染 PDF", "busy", file.name);'));
   assert(source.includes('setStatus("读取 MinerU", "busy", file.name);'));
