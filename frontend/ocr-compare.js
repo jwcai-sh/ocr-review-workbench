@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260628-science-inline-font";
+const OCR_COMPARE_BUILD_ID = "20260628-science-html-symbols";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -4470,9 +4470,7 @@ function normalizeScientificUnicodeMathForRender(markdown) {
 }
 
 function normalizeScientificUnicodeMathInTextLine(line) {
-  return replaceOutsideInlineMathSpans(String(line || ""), (segment) =>
-    normalizeGreekMathTextTokens(normalizeScientificPowerTextTokens(segment)),
-  );
+  return String(line || "");
 }
 
 function replaceOutsideInlineMathSpans(text, transform) {
@@ -9973,11 +9971,58 @@ function renderInlineTextHtml(text) {
         return "";
       }
       if (/^(\$[^$\n]*\$|\\\([\s\S]*?\\\))$/.test(part)) {
-        return escapeHtml(part);
+        const simpleScienceHtml = renderSimpleScienceMathSpanHtml(part);
+        return simpleScienceHtml || escapeHtml(part);
       }
       return renderSimpleScienceTextHtml(part);
     })
     .join("");
+}
+
+function renderSimpleScienceMathSpanHtml(mathSpan) {
+  const raw = String(mathSpan || "");
+  const body = raw.startsWith("$")
+    ? raw.slice(1, -1)
+    : raw.startsWith("\\(") && raw.endsWith("\\)")
+      ? raw.slice(2, -2)
+      : "";
+  if (!body || !isSimpleScienceMathBody(body)) {
+    return "";
+  }
+  const html = renderSimpleScienceTextHtml(latexSimpleScienceBodyToText(body));
+  return /science-inline-symbol|science-power/.test(html) ? html : "";
+}
+
+function isSimpleScienceMathBody(body) {
+  const text = String(body || "").trim();
+  if (!text || /\\(?:frac|sum|int|sqrt|begin|left|right|boldsymbol|mathcal)\b/.test(text)) {
+    return false;
+  }
+  return /\\(?:Delta|delta|alpha|beta|gamma|mu|nu|rho|sigma|omega|Omega|Phi)\b|[Α-Ωα-ωµμ]|(?:^|[^A-Za-z])(?:[A-Za-z]_\{?[A-Za-z]{1,4}\}?|10\s*\^)/.test(
+    text,
+  );
+}
+
+function latexSimpleScienceBodyToText(body) {
+  return String(body || "")
+    .replace(/\\Delta\b/g, "Δ")
+    .replace(/\\delta\b/g, "δ")
+    .replace(/\\alpha\b/g, "α")
+    .replace(/\\beta\b/g, "β")
+    .replace(/\\gamma\b/g, "γ")
+    .replace(/\\mu\b/g, "μ")
+    .replace(/\\nu\b/g, "ν")
+    .replace(/\\rho\b/g, "ρ")
+    .replace(/\\sigma\b/g, "σ")
+    .replace(/\\omega\b/g, "ω")
+    .replace(/\\Omega\b/g, "Ω")
+    .replace(/\\Phi\b/g, "Φ")
+    .replace(/_\{\s*\\(?:rm|mathrm)\s*\{?([A-Za-z]{1,4})\}?\s*\}/g, "_$1")
+    .replace(/_\{\s*([A-Za-z]{1,4})\s*\}/g, "_$1")
+    .replace(/\\mathrm\{\s*yr\s*\}/gi, "yr")
+    .replace(/\\times\b/g, "×")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function renderSimpleScienceTextHtml(text) {
@@ -9988,6 +10033,17 @@ function renderSimpleScienceTextHtml(text) {
     return marker;
   };
   const withMarkers = String(text || "")
+    .replace(
+      /((?:\d+(?:\.\d+)?\s*[×x]\s*)?10\s*(?:\^\s*\{?\s*([−-]?\d+)\s*\}?|([−-]\d+)))/g,
+      (_match, _token, bracedExponent, plainExponent) => markerFor(sciencePowerHtml("10", bracedExponent || plainExponent, _token)),
+    )
+    .replace(/yr\s*(?:\^\s*\{?\s*([−-]?\d+)\s*\}?|([−-]\d+))/gi, (_match, bracedExponent, plainExponent) =>
+      markerFor(`<span class="science-power">yr${scienceSupHtml(bracedExponent || plainExponent)}</span>`),
+    )
+    .replace(
+      /(^|[^\p{L}\p{N}\\$])((?:[Δδ])?[Α-Ωα-ωµμ]\u0307?\s*_\s*\{?[A-Za-z]{1,4}\}?\s*\/\s*[Α-Ωα-ωµμ]\u0307?\s*_\s*\{?[A-Za-z]{1,4}\}?)/gu,
+      (_match, prefix, ratio) => `${prefix}${markerFor(scienceRatioHtml(ratio))}`,
+    )
     .replace(/\b([A-Za-z])_([A-Za-z]{1,3})\/([A-Za-z])_([A-Za-z]{1,3})\b/g, (_match, leftBase, leftSub, rightBase, rightSub) =>
       markerFor(`${scienceInlineSymbolHtml(leftBase, leftSub)}/${scienceInlineSymbolHtml(rightBase, rightSub)}`),
     )
@@ -10001,10 +10057,37 @@ function renderSimpleScienceTextHtml(text) {
   return escapeHtml(withMarkers).replace(/\uE000(\d+)\uE001/g, (_match, index) => replacements[Number(index)] || "");
 }
 
+function scienceRatioHtml(ratio) {
+  return String(ratio || "")
+    .split("/")
+    .map((part) => {
+      const parsed = parseScienceSymbolText(part);
+      return parsed ? scienceInlineSymbolHtml(parsed.base, parsed.suffix) : escapeHtml(part.trim());
+    })
+    .join("/");
+}
+
+function parseScienceSymbolText(text) {
+  const match = String(text || "")
+    .trim()
+    .match(/^((?:[Δδ])?[Α-Ωα-ωµμ]\u0307?|[A-Za-z])\s*_\s*\{?([A-Za-z]{1,4})\}?$/u);
+  return match ? { base: match[1], suffix: match[2] } : null;
+}
+
 function scienceInlineSymbolHtml(base, suffix = "") {
   const safeBase = escapeHtml(base);
   const safeSuffix = escapeHtml(suffix);
   return `<span class="science-inline-symbol">${safeBase}${safeSuffix ? `<sub>${safeSuffix}</sub>` : ""}</span>`;
+}
+
+function sciencePowerHtml(base, exponent, token = "") {
+  const prefixMatch = String(token || "").match(/^(\d+(?:\.\d+)?\s*[×x]\s*)10/);
+  const prefix = prefixMatch ? escapeHtml(prefixMatch[1].replace(/\s*x\s*/i, " × ").replace(/\s*×\s*/g, " × ")) : "";
+  return `<span class="science-power">${prefix}${escapeHtml(base)}${scienceSupHtml(exponent)}</span>`;
+}
+
+function scienceSupHtml(exponent) {
+  return `<sup>${escapeHtml(String(exponent || "").replace("−", "-").trim())}</sup>`;
 }
 
 function normalizeRenderedParagraphText(text) {

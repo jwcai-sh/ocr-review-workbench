@@ -1995,15 +1995,24 @@ label[role="button"] {
   margin-bottom: 0;
 }
 
-.science-inline-symbol {
+.science-inline-symbol,
+.science-power {
   font: inherit;
   white-space: nowrap;
 }
 
-.science-inline-symbol sub {
+.science-inline-symbol sub,
+.science-power sup {
   font-size: 0.68em;
   line-height: 0;
+}
+
+.science-inline-symbol sub {
   vertical-align: -0.28em;
+}
+
+.science-power sup {
+  vertical-align: 0.48em;
 }
 
 .markdown-body ul,

@@ -156,10 +156,11 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('packages: { "[+]": ["boldsymbol"] }'), "MathJax should enable the boldsymbol TeX package");
   assert(ocrCompareHtml.includes('paths: {'), "MathJax config should define a local component base path");
   assert(ocrCompareHtml.includes('mathjax: "./vendor/mathjax"'), "MathJax boldsymbol extension should be served locally");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-science-inline-font"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-science-inline-font"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-science-inline-font"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-science-html-symbols"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-science-html-symbols"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-science-html-symbols"'));
   assert(ocrCompareCss.includes(".science-inline-symbol"));
+  assert(ocrCompareCss.includes(".science-power"));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
@@ -1593,17 +1594,20 @@ function assertOcrPatchShape(patch) {
 {
   const scientificText = "The Webb group reported Δα_EM/α_EM = (-0.72 ± 0.18) x 10^{-5} and a linear drift of 6.4 x 10^{-16}yr^{-1}.";
   const rendered = call(`renderBlockContent(${JSON.stringify(scientificText)}, { kind: "text", blockIndex: "scientific-symbols" })`);
-  assert(rendered.includes("$\\Delta\\alpha_{\\rm EM}/\\alpha_{\\rm EM}$"), "rendered scientific prose should wrap Greek ratio symbols for MathJax");
-  assert(rendered.includes("$6.4 \\times 10^{-16}\\mathrm{yr}^{-1}$"), "rendered scientific prose should wrap scientific power units for MathJax");
+  assert(rendered.includes('<span class="science-inline-symbol">Δα<sub>EM</sub></span>/<span class="science-inline-symbol">α<sub>EM</sub></span>'), "rendered scientific prose should use body-font HTML for Greek ratios");
+  assert(rendered.includes('<span class="science-power">10<sup>-5</sup></span>'), "rendered scientific prose should use body-font HTML superscripts for powers");
+  assert(rendered.includes('<span class="science-power">6.4 × 10<sup>-16</sup></span><span class="science-power">yr<sup>-1</sup></span>'), "rendered scientific prose should use body-font HTML for scientific power units");
+  assert(!rendered.includes("$\\Delta\\alpha"), "simple scientific ratios should not be sent to MathJax");
 }
 
 {
-  const scientificSymbolsText = "structure constant α_EM, the weak interaction constant α_W, the electron-proton mass ratio m_e/m_p or the proton gyromagnetic ratio g_p, for example";
+  const scientificSymbolsText = "structure constant α_EM, the weak interaction constant α_W, the electron-proton mass ratio m_e/m_p or the proton gyromagnetic ratio g_p, for example, then a limit on g_EM follows";
   const rendered = call(`renderBlockContent(${JSON.stringify(scientificSymbolsText)}, { kind: "text", blockIndex: "science-inline-font" })`);
   assert(rendered.includes('<span class="science-inline-symbol">α<sub>EM</sub></span>'), "standalone Greek scientific constants should use body-font HTML subscripts");
   assert(rendered.includes('<span class="science-inline-symbol">α<sub>W</sub></span>'), "single-letter Greek subscripts should use body-font HTML subscripts");
   assert(rendered.includes('<span class="science-inline-symbol">m<sub>e</sub></span>/<span class="science-inline-symbol">m<sub>p</sub></span>'), "ASCII scientific ratios should use body-font HTML subscripts");
   assert(rendered.includes('<span class="science-inline-symbol">g<sub>p</sub></span>'), "single ASCII scientific constants should use body-font HTML subscripts");
+  assert(rendered.includes('<span class="science-inline-symbol">g<sub>EM</sub></span>'), "ASCII constants with uppercase subscripts should use body-font HTML subscripts");
   assert(!rendered.includes("$\\alpha_{\\rm EM}$"), "standalone simple symbols should not need MathJax font rendering");
 }
 
