@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260628-chunked-pdf-upload";
+const OCR_COMPARE_BUILD_ID = "20260628-file-input-events";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -80,6 +80,7 @@ let renderCurrentPageRunId = 0;
 let pagePrefetchTimer = null;
 let liveReviewPreviewTimer = null;
 let liveReviewPreviewRunId = 0;
+const handledFileInputSignatures = new Map();
 const pendingPagePreviewRequests = new Map();
 const pendingMathTypesetRoots = new Set();
 let mathTypesetTimer = null;
@@ -373,16 +374,16 @@ function initialize() {
   restoreColumnWidths();
   restoreMiddleColumnCollapsed();
   applyMiddleColumnCollapsedState();
-  els.pickPdfButton.addEventListener("click", () => openFilePicker(els.pdfInput));
-  els.pickMineruButton.addEventListener("click", () => openFilePicker(els.mineruInput));
-  els.pickContentListButton.addEventListener("click", () => openFilePicker(els.contentListInput));
-  els.pickRequiredFilesButton?.addEventListener("click", () => openFilePicker(els.requiredFilesInput));
+  els.pickPdfButton.addEventListener("click", () => openFilePicker(els.pdfInput, "等待选择 PDF"));
+  els.pickMineruButton.addEventListener("click", () => openFilePicker(els.mineruInput, "等待选择 middle.json"));
+  els.pickContentListButton.addEventListener("click", () => openFilePicker(els.contentListInput, "等待选择 content_list"));
+  els.pickRequiredFilesButton?.addEventListener("click", () => openFilePicker(els.requiredFilesInput, "等待选择所需文件"));
   els.previewAcceptedBookButton?.addEventListener("click", toggleAcceptedBookPreview);
   els.downloadAcceptedCorrectedButton?.addEventListener("click", downloadAcceptedCorrectedFromTop);
-  els.pdfInput.addEventListener("change", handlePdfChange);
-  els.mineruInput.addEventListener("change", handleMineruChange);
-  els.contentListInput.addEventListener("change", handleContentListChange);
-  els.requiredFilesInput?.addEventListener("change", handleRequiredFilesChange);
+  bindFileInputEvents(els.pdfInput, handlePdfChange, "pdfInput");
+  bindFileInputEvents(els.mineruInput, handleMineruChange, "mineruInput");
+  bindFileInputEvents(els.contentListInput, handleContentListChange, "contentListInput");
+  bindFileInputEvents(els.requiredFilesInput, handleRequiredFilesChange, "requiredFilesInput");
   document.addEventListener("pointerdown", handleColumnResizeStart);
   window.addEventListener("resize", schedulePdfFocusSync);
   window.addEventListener("mathjax-ready", () => typesetMath(els.pageList));
@@ -406,13 +407,50 @@ async function refreshRuntimeCapabilities() {
   }
 }
 
-function openFilePicker(input) {
+function openFilePicker(input, waitingLabel = "") {
   if (!input) {
     return false;
+  }
+  if (waitingLabel) {
+    setStatus(waitingLabel, "busy", "请选择文件");
+  }
+  const key = input.dataset?.fileInputKey || "";
+  if (key) {
+    handledFileInputSignatures.delete(key);
   }
   input.value = "";
   input.click();
   return true;
+}
+
+function bindFileInputEvents(input, handler, key) {
+  if (!input || typeof handler !== "function") {
+    return;
+  }
+  input.dataset.fileInputKey = key;
+  const run = () => {
+    if (shouldSkipDuplicateFileInputEvent(input, key)) {
+      return;
+    }
+    handler();
+  };
+  input.addEventListener("change", run);
+  input.addEventListener("input", run);
+}
+
+function shouldSkipDuplicateFileInputEvent(input, key) {
+  const signature = Array.from(input?.files || [])
+    .map((file) => [file.name, file.size, file.lastModified].join(":"))
+    .join("|");
+  if (!signature) {
+    return false;
+  }
+  const previous = handledFileInputSignatures.get(key);
+  if (previous === signature) {
+    return true;
+  }
+  handledFileInputSignatures.set(key, signature);
+  return false;
 }
 
 async function handlePdfChange() {
@@ -480,6 +518,8 @@ async function handleRequiredFilesChange() {
     return;
   }
   try {
+    setStatus("已选择文件", "busy", files.map((file) => file.name).join(" / "));
+    await waitForNextPaint();
     const picked = identifyRequiredUploadFiles(files);
     const missing = [];
     if (!picked.pdf) {
