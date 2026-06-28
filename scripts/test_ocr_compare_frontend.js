@@ -86,6 +86,8 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareCss.includes(".control-column-pdf"));
   assert(ocrCompareCss.includes(".upload-button.primary-button"));
   assert(ocrCompareCss.includes(".upload-all-button"));
+  assert(!/\.hidden-input\s*\{[^}]*display:\s*none/.test(ocrCompareCss), "file inputs must stay label-activatable, not display:none");
+  assert(/\.hidden-input\s*\{[^}]*opacity:\s*0/.test(ocrCompareCss), "file inputs should be visually hidden while remaining activatable by labels");
   assert(ocrCompareCss.includes('label[role="button"]'));
   assert(ocrCompareCss.includes(".upload-button:focus-visible"));
   assert(ocrCompareCss.includes("font-size: calc(17px * var(--review-font-scale, 1));"));
@@ -147,13 +149,16 @@ function runOcrCompareInContext(testContext) {
   assert(!ocrCompareHtml.includes("cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"), "MathJax CDN should be lazy-loaded by ocr-compare.js");
   assert(ocrCompareHtml.includes('load: ["[tex]/boldsymbol"]'), "MathJax should load boldsymbol for vector formulas converted from pmb");
   assert(ocrCompareHtml.includes('packages: { "[+]": ["boldsymbol"] }'), "MathJax should enable the boldsymbol TeX package");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-native-file-labels"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-native-file-labels"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-native-file-labels"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-upload-label-mathjax"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-upload-label-mathjax"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-upload-label-mathjax"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
   assert(source.includes("ensureMathJaxLoaded().catch((error) => reportMathJaxError(error));"));
+  assert(source.includes("MATHJAX_SCRIPT_URLS"), "MathJax should have fallback script sources");
+  assert(source.includes("MATHJAX_LOAD_TIMEOUT_MS"), "MathJax loading should time out instead of leaving raw TeX forever");
+  assert(source.includes("loadMathJaxScriptFromFallbacks"), "MathJax loader should try fallback CDNs");
   assert(ocrCompareHtml.includes("<div>校对工作台</div>"));
   assert(!ocrCompareHtml.includes("导出原始 MinerU"));
   assert(!ocrCompareHtml.includes("中栏读取已有 MinerU"));

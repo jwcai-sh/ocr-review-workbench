@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260628-native-file-labels";
+const OCR_COMPARE_BUILD_ID = "20260628-upload-label-mathjax";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -52,6 +52,12 @@ const OCR_WORKSPACE_STORAGE_PREFIX = "uma-ocr-compare-workspace-v1";
 const PDF_IMAGE_ZOOM_LEVELS = [1, 1.25, 1.5, 1.75, 2, 2.5];
 const REVIEW_FONT_SCALE_LEVELS = [0.9, 1, 1.1, 1.2, 1.35, 1.5];
 const PDF_UPLOAD_CHUNK_SIZE = 1024 * 1024;
+const MATHJAX_SCRIPT_URLS = [
+  "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js",
+  "https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-chtml.min.js",
+  "https://unpkg.com/mathjax@3/es5/tex-chtml.js",
+];
+const MATHJAX_LOAD_TIMEOUT_MS = 12000;
 const BLOCK_MATHPIX_CROP_PADDING = { horizontal: 4, vertical: 1 };
 const LEGACY_COLUMN_WIDTHS_KEYS = [
   "uma-ocr-compare-column-widths",
@@ -9960,16 +9966,52 @@ function ensureMathJaxLoaded() {
   if (typeof document === "undefined" || typeof document.createElement !== "function") {
     return Promise.reject(new Error("MathJax loader requires document.createElement."));
   }
-  mathJaxLoadPromise = new Promise((resolve, reject) => {
+  mathJaxLoadPromise = loadMathJaxScriptFromFallbacks();
+  return mathJaxLoadPromise;
+}
+
+async function loadMathJaxScriptFromFallbacks() {
+  const errors = [];
+  for (const url of MATHJAX_SCRIPT_URLS) {
+    try {
+      return await loadMathJaxScript(url);
+    } catch (error) {
+      errors.push(error?.message || String(error || url));
+    }
+  }
+  throw new Error(`MathJax failed to load: ${errors.join("; ")}`);
+}
+
+function loadMathJaxScript(url) {
+  return new Promise((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js";
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      callback(value);
+    };
+    const timer = setTimeout(() => {
+      script.remove?.();
+      finish(reject, new Error(`MathJax load timed out: ${url}`));
+    }, MATHJAX_LOAD_TIMEOUT_MS);
+    script.src = url;
     script.async = true;
     script.dataset.ocrLazyMathjax = "1";
-    script.addEventListener("load", () => resolve(window.MathJax));
-    script.addEventListener("error", () => reject(new Error("MathJax failed to load.")));
+    script.addEventListener("load", () => {
+      const startup = window.MathJax?.startup?.promise;
+      if (startup?.then) {
+        startup.then(() => finish(resolve, window.MathJax)).catch((error) => finish(reject, error));
+      } else {
+        finish(resolve, window.MathJax);
+      }
+    });
+    script.addEventListener("error", () => finish(reject, new Error(`MathJax failed to load: ${url}`)));
     (document.head || document.body || document.documentElement).appendChild(script);
   });
-  return mathJaxLoadPromise;
 }
 
 initialize();
