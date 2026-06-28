@@ -5,7 +5,7 @@ import mimetypes
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from backend.config import SETTINGS
 from backend.services.mathpix_ocr import MATHPIX_OCR_SERVICE
@@ -53,6 +53,29 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+
+        if parsed.path == "/api/ocr/upload-document":
+            self._send_json(
+                OCR_PREVIEW_SERVICE.upload_document(
+                    content=self._read_body(),
+                    mime_type=self._request_mime_type(),
+                    name=self._uploaded_file_name(),
+                )
+            )
+            return
+        if parsed.path == "/api/ocr/upload-document-chunk":
+            self._send_json(
+                OCR_PREVIEW_SERVICE.upload_document_chunk(
+                    upload_id=str(self.headers.get("X-Upload-Id") or ""),
+                    chunk_index=int(self.headers.get("X-Chunk-Index") or "0"),
+                    chunk_count=int(self.headers.get("X-Chunk-Count") or "1"),
+                    content=self._read_body(),
+                    mime_type=self._request_mime_type(),
+                    name=self._uploaded_file_name(),
+                )
+            )
+            return
+
         payload = self._read_json()
 
         if parsed.path == "/api/ocr/preview-pages":
@@ -88,6 +111,13 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             return b""
         return self.rfile.read(content_length)
 
+    def _request_mime_type(self) -> str:
+        return str(self.headers.get("Content-Type") or "application/octet-stream").split(";", 1)[0].strip()
+
+    def _uploaded_file_name(self) -> str:
+        raw = str(self.headers.get("X-File-Name") or "upload")
+        return unquote(raw).strip() or "upload"
+
     def _send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
@@ -100,7 +130,10 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
     def _send_cors_headers(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, HEAD, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization, X-Upload-Id, X-Chunk-Index, X-Chunk-Count, X-File-Name",
+        )
 
     def _serve_static(self, path: str, head_only: bool = False) -> None:
         relative_path = "ocr-compare.html" if path in {"", "/"} else path.lstrip("/")

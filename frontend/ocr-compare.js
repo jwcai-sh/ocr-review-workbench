@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260628-remote-pdf-cache";
+const OCR_COMPARE_BUILD_ID = "20260628-chunked-pdf-upload";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -51,6 +51,7 @@ const MIDDLE_COLUMN_COLLAPSED_KEY = "uma-ocr-compare-middle-collapsed-v1";
 const OCR_WORKSPACE_STORAGE_PREFIX = "uma-ocr-compare-workspace-v1";
 const PDF_IMAGE_ZOOM_LEVELS = [1, 1.25, 1.5, 1.75, 2, 2.5];
 const REVIEW_FONT_SCALE_LEVELS = [0.9, 1, 1.1, 1.2, 1.35, 1.5];
+const PDF_UPLOAD_CHUNK_SIZE = 1024 * 1024;
 const BLOCK_MATHPIX_CROP_PADDING = { horizontal: 4, vertical: 1 };
 const LEGACY_COLUMN_WIDTHS_KEYS = [
   "uma-ocr-compare-column-widths",
@@ -531,11 +532,12 @@ function identifyRequiredUploadFiles(files) {
 }
 
 async function loadPdfFile(file) {
-  setStatus("读取 PDF", "busy", file.name);
-  const pdfDataUrl = await readFileAsDataUrl(file);
+  setStatus("上传 PDF", "busy", `${file.name} (${formatBytes(file.size || 0)})`);
+  await waitForNextPaint();
+  const upload = await uploadPreviewDocument(file);
   state.pdfFile = file;
-  state.pdfDataUrl = pdfDataUrl;
-  state.pdfDocumentId = "";
+  state.pdfDataUrl = "";
+  state.pdfDocumentId = upload.documentId || "";
   state.pageCache.clear();
   state.pdfTextPageCache.clear();
   state.mathpixCache.clear();
@@ -554,7 +556,7 @@ async function loadPdfFile(file) {
   state.currentPage = 1;
   setStatus("渲染 PDF", "busy", file.name);
   const preview = await loadPagePreview(1);
-  state.pdfPageCount = preview.pageCount || preview.pages?.length || 1;
+  state.pdfPageCount = preview.pageCount || upload.pageCount || preview.pages?.length || 1;
   cachePreviewPage(1, preview);
   if (state.mineruInfo) {
     analyzeCurrentMineruRiskPage();
@@ -953,7 +955,7 @@ async function goToNextRiskPage() {
 }
 
 async function renderCurrentPage() {
-  if (!state.pdfDataUrl && !state.mineruInfo) {
+  if (!hasPdfSource() && !state.mineruInfo) {
     return;
   }
   const runId = ++renderCurrentPageRunId;
@@ -1171,7 +1173,7 @@ async function ensureCurrentPagePreview() {
     cachePdfTextPage(cachedPage);
     return cachedPage;
   }
-  if (!state.pdfDataUrl) {
+  if (!hasPdfSource()) {
     return {
       pageNumber: state.currentPage,
       width: "-",
@@ -1220,7 +1222,7 @@ async function loadPagePreview(pageNumber) {
 }
 
 function scheduleAdjacentPagePreviewPrefetch() {
-  if (!state.pdfDataUrl) {
+  if (!hasPdfSource()) {
     return;
   }
   if (pagePrefetchTimer) {
@@ -1276,7 +1278,7 @@ function pdfTextPageSizeForPage(pageNumber) {
 }
 
 async function ensurePdfTextLayersForBook() {
-  if (!state.pdfDataUrl || !state.pdfFile) {
+  if (!hasPdfSource() || !state.pdfFile) {
     return false;
   }
   const total = getMineruPageCount() || state.pdfPageCount || 0;
@@ -1322,6 +1324,43 @@ function pdfPreviewPayload(extra = {}) {
     payload.dataUrl = state.pdfDataUrl;
   }
   return payload;
+}
+
+async function uploadPreviewDocument(file) {
+  const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const chunkSize = PDF_UPLOAD_CHUNK_SIZE;
+  const chunkCount = Math.max(1, Math.ceil((file.size || 0) / chunkSize));
+  let latest = null;
+  for (let index = 0; index < chunkCount; index += 1) {
+    const start = index * chunkSize;
+    const end = Math.min(file.size || 0, start + chunkSize);
+    const chunk = file.slice(start, end || file.size || chunkSize);
+    setStatus("上传 PDF", "busy", `${file.name} ${index + 1}/${chunkCount}`);
+    await waitForNextPaint();
+    const response = await fetchApi("/api/ocr/upload-document-chunk", {
+      method: "POST",
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        "X-Upload-Id": uploadId,
+        "X-Chunk-Index": String(index),
+        "X-Chunk-Count": String(chunkCount),
+        "X-File-Name": encodeURIComponent(file.name || "upload"),
+      },
+      body: chunk,
+    });
+    latest = await response.json();
+    if (!latest.ok) {
+      throw new Error(latest.error || "PDF 上传失败");
+    }
+  }
+  if (!latest?.documentId) {
+    throw new Error("PDF 上传未返回 documentId");
+  }
+  return latest;
+}
+
+function hasPdfSource() {
+  return Boolean(state.pdfDocumentId || state.pdfDataUrl);
 }
 
 function rememberPdfDocumentId(response) {
@@ -5189,7 +5228,7 @@ function renderCorrectionDiff(mathpixMarkdown) {
 }
 
 async function recognizeCurrentPageWithMathpix() {
-  if (state.busy || !state.pdfDataUrl) {
+  if (state.busy || !hasPdfSource()) {
     return;
   }
   state.busy = true;
@@ -5251,7 +5290,7 @@ async function recognizeRiskBlockWithMathpix(blockIndex) {
     await renderCurrentPage();
     return;
   }
-  if (!state.pdfDataUrl) {
+  if (!hasPdfSource()) {
     setStatus("先上传 PDF", "error");
     return;
   }
@@ -6690,7 +6729,7 @@ function rewriteAcceptedCorrectedImageReferences(markdown, imageAssets) {
 }
 
 async function collectPdfCroppedImageAssetsForReferences(refs) {
-  if (!state.pdfDataUrl || !Array.isArray(refs) || !refs.length) {
+  if (!hasPdfSource() || !Array.isArray(refs) || !refs.length) {
     return [];
   }
   const matches = imageSourceSegmentsForAcceptedDownload(refs.map((item) => item.src));

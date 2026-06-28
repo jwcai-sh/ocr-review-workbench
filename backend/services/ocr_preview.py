@@ -115,6 +115,7 @@ def _pdf_pages(
 class OcrPreviewService:
     def __init__(self) -> None:
         self._documents: dict[str, dict[str, Any]] = {}
+        self._uploads: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
     def preview_pages(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -162,6 +163,75 @@ class OcrPreviewService:
             "renderedCount": len(pages),
         }
 
+    def upload_document(self, *, content: bytes, mime_type: str, name: str) -> dict[str, Any]:
+        if not content:
+            return {"ok": False, "error": "Missing upload body"}
+        document = self._store_document(
+            mime_type=mime_type or "application/octet-stream",
+            content=content,
+            name=name or "upload",
+        )
+        return {
+            "ok": True,
+            "documentId": document["id"],
+            "name": document["name"],
+            "mimeType": document["mimeType"],
+            "pageCount": self._document_page_count(document),
+        }
+
+    def upload_document_chunk(
+        self,
+        *,
+        upload_id: str,
+        chunk_index: int,
+        chunk_count: int,
+        content: bytes,
+        mime_type: str,
+        name: str,
+    ) -> dict[str, Any]:
+        if not upload_id:
+            return {"ok": False, "error": "Missing upload id"}
+        if chunk_count <= 0 or chunk_index < 0 or chunk_index >= chunk_count:
+            return {"ok": False, "error": "Invalid upload chunk"}
+        if not content:
+            return {"ok": False, "error": "Missing upload chunk body"}
+
+        self._prune_uploads()
+        with self._lock:
+            upload = self._uploads.setdefault(
+                upload_id,
+                {
+                    "chunkCount": chunk_count,
+                    "chunks": {},
+                    "mimeType": mime_type or "application/octet-stream",
+                    "name": name or "upload",
+                    "lastAccessedAt": time.monotonic(),
+                },
+            )
+            upload["lastAccessedAt"] = time.monotonic()
+            upload["chunks"][chunk_index] = content
+            received = len(upload["chunks"])
+            complete = received >= upload["chunkCount"]
+            if not complete:
+                return {
+                    "ok": True,
+                    "uploadComplete": False,
+                    "received": received,
+                    "chunkCount": upload["chunkCount"],
+                }
+            assembled = b"".join(upload["chunks"][index] for index in range(upload["chunkCount"]))
+            self._uploads.pop(upload_id, None)
+
+        result = self.upload_document(
+            content=assembled,
+            mime_type=mime_type or upload.get("mimeType") or "application/octet-stream",
+            name=name or upload.get("name") or "upload",
+        )
+        result["uploadComplete"] = True
+        result["received"] = chunk_count
+        result["chunkCount"] = chunk_count
+        return result
+
     def _document_for_payload(self, document_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         if document_id:
             document = self._get_document(document_id)
@@ -198,6 +268,20 @@ class OcrPreviewService:
             self._documents[document_id] = document
         return document
 
+    def _document_page_count(self, document: dict[str, Any]) -> int:
+        mime_type = str(document.get("mimeType") or "")
+        name = str(document.get("name") or "")
+        content = bytes(document.get("content") or b"")
+        if mime_type == "application/pdf" or name.lower().endswith(".pdf"):
+            try:
+                with fitz.open(stream=content, filetype="pdf") as pdf:
+                    return len(pdf)
+            except Exception:  # noqa: BLE001
+                return 0
+        if mime_type.startswith("image/"):
+            return 1
+        return 0
+
     def _prune_documents(self) -> None:
         expires_before = time.monotonic() - 60 * 60
         with self._lock:
@@ -207,6 +291,13 @@ class OcrPreviewService:
             while len(self._documents) > 4:
                 oldest = min(self._documents.items(), key=lambda item: item[1].get("lastAccessedAt", 0))[0]
                 self._documents.pop(oldest, None)
+
+    def _prune_uploads(self) -> None:
+        expires_before = time.monotonic() - 30 * 60
+        with self._lock:
+            expired = [key for key, value in self._uploads.items() if value.get("lastAccessedAt", 0) < expires_before]
+            for key in expired:
+                self._uploads.pop(key, None)
 
 
 OCR_PREVIEW_SERVICE = OcrPreviewService()

@@ -145,9 +145,9 @@ function runOcrCompareInContext(testContext) {
   assert(!ocrCompareHtml.includes("cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"), "MathJax CDN should be lazy-loaded by ocr-compare.js");
   assert(ocrCompareHtml.includes('load: ["[tex]/boldsymbol"]'), "MathJax should load boldsymbol for vector formulas converted from pmb");
   assert(ocrCompareHtml.includes('packages: { "[+]": ["boldsymbol"] }'), "MathJax should enable the boldsymbol TeX package");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-remote-pdf-cache"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-remote-pdf-cache"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-remote-pdf-cache"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-chunked-pdf-upload"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-chunked-pdf-upload"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-chunked-pdf-upload"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
@@ -281,7 +281,7 @@ function runOcrCompareInContext(testContext) {
   assert.strictEqual(pickerResult.value, "", "file input must reset so selecting the same file fires change again");
   assert.strictEqual(pickerResult.clickCount, 1);
   assert.strictEqual(pickerResult.missing, false);
-  assert(source.includes('setStatus("读取 PDF", "busy", file.name);'));
+  assert(source.includes('setStatus("上传 PDF", "busy"'));
   assert(source.includes('setStatus("渲染 PDF", "busy", file.name);'));
   assert(source.includes('setStatus("读取 MinerU", "busy", file.name);'));
   assert(source.includes('setStatus("读取 content_list", "busy", file.name);'));
@@ -431,6 +431,10 @@ $$`;
   assert(source.includes("payload.documentId = state.pdfDocumentId"), "page preview requests should reuse documentId instead of reposting the PDF");
   assert(source.includes("rememberPdfDocumentId(response)"), "preview responses should refresh the cached PDF document id");
   assert(source.includes("waitForNextPaint()"), "one-click upload should paint busy status before slow remote upload work starts");
+  assert(source.includes("PDF_UPLOAD_CHUNK_SIZE"), "remote PDF upload should be chunked instead of sending one large JSON dataUrl");
+  assert(source.includes("/api/ocr/upload-document-chunk"), "frontend should upload the PDF document before requesting rendered pages");
+  assert(source.includes("state.pdfDataUrl = \"\";"), "chunk upload path should not keep the full PDF base64 in browser state");
+  assert(source.includes("hasPdfSource()"), "PDF-dependent controls should work with either documentId or legacy dataUrl");
 }
 
 {
