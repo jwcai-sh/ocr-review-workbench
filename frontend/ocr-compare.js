@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260628-client-pdf-render";
+const OCR_COMPARE_BUILD_ID = "20260628-review-polish-table-cleanup";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -2663,8 +2663,8 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
             <summary>编辑当前块 MinerU Markdown 源码</summary>
             <textarea class="mathpix-source-editor block-source-editor" data-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" spellcheck="false">${escapeHtml(segment.markdown)}</textarea>
             <div class="mathpix-edit-actions">
-              <button class="text-button" type="button" data-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保持修改" disabled>
-                未修改
+              <button class="text-button" type="button" data-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="保存" data-dirty-label="保存" disabled>
+                保存
               </button>
             </div>
           </details>
@@ -2680,8 +2680,8 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
             <summary>编辑 Markdown 源码（保存后进入 accepted 校正稿）</summary>
             <textarea class="mathpix-source-editor" data-mathpix-edit="${escapeHtml(String(segment.blockIndex))}" spellcheck="false">${escapeHtml(editableMarkdown)}</textarea>
             <div class="mathpix-edit-actions">
-              <button class="text-button" type="button" data-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="${hasMathpixDraft ? "保持修改" : "未修改"}" data-dirty-label="保持修改" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>
-                ${hasMathpixDraft ? "保持修改" : "未修改"}
+              <button class="text-button" type="button" data-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="保存" data-dirty-label="保存" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>
+                保存
               </button>
               ${hasMathpixDraft ? `<button class="text-button" type="button" data-revert-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}">撤销修改</button>` : ""}
             </div>
@@ -2703,10 +2703,8 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
           ${mathpixActionLabel}
         </button>`;
     const saveActionHtml = hasEditableMarkdown
-      ? `<button class="text-button selected-edit-state" type="button" data-toolbar-edit-state data-clean-label="${hasMathpixDraft ? "保持修改" : "未修改"}" data-dirty-label="保持修改" disabled>${hasMathpixDraft ? "保持修改" : "未修改"}</button>
-        <button class="text-button selected-save-action" type="button" data-toolbar-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="保存" data-dirty-label="保存" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>保存</button>`
-      : `<button class="text-button selected-edit-state" type="button" data-toolbar-edit-state data-clean-label="未修改" data-dirty-label="保持修改" disabled>未修改</button>
-        <button class="text-button selected-save-action" type="button" data-toolbar-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="保存" data-dirty-label="保存" disabled>保存</button>`;
+      ? `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="保存" data-dirty-label="保存" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>保存</button>`
+      : `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="保存" data-dirty-label="保存" disabled>保存</button>`;
     const cancelActionHtml = hasMathpixDraft
       ? `<button class="text-button selected-cancel-action" type="button" data-revert-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}">取消</button>`
       : `<button class="text-button selected-cancel-action" type="button" data-review-correction-toggle="${escapeHtml(reviewKey)}">取消</button>`;
@@ -2718,7 +2716,7 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
           </div>
           <div class="review-item-actions">
             ${renderOcrPatchStatusControls(ocrPatch)}
-            <button class="text-button review-toolbar-collapse" type="button" data-review-correction-toggle="${escapeHtml(reviewKey)}" aria-label="收起校正面板" title="收起">⌃⌃</button>
+            <button class="text-button review-toolbar-collapse" type="button" data-review-correction-toggle="${escapeHtml(reviewKey)}" aria-label="收起校正面板" title="收起">⌃</button>
             ${mathpixActionHtml}
             ${saveActionHtml}
             ${cancelActionHtml}
@@ -2927,8 +2925,8 @@ function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditab
         <summary>查看/编辑</summary>
         <textarea class="mathpix-source-editor" data-mathpix-edit="${blockIndex}" spellcheck="false">${mathpixMarkdown}</textarea>
         <div class="mathpix-edit-actions">
-          <button class="text-button" type="button" data-apply-mathpix-block-edit="${blockIndex}" data-clean-label="${mathpixEditorIsSaved ? "未修改" : "保持修改"}" data-dirty-label="保持修改" ${mathpixEditorIsSaved ? 'data-disable-when-clean="1" disabled' : ""}>
-            ${mathpixEditorIsSaved ? "未修改" : "保持修改"}
+          <button class="text-button" type="button" data-apply-mathpix-block-edit="${blockIndex}" data-clean-label="保存" data-dirty-label="保存" ${mathpixEditorIsSaved ? 'data-disable-when-clean="1" disabled' : ""}>
+            保存
           </button>
           ${hasMathpixDraft ? `<button class="text-button" type="button" data-revert-mathpix-block-edit="${blockIndex}">撤销修改</button>` : ""}
         </div>
@@ -2937,8 +2935,8 @@ function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditab
         <summary>查看/编辑 MinerU 源码</summary>
         <textarea class="mathpix-source-editor block-source-editor" data-mineru-source-edit="${blockIndex}" spellcheck="false">${mineruMarkdown}</textarea>
         <div class="mathpix-edit-actions">
-          <button class="text-button" type="button" data-apply-mineru-source-edit="${blockIndex}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保持修改" disabled>
-            未修改
+          <button class="text-button" type="button" data-apply-mineru-source-edit="${blockIndex}" data-disable-when-clean="1" data-clean-label="保存" data-dirty-label="保存" disabled>
+            保存
           </button>
         </div>
       </details>`;
@@ -2964,7 +2962,7 @@ function updateReviewEditorActionState(editor) {
     }
     if (targetButton.dataset?.disableWhenClean === "1") {
       targetButton.disabled = !isDirty;
-      targetButton.textContent = isDirty ? targetButton.dataset.dirtyLabel || "保持修改" : targetButton.dataset.cleanLabel || "未修改";
+      targetButton.textContent = isDirty ? targetButton.dataset.dirtyLabel || "保存" : targetButton.dataset.cleanLabel || "保存";
       return;
     }
     if (targetButton.dataset?.dirtyLabel && isDirty) {
@@ -2975,7 +2973,7 @@ function updateReviewEditorActionState(editor) {
   toolbarButtons.forEach((toolbarButton) => syncButton(toolbarButton));
   toolbarStates.forEach((stateButton) => {
     stateButton.disabled = true;
-    stateButton.textContent = isDirty ? stateButton.dataset.dirtyLabel || "保持修改" : stateButton.dataset.cleanLabel || "未修改";
+    stateButton.textContent = isDirty ? stateButton.dataset.dirtyLabel || "保存" : stateButton.dataset.cleanLabel || "保存";
   });
   if (button?.dataset?.disableWhenClean === "1") {
     button.disabled = !isDirty;
@@ -4421,9 +4419,11 @@ function renderBlockContent(markdown, entry) {
   }
   const displayMarkdown = autoCorrectKnownEquationOcrMarkdown(markdown);
   const normalizedMarkdown = normalizeReferenceSpacing(
-    normalizeEditableProseLineBreaksOutsideStructuredBlocks(
-      normalizeMathpixCollapsedProse(
-        normalizeSingleLineDisplayMath(normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(displayMarkdown))),
+    normalizeScientificUnicodeMathForRender(
+      normalizeEditableProseLineBreaksOutsideStructuredBlocks(
+        normalizeMathpixCollapsedProse(
+          normalizeSingleLineDisplayMath(normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(displayMarkdown))),
+        ),
       ),
     ),
   );
@@ -4441,6 +4441,154 @@ function normalizeInlineMathSpacingForRender(markdown) {
     return normalizeInlineMathSpacing(text);
   }
   return normalizeInlineMathSpacingOutsideDisplayMath(text);
+}
+
+function normalizeScientificUnicodeMathForRender(markdown) {
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+  let inDisplayMath = false;
+  let inCodeFence = false;
+  return lines
+    .map((line) => {
+      const trimmed = line.trim();
+      if (isCodeFenceStart(line)) {
+        inCodeFence = !inCodeFence;
+        return line;
+      }
+      if (inCodeFence) {
+        return line;
+      }
+      if (trimmed === "$$" || trimmed === "\\[" || trimmed === "\\]") {
+        inDisplayMath = trimmed === "\\]" ? false : trimmed === "\\[" ? true : !inDisplayMath;
+        return line;
+      }
+      if (inDisplayMath || hasLatexMathEnvironment(line)) {
+        return line;
+      }
+      return normalizeScientificUnicodeMathInTextLine(line);
+    })
+    .join("\n");
+}
+
+function normalizeScientificUnicodeMathInTextLine(line) {
+  return replaceOutsideInlineMathSpans(String(line || ""), (segment) =>
+    normalizeGreekMathTextTokens(normalizeScientificPowerTextTokens(segment)),
+  );
+}
+
+function replaceOutsideInlineMathSpans(text, transform) {
+  const source = String(text || "");
+  let output = "";
+  let cursor = 0;
+  const pattern = /(\$[^$\n]*\$|\\\([\s\S]*?\\\))/g;
+  let match;
+  while ((match = pattern.exec(source))) {
+    output += transform(source.slice(cursor, match.index));
+    output += match[0];
+    cursor = match.index + match[0].length;
+  }
+  output += transform(source.slice(cursor));
+  return output;
+}
+
+function normalizeGreekMathTextTokens(text) {
+  return String(text || "")
+    .replace(
+      /(^|[^\p{L}\p{N}\\$])([Δδ])?([Α-Ωα-ωµμ])(?:\s*[_]?\s*\{?([A-Za-z]{1,4})\}?)?\s*\/\s*\3(?:\s*[_]?\s*\{?\4\}?)?(?![\p{L}\p{N}])/gu,
+      (match, prefix, deltaSymbol, symbol, suffix) => {
+        const latex = latexGreekSymbol(symbol);
+        if (!latex) {
+          return match;
+        }
+        const deltaLatex = deltaSymbol ? latexGreekSymbol(deltaSymbol) : "";
+        const suffixText = String(suffix || "");
+        const subscript = suffixText ? `_{${/^[A-Z]{2,4}$/.test(suffixText) ? `\\rm ${suffixText}` : suffixText}}` : "";
+        return `${prefix}$${deltaLatex}${latex}${subscript}/${latex}${subscript}$`;
+      },
+    )
+    .replace(
+      /(^|[^\p{L}\p{N}\\$])([Α-Ωα-ωµμ])(?:\s*[_]?\s*\{?([A-Za-z]{1,4})\}?)?(?![\p{L}\p{N}])/gu,
+      (match, prefix, symbol, suffix) => {
+        const latex = latexGreekSymbol(symbol);
+        if (!latex) {
+          return match;
+        }
+        const suffixText = String(suffix || "");
+        const subscript = suffixText ? `_{${/^[A-Z]{2,4}$/.test(suffixText) ? `\\rm ${suffixText}` : suffixText}}` : "";
+        return `${prefix}$${latex}${subscript}$`;
+      },
+    );
+}
+
+function normalizeScientificPowerTextTokens(text) {
+  return String(text || "").replace(
+    /(^|[^\p{L}\p{N}\\$])((?:[<>]\s*)?\d+(?:\.\d+)?\s*(?:[×x]\s*)?10\s*\^\s*\{?\s*[-+]?\d+\s*\}?(?:\s*yr\s*\^\s*\{?\s*[-+]?\d+\s*\}?)?)/gu,
+    (match, prefix, token) => `${prefix}$${formatScientificPowerToken(token)}$`,
+  );
+}
+
+function formatScientificPowerToken(token) {
+  return String(token || "")
+    .replace(/\s+/g, " ")
+    .replace(/\s*×\s*/g, " \\times ")
+    .replace(/\sx\s*/g, " \\times ")
+    .replace(/10\s*\^\s*\{?\s*([-+]?\d+)\s*\}?/g, "10^{$1}")
+    .replace(/\s*yr\s*\^\s*\{?\s*([-+]?\d+)\s*\}?/gi, "\\mathrm{yr}^{$1}")
+    .trim();
+}
+
+function latexGreekSymbol(symbol) {
+  const symbols = {
+    Α: "A",
+    α: "\\alpha",
+    Β: "B",
+    β: "\\beta",
+    Γ: "\\Gamma",
+    γ: "\\gamma",
+    Δ: "\\Delta",
+    δ: "\\delta",
+    Ε: "E",
+    ε: "\\epsilon",
+    Ζ: "Z",
+    ζ: "\\zeta",
+    Η: "H",
+    η: "\\eta",
+    Θ: "\\Theta",
+    θ: "\\theta",
+    Ι: "I",
+    ι: "\\iota",
+    Κ: "K",
+    κ: "\\kappa",
+    Λ: "\\Lambda",
+    λ: "\\lambda",
+    Μ: "M",
+    μ: "\\mu",
+    µ: "\\mu",
+    Ν: "N",
+    ν: "\\nu",
+    Ξ: "\\Xi",
+    ξ: "\\xi",
+    Ο: "O",
+    ο: "o",
+    Π: "\\Pi",
+    π: "\\pi",
+    Ρ: "P",
+    ρ: "\\rho",
+    Σ: "\\Sigma",
+    σ: "\\sigma",
+    Τ: "T",
+    τ: "\\tau",
+    Υ: "\\Upsilon",
+    υ: "\\upsilon",
+    Φ: "\\Phi",
+    φ: "\\phi",
+    Χ: "X",
+    χ: "\\chi",
+    Ψ: "\\Psi",
+    ψ: "\\psi",
+    Ω: "\\Omega",
+    ω: "\\omega",
+  };
+  return symbols[symbol] || "";
 }
 
 function normalizeInlineMathSpacingOutsideDisplayMath(markdown) {
@@ -4471,8 +4619,9 @@ function normalizeInlineMathSpacingOutsideDisplayMath(markdown) {
 }
 
 function cleanMathpixEditableMarkdown(markdown) {
+  const tableRepaired = normalizeMathpixTableMarkdownArtifacts(String(markdown || ""));
   const lineBreakRepaired = normalizeEditableProseLineBreaksOutsideStructuredBlocks(
-    normalizeMathpixCollapsedProse(String(markdown || "")),
+    normalizeMathpixCollapsedProse(tableRepaired),
   );
   const proseRepaired = normalizeMathpixEditableSource(
     normalizeInlineMathSpacingOutsideDisplayMath(repairLatexDisplayMathStructure(lineBreakRepaired)),
@@ -4480,7 +4629,17 @@ function cleanMathpixEditableMarkdown(markdown) {
   const formatted = formatDisplayMathSourceForEditing(
     normalizeInlineMathSpacingOutsideDisplayMath(compactLatexSourceSpacing(proseRepaired)),
   );
-  return normalizeEditableProseLineBreaksOutsideStructuredBlocks(repairLatexDisplayMathStructure(formatted)).trim();
+  return repairKnownMathpixTextualBoundArtifacts(
+    normalizeEditableProseLineBreaksOutsideStructuredBlocks(
+      repairLatexDisplayMathStructure(normalizeMathpixTableMarkdownArtifacts(formatted)),
+    ),
+  ).trim();
+}
+
+function repairKnownMathpixTextualBoundArtifacts(markdown) {
+  return String(markdown || "")
+    .replace(/\bof\s*\|\\eta\|\s*</g, "of $|\\eta| <")
+    .replace(/(\\times\s+10)\^([+-]?\d+)/g, "$1^{$2}");
 }
 
 function normalizeMathpixOcrArtifacts(markdown) {
@@ -4496,6 +4655,71 @@ function normalizeMathpixCollapsedProse(markdown) {
     .replace(/\brequiredorders\b/gi, "required orders")
     .replace(/\s+([,.;:])/g, "$1")
     .replace(/[ \t]{2,}/g, " ");
+}
+
+function normalizeMathpixTableMarkdownArtifacts(markdown) {
+  return String(markdown || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map(cleanMathpixTableArtifactLine)
+    .filter((line) => line != null)
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+function cleanMathpixTableArtifactLine(line) {
+  const source = String(line || "");
+  const trimmed = source.trim();
+  if (!trimmed) {
+    return source;
+  }
+  if (trimmed === "$" || /^\|{2,}\s*$/.test(trimmed)) {
+    return null;
+  }
+  if (isCollapsedTableGarbageLine(trimmed)) {
+    return null;
+  }
+  if (!trimmed.includes("|") && !/\\multirow\b/.test(trimmed)) {
+    return source;
+  }
+  const withoutMultirow = stripLatexMultirow(source);
+  if (!withoutMultirow.includes("|")) {
+    return cleanMathpixTableCell(withoutMultirow);
+  }
+  const cells = withoutMultirow.split("|").map((cell) => cleanMathpixTableCell(cell));
+  if (!cells.some((cell) => cell.trim())) {
+    return null;
+  }
+  return cells.join("|").replace(/[ \t]+\|/g, " |").replace(/\|[ \t]+/g, "|").trimEnd();
+}
+
+function isCollapsedTableGarbageLine(line) {
+  const trimmed = String(line || "").trim();
+  if (/^\|{3,}/.test(trimmed)) {
+    return true;
+  }
+  if (!trimmed.includes("|")) {
+    return false;
+  }
+  const text = trimmed.replace(/[|$]/g, "").trim();
+  return text.length > 40 && !/\s/.test(text) && /[A-Za-z]{12,}/.test(text);
+}
+
+function stripLatexMultirow(text) {
+  return String(text || "").replace(/\\multirow(?:\[[^\]]*])?\{[^{}\n]*\}\{[^{}\n]*\}\{([^{}\n]*)\}/g, "$1");
+}
+
+function cleanMathpixTableCell(cell) {
+  return normalizeScientificUnicodeMathInTextLine(
+    String(cell || "")
+      .replace(/\\hline\b/g, "")
+      .replace(/\\cline\{[^}]*\}/g, "")
+      .replace(/^\s*\$+\s*|\s*\$+\s*$/g, "")
+      .replace(/\{([^{}\\]+)\}/g, "$1")
+      .replace(/\s+([,.;:])/g, "$1")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim(),
+  );
 }
 
 function normalizeEditableProseLineBreaksOutsideStructuredBlocks(markdown) {
@@ -4594,9 +4818,9 @@ function normalizeMathpixEditableSource(markdown) {
       }
       return line
         .replace(/\\{2,}(?=[A-Za-z])/g, "\\")
-        .replace(/\b([Tt])he\s*([0-9]+)\s+\\+sigma\$bound\b/g, (_match, prefix, number) => `${prefix}he ${number} $\\sigma$ bound`)
-        .replace(/\\+sigma\$bound\b/g, "$\\sigma$ bound")
-        .replace(/\$\|\s*\\+eta\s*\|\s*</g, "$|\\eta| <")
+        .replace(/\b([Tt])he\s*([0-9]+)\s+\\+sigma\s*\$bound\b/g, (_match, prefix, number) => `${prefix}he ${number} $\\sigma$ bound`)
+        .replace(/\\+sigma\s*\$bound\b/g, "$\\sigma$ bound")
+        .replace(/\$?\|\s*\\+eta\s*\|\s*</g, "$|\\eta| <")
         .replace(/\s+([,.;:])/g, "$1")
         .replace(/[ \t]{2,}/g, " ");
     })
@@ -7643,7 +7867,12 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
     normalized.length < 4 ||
     isLikelyReferenceHeading(text) ||
     isPageNumberOnlyText(normalized) ||
-    isTextRedundantWithNormalizedSet(normalized, middleTexts)
+    isTextRedundantWithNormalizedSet(normalized, middleTexts) ||
+    isTextRedundantWithLooseSourceText(normalized, middleTexts) ||
+    isTextRedundantWithLooseSourceText(
+      normalized,
+      (Array.isArray(sourceSegments) ? sourceSegments : []).map((segment) => segment?.markdown),
+    )
   ) {
     return null;
   }
@@ -8072,6 +8301,71 @@ function isTextRedundantWithNormalizedSet(text, normalizedTexts) {
     return shared / shortTokens.size >= 0.88;
   });
 }
+
+function isTextRedundantWithLooseSourceText(text, sourceTexts) {
+  const normalized = normalizeTextForComparison(text);
+  if (!normalized) {
+    return false;
+  }
+  const sourceItems = sourceTexts instanceof Set ? Array.from(sourceTexts) : Array.isArray(sourceTexts) ? sourceTexts : [];
+  return sourceItems.some((candidate) => {
+    const candidateNormalized = normalizeTextForComparison(candidate);
+    if (!candidateNormalized) {
+      return false;
+    }
+    if (isTextRedundantWithNormalizedSet(normalized, [candidateNormalized])) {
+      return true;
+    }
+    return textTokenOverlapRatio(normalized, candidateNormalized) >= 0.72;
+  });
+}
+
+function textTokenOverlapRatio(left, right) {
+  const leftTokens = comparableTokenSet(left);
+  const rightTokens = comparableTokenSet(right);
+  const smaller = leftTokens.size <= rightTokens.size ? leftTokens : rightTokens;
+  const larger = leftTokens.size > rightTokens.size ? leftTokens : rightTokens;
+  if (smaller.size < 12) {
+    return 0;
+  }
+  const shared = Array.from(smaller).filter((token) => larger.has(token)).length;
+  return shared / smaller.size;
+}
+
+function comparableTokenSet(text) {
+  return new Set(
+    canonicalTextForOverlap(text)
+      .split(/\s+/)
+      .filter((token) => token.length > 2 && !COMMON_OVERLAP_STOPWORDS.has(token)),
+  );
+}
+
+const COMMON_OVERLAP_STOPWORDS = new Set([
+  "the",
+  "and",
+  "that",
+  "for",
+  "with",
+  "this",
+  "from",
+  "are",
+  "were",
+  "been",
+  "have",
+  "has",
+  "can",
+  "any",
+  "but",
+  "not",
+  "all",
+  "one",
+  "two",
+  "its",
+  "into",
+  "onto",
+  "our",
+  "their",
+]);
 
 function isPageNumberOnlyText(text) {
   return /^[\s\dIVXLCDMivxlcdm.()-]+$/.test(String(text || "").trim());

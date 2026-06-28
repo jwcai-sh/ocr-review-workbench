@@ -156,9 +156,9 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('packages: { "[+]": ["boldsymbol"] }'), "MathJax should enable the boldsymbol TeX package");
   assert(ocrCompareHtml.includes('paths: {'), "MathJax config should define a local component base path");
   assert(ocrCompareHtml.includes('mathjax: "./vendor/mathjax"'), "MathJax boldsymbol extension should be served locally");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-client-pdf-render"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-client-pdf-render"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-client-pdf-render"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-review-polish-table-cleanup"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-review-polish-table-cleanup"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-review-polish-table-cleanup"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
@@ -1034,14 +1034,14 @@ function assertOcrPatchShape(patch) {
   assert(!parsed.draftHtml.includes("data-ocr-patch-status-action=\"accepted\""));
   assert(!parsed.draftHtml.includes(">接受<"));
   assert(!parsed.draftHtml.includes(">拒绝<"));
-  assert(parsed.draftHtml.includes("保持修改"), "draft edits should be accepted through the single save action");
+  assert(/>\s*保存\s*<\/button>/.test(parsed.draftHtml), "draft edits should be accepted through the single save action");
   assert(parsed.draftHtml.includes('data-revert-mathpix-block-edit="3"'), "Mathpix draft edits should expose an explicit undo action");
   assert(!parsed.draftHtml.includes("确认 MinerU 有误后"));
   assert(!parsed.acceptedHtml.includes("Patch：accepted"));
   assert(!parsed.acceptedHtml.includes("已接受 patch"));
   assert(parsed.acceptedHtml.includes("已接受校正稿"));
   assert(parsed.acceptedHtml.includes("data-mathpix-edit=\"3\""));
-  assert(parsed.acceptedHtml.includes("未修改"));
+  assert(!parsed.acceptedHtml.includes("未修改"));
   assert(/data-apply-mathpix-block-edit="3"[^>]*data-disable-when-clean="1"[^>]*disabled/.test(parsed.acceptedHtml));
   assert(parsed.acceptedHtml.includes("F=\\sigma T^4"));
   assert(!parsed.acceptedHtml.includes("确认 MinerU 有误后"));
@@ -1587,6 +1587,13 @@ function assertOcrPatchShape(patch) {
   assert(result.cleaned.includes("evolutionary models for binary systems"), "editable cleanup should keep continuous prose on one line");
   assert(!result.cleaned.includes("white dwarf,\\na neutron"), "editable cleanup should remove hard OCR line breaks inside one paragraph");
   assert(!result.rendered.includes("<br>"), "rendered prose should not preserve artificial OCR line breaks");
+}
+
+{
+  const scientificText = "The Webb group reported Δα_EM/α_EM = (-0.72 ± 0.18) x 10^{-5} and a linear drift of 6.4 x 10^{-16}yr^{-1}.";
+  const rendered = call(`renderBlockContent(${JSON.stringify(scientificText)}, { kind: "text", blockIndex: "scientific-symbols" })`);
+  assert(rendered.includes("$\\Delta\\alpha_{\\rm EM}/\\alpha_{\\rm EM}$"), "rendered scientific prose should wrap Greek ratio symbols for MathJax");
+  assert(rendered.includes("$6.4 \\times 10^{-16}\\mathrm{yr}^{-1}$"), "rendered scientific prose should wrap scientific power units for MathJax");
 }
 
 {
@@ -2323,6 +2330,24 @@ function assertOcrPatchShape(patch) {
   assert(!result.includes("{\\cos}"), "display math cleanup should not keep redundant command braces");
   assert(!result.includes("{=}"), "display math cleanup should not keep redundant operator braces");
   assert(!result.includes("~ {\\sin}"), "display math cleanup should remove noisy tilde spacing");
+}
+
+{
+  const messyMathpixTable = [
+    "| Constant k | Limit on k/k (yr^{-1}) | Redshift | Method |",
+    "| --- | --- | --- | --- |",
+    "| \\multirow[t]{4}{*}{Fine structure constant (α_EM = e^2/hc)} | < 1.3 x 10^{-16} | 0 | Clock comparisons |",
+    "| | < 0.5 x 10^{-16} | 0.15 | Oklo natural reactor |",
+    "| $ | | | |",
+    "||||",
+    "||||Weakinteractionconstant\\left(\\alpha_{\\mathrm{W}}=G_f m_p^2 c/\\hbar^3\\right)||0.1510^{9}|OklonaturalreactorBigBangnucleosynthesis||",
+  ].join("\n");
+  const cleaned = call(`cleanMathpixEditableMarkdown(${JSON.stringify(messyMathpixTable)})`);
+  assert(cleaned.includes("Fine structure constant"), "Mathpix table cleanup should keep real table text");
+  assert(cleaned.includes("$\\alpha_{\\rm EM}$"), "Mathpix table cleanup should normalize Greek symbols in table cells");
+  assert(!cleaned.includes("\\multirow"), "Mathpix table cleanup should remove raw multirow commands from editable Markdown");
+  assert(!cleaned.includes("||||"), "Mathpix table cleanup should remove collapsed empty pipe garbage");
+  assert(!cleaned.includes("Weakinteractionconstant"), "Mathpix table cleanup should drop glued duplicate table fragments");
 }
 
 {
@@ -3517,6 +3542,12 @@ function setupPreviewBookExpression(pages) {
           page_idx: 1,
           bbox: [80, 100, 450, 180],
           text: "that bodies made of different material fall with the same acceleration. The theory must incorporate a complete set of electrodynamic and quantum mechanical laws"
+        },
+        {
+          type: "discarded",
+          page_idx: 1,
+          bbox: [80, 450, 450, 620],
+          text: "In a similar manner, reanalyses of decay rates of 187Rhenium in ancient meteorites gave the bound |α_EM/α_EM| < 3.4 x 10^{-16}yr^{-1}. Finally, bounds on any variation of the weak interaction coupling constant α_W have been set by comparing predicted abundances of the light elements produced during Big-Bang nucleosynthesis and the observationally inferred primordial abundances. The current best bounds are summarized in Table 2.2."
         }
       ]);
       state.mineruInfo = {
@@ -3530,6 +3561,13 @@ function setupPreviewBookExpression(pages) {
                 bbox: [80, 100, 450, 230],
                 lines: [
                   { spans: [{ content: "that bodies made of different material fall with the same acceleration. The theory must incorporate a complete set of electrodynamic and quantum mechanical laws, which can be used to calculate real bodies." }] }
+                ]
+              },
+              {
+                type: "text",
+                bbox: [80, 440, 450, 620],
+                lines: [
+                  { spans: [{ content: "In a similar manner, reanalyses of decay rates of 187Rhenium in ancient meteorites gave the bound |dot alpha_EM/alpha_EM| < 3.4 x 10^-16 yr^-1. Finally, bounds on any variation of the weak interaction coupling constant alpha_W have been set by comparing predicted abundances of the light elements produced during Big-Bang nucleosynthesis and the observationally inferred primordial abundances. The current best bounds are summarized in Table 2.2." }] }
                 ]
               }
             ]
@@ -5631,9 +5669,11 @@ function setupPreviewBookExpression(pages) {
   assert(canvasResult.correctionCanvas.includes('data-risk-mathpix="1"'), "correction panel should expose the Mathpix block action");
   assert(canvasResult.correctionCanvas.includes("查看/编辑 MinerU 源码"), "correction panel should expose source editing");
   assert(canvasResult.correctionCanvas.includes('aria-label="收起校正面板"'), "correction panel should expose an explicit collapse action");
-  assert(canvasResult.correctionCanvas.includes(">⌃⌃</button>"), "correction panel collapse action should use a double-arrow glyph");
+  assert(canvasResult.correctionCanvas.includes(">⌃</button>"), "correction panel collapse action should use a single-arrow glyph");
+  assert(!canvasResult.correctionCanvas.includes(">⌃⌃</button>"), "correction panel collapse action should not duplicate the arrow glyph");
   assert(canvasResult.correctionCanvas.includes(">保存</button>"), "correction panel should expose an explicit save action");
   assert(canvasResult.correctionCanvas.includes(">取消</button>"), "correction panel should expose an explicit cancel action");
+  assert(!canvasResult.correctionCanvas.includes(">未修改</button>"), "correction panel should not render a non-action unmodified button");
   assert(canvasResult.hotspots.includes('data-review-left-hotspot="1:0"'), "block with bbox should render a left-column hotspot");
   assert(canvasResult.hotspots.includes('data-review-left-hotspot="1:1"'), "formula block with bbox should render a left-column hotspot");
   assert(!canvasResult.hotspots.includes('data-review-left-hotspot="1:2"'), "block without bbox should not render a left-column hotspot");
@@ -6008,7 +6048,8 @@ assert(reviewHtml.includes('data-review-item-state="mathpix-draft"'), "new Mathp
 assert(!reviewHtml.includes('class="review-item-state"'), "new Mathpix draft should not add noisy state badges in the toolbar");
 assert(!reviewHtml.includes("待核查"), "review item title should avoid noisy pending copy");
 assert(!reviewHtml.includes("公式被拆散"), "review item title should avoid long risk reason chains");
-assert(reviewHtml.includes("保持修改"), "editing Mathpix Markdown should use the streamlined save action");
+assert(/>\s*保存\s*<\/button>/.test(reviewHtml), "editing Mathpix Markdown should use the streamlined save action");
+assert(!reviewHtml.includes("未修改"), "editing Mathpix Markdown should not show the old non-action state button");
 assert(!reviewHtml.includes("应用到校正稿"), "old apply wording should not be shown in block edit UI");
 assert(reviewHtml.includes("New Mathpix draft"), "pending Mathpix draft should be previewed");
 assert(!reviewHtml.includes("Old applied correction</div>"), "old applied correction should not be the visible pending preview");
