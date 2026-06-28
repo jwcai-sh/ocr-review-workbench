@@ -3,6 +3,9 @@ from __future__ import annotations
 import base64
 import io
 import re
+import threading
+import time
+import uuid
 from typing import Any
 
 import fitz
@@ -110,13 +113,20 @@ def _pdf_pages(
 
 
 class OcrPreviewService:
+    def __init__(self) -> None:
+        self._documents: dict[str, dict[str, Any]] = {}
+        self._lock = threading.Lock()
+
     def preview_pages(self, payload: dict[str, Any]) -> dict[str, Any]:
-        parsed = _parse_data_url(str(payload.get("dataUrl") or payload.get("image") or ""))
-        if not parsed:
+        document_id = str(payload.get("documentId") or "").strip()
+        document = self._document_for_payload(document_id, payload)
+        if not document:
             return {"ok": False, "error": "Missing valid dataUrl"}
 
-        mime_type, content = parsed
-        name = str(payload.get("name") or "upload").strip() or "upload"
+        document_id = document["id"]
+        mime_type = document["mimeType"]
+        content = document["content"]
+        name = str(payload.get("name") or document.get("name") or "upload").strip() or "upload"
         render_images = payload.get("renderImages") is not False
         include_text = bool(payload.get("includeText"))
         max_page_cap = 50 if render_images else 500
@@ -144,12 +154,59 @@ class OcrPreviewService:
 
         return {
             "ok": True,
+            "documentId": document_id,
             "name": name,
             "mimeType": mime_type,
             "pages": pages,
             "pageCount": total_pages,
             "renderedCount": len(pages),
         }
+
+    def _document_for_payload(self, document_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        if document_id:
+            document = self._get_document(document_id)
+            if document:
+                return document
+        parsed = _parse_data_url(str(payload.get("dataUrl") or payload.get("image") or ""))
+        if not parsed:
+            return None
+        mime_type, content = parsed
+        return self._store_document(
+            mime_type=mime_type,
+            content=content,
+            name=str(payload.get("name") or "upload").strip() or "upload",
+        )
+
+    def _get_document(self, document_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            document = self._documents.get(document_id)
+            if document:
+                document["lastAccessedAt"] = time.monotonic()
+            return document
+
+    def _store_document(self, *, mime_type: str, content: bytes, name: str) -> dict[str, Any]:
+        self._prune_documents()
+        document_id = uuid.uuid4().hex
+        document = {
+            "id": document_id,
+            "mimeType": mime_type,
+            "content": content,
+            "name": name,
+            "lastAccessedAt": time.monotonic(),
+        }
+        with self._lock:
+            self._documents[document_id] = document
+        return document
+
+    def _prune_documents(self) -> None:
+        expires_before = time.monotonic() - 60 * 60
+        with self._lock:
+            expired = [key for key, value in self._documents.items() if value.get("lastAccessedAt", 0) < expires_before]
+            for key in expired:
+                self._documents.pop(key, None)
+            while len(self._documents) > 4:
+                oldest = min(self._documents.items(), key=lambda item: item[1].get("lastAccessedAt", 0))[0]
+                self._documents.pop(oldest, None)
 
 
 OCR_PREVIEW_SERVICE = OcrPreviewService()

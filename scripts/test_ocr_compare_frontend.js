@@ -427,6 +427,13 @@ $$`;
 }
 
 {
+  assert(source.includes("pdfDocumentId"), "frontend should keep a server-side PDF document id after the first preview request");
+  assert(source.includes("payload.documentId = state.pdfDocumentId"), "page preview requests should reuse documentId instead of reposting the PDF");
+  assert(source.includes("rememberPdfDocumentId(response)"), "preview responses should refresh the cached PDF document id");
+  assert(source.includes("waitForNextPaint()"), "one-click upload should paint busy status before slow remote upload work starts");
+}
+
+{
   const result = JSON.parse(
     call(`(() => {
       const originalDetect = detectRiskCandidatesForPage;

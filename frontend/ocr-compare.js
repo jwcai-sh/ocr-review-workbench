@@ -10,6 +10,7 @@ document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPAR
 const state = {
   pdfFile: null,
   pdfDataUrl: "",
+  pdfDocumentId: "",
   pdfPageCount: 0,
   currentPage: 1,
   pageCache: new Map(),
@@ -493,6 +494,7 @@ async function handleRequiredFilesChange() {
       throw new Error(`缺少文件：${missing.join("、")}`);
     }
     setStatus("一键上传", "busy", "正在读取 PDF / middle.json / content_list");
+    await waitForNextPaint();
     await loadPdfFile(picked.pdf);
     await loadMineruFile(picked.mineru);
     await loadContentListFile(picked.contentList);
@@ -533,6 +535,7 @@ async function loadPdfFile(file) {
   const pdfDataUrl = await readFileAsDataUrl(file);
   state.pdfFile = file;
   state.pdfDataUrl = pdfDataUrl;
+  state.pdfDocumentId = "";
   state.pageCache.clear();
   state.pdfTextPageCache.clear();
   state.mathpixCache.clear();
@@ -623,6 +626,7 @@ function resetPage() {
   clearPersistedOcrWorkspaceState();
   state.pdfFile = null;
   state.pdfDataUrl = "";
+  state.pdfDocumentId = "";
   state.pdfPageCount = 0;
   state.currentPage = 1;
   state.pageCache.clear();
@@ -1195,15 +1199,15 @@ async function loadPagePreview(pageNumber) {
   if (pendingPagePreviewRequests.has(requestedPage)) {
     return pendingPagePreviewRequests.get(requestedPage);
   }
-  const request = postJson("/api/ocr/preview-pages", {
-    name: state.pdfFile?.name || "book.pdf",
-    mimeType: state.pdfFile?.type || "application/pdf",
-    dataUrl: state.pdfDataUrl,
-    pageNumber: requestedPage,
-    maxPages: 1,
-    zoom: 1.8,
-    includeText: true,
-  }).finally(() => {
+  const request = postJson(
+    "/api/ocr/preview-pages",
+    pdfPreviewPayload({
+      pageNumber: requestedPage,
+      maxPages: 1,
+      zoom: 1.8,
+      includeText: true,
+    }),
+  ).finally(() => {
     pendingPagePreviewRequests.delete(requestedPage);
   });
   pendingPagePreviewRequests.set(requestedPage, request);
@@ -1211,6 +1215,7 @@ async function loadPagePreview(pageNumber) {
   if (!response.ok) {
     throw new Error(response.error || "PDF 页面渲染失败");
   }
+  rememberPdfDocumentId(response);
   return response;
 }
 
@@ -1288,20 +1293,49 @@ async function ensurePdfTextLayersForBook() {
   if (!missing) {
     return true;
   }
-  const response = await postJson("/api/ocr/preview-pages", {
-    name: state.pdfFile.name || "book.pdf",
-    mimeType: state.pdfFile.type || "application/pdf",
-    dataUrl: state.pdfDataUrl,
-    maxPages: total,
-    zoom: 1,
-    includeText: true,
-    renderImages: false,
-  });
+  const response = await postJson(
+    "/api/ocr/preview-pages",
+    pdfPreviewPayload({
+      maxPages: total,
+      zoom: 1,
+      includeText: true,
+      renderImages: false,
+    }),
+  );
   if (!response.ok) {
     throw new Error(response.error || "PDF 文本层读取失败");
   }
+  rememberPdfDocumentId(response);
   (response.pages || []).forEach(cachePdfTextPage);
   return true;
+}
+
+function pdfPreviewPayload(extra = {}) {
+  const payload = {
+    name: state.pdfFile?.name || "book.pdf",
+    mimeType: state.pdfFile?.type || "application/pdf",
+    ...extra,
+  };
+  if (state.pdfDocumentId) {
+    payload.documentId = state.pdfDocumentId;
+  } else {
+    payload.dataUrl = state.pdfDataUrl;
+  }
+  return payload;
+}
+
+function rememberPdfDocumentId(response) {
+  const documentId = String(response?.documentId || "").trim();
+  if (documentId) {
+    state.pdfDocumentId = documentId;
+  }
+}
+
+function waitForNextPaint() {
+  if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
 }
 
 function renderImageCard(page) {
