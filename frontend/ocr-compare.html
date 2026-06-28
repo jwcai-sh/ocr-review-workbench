@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OCR 三栏对照</title>
-  <link rel="stylesheet" href="./ocr-compare.css?v=20260628-direct-file-input-local-mathjax">
+  <link rel="stylesheet" href="./ocr-compare.css?v=20260628-direct-input-mathjax-ready">
 </head>
 <body>
   <div class="ocr-shell">
@@ -108,12 +108,12 @@
       startup: {
         typeset: false,
         pageReady: () =>
-          MathJax.startup.defaultPageReady().then(() => {
+          window.MathJax.startup.defaultPageReady().then(() => {
             window.dispatchEvent(new Event("mathjax-ready"));
           })
       }
     };
   </script>
-  <script src="./ocr-compare.js?v=20260628-direct-file-input-local-mathjax"></script>
+  <script src="./ocr-compare.js?v=20260628-direct-input-mathjax-ready"></script>
 </body>
 </html>

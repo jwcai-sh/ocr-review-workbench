@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260628-direct-file-input-local-mathjax";
+const OCR_COMPARE_BUILD_ID = "20260628-direct-input-mathjax-ready";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -9967,8 +9967,48 @@ function ensureMathJaxLoaded() {
   if (typeof document === "undefined" || typeof document.createElement !== "function") {
     return Promise.reject(new Error("MathJax loader requires document.createElement."));
   }
+  configureMathJax();
   mathJaxLoadPromise = loadMathJaxScriptFromFallbacks();
   return mathJaxLoadPromise;
+}
+
+function configureMathJax() {
+  const existing = window.MathJax && typeof window.MathJax === "object" ? window.MathJax : {};
+  window.MathJax = {
+    ...existing,
+    loader: {
+      ...(existing.loader || {}),
+      paths: {
+        ...((existing.loader && existing.loader.paths) || {}),
+        mathjax: "./vendor/mathjax",
+      },
+      load: Array.from(new Set([...(existing.loader?.load || []), "[tex]/boldsymbol"])),
+    },
+    tex: {
+      ...(existing.tex || {}),
+      packages: {
+        ...((existing.tex && existing.tex.packages) || {}),
+        "[+]": Array.from(new Set([...(existing.tex?.packages?.["[+]"] || []), "boldsymbol"])),
+      },
+      inlineMath: existing.tex?.inlineMath || [["$", "$"], ["\\(", "\\)"]],
+      displayMath: existing.tex?.displayMath || [["$$", "$$"], ["\\[", "\\]"]],
+      processEscapes: true,
+    },
+    options: {
+      ...(existing.options || {}),
+      skipHtmlTags: existing.options?.skipHtmlTags || ["script", "noscript", "style", "textarea", "pre", "code"],
+    },
+    startup: {
+      ...(existing.startup || {}),
+      typeset: false,
+      pageReady:
+        existing.startup?.pageReady ||
+        (() =>
+          window.MathJax.startup.defaultPageReady().then(() => {
+            window.dispatchEvent(new Event("mathjax-ready"));
+          })),
+    },
+  };
 }
 
 async function loadMathJaxScriptFromFallbacks() {
@@ -10005,9 +10045,17 @@ function loadMathJaxScript(url) {
     script.addEventListener("load", () => {
       const startup = window.MathJax?.startup?.promise;
       if (startup?.then) {
-        startup.then(() => finish(resolve, window.MathJax)).catch((error) => finish(reject, error));
+        startup
+          .then(() => {
+            if (window.MathJax?.typesetPromise) {
+              finish(resolve, window.MathJax);
+            } else {
+              finish(reject, new Error(`MathJax loaded without typesetPromise: ${url}`));
+            }
+          })
+          .catch((error) => finish(reject, error));
       } else {
-        finish(resolve, window.MathJax);
+        finish(reject, new Error(`MathJax startup promise missing: ${url}`));
       }
     });
     script.addEventListener("error", () => finish(reject, new Error(`MathJax failed to load: ${url}`)));
