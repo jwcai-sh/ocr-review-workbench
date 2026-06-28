@@ -145,9 +145,9 @@ function runOcrCompareInContext(testContext) {
   assert(!ocrCompareHtml.includes("cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"), "MathJax CDN should be lazy-loaded by ocr-compare.js");
   assert(ocrCompareHtml.includes('load: ["[tex]/boldsymbol"]'), "MathJax should load boldsymbol for vector formulas converted from pmb");
   assert(ocrCompareHtml.includes('packages: { "[+]": ["boldsymbol"] }'), "MathJax should enable the boldsymbol TeX package");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-known-cal-n"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-known-cal-n"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-known-cal-n"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-remote-pdf-cache"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-remote-pdf-cache"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-remote-pdf-cache"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
