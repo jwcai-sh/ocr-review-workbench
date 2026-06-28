@@ -4,13 +4,14 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260628-direct-input-mathjax-ready";
+const OCR_COMPARE_BUILD_ID = "20260628-client-pdf-render";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
   pdfFile: null,
   pdfDataUrl: "",
   pdfDocumentId: "",
+  pdfLocalDocument: null,
   pdfPageCount: 0,
   currentPage: 1,
   pageCache: new Map(),
@@ -52,6 +53,11 @@ const OCR_WORKSPACE_STORAGE_PREFIX = "uma-ocr-compare-workspace-v1";
 const PDF_IMAGE_ZOOM_LEVELS = [1, 1.25, 1.5, 1.75, 2, 2.5];
 const REVIEW_FONT_SCALE_LEVELS = [0.9, 1, 1.1, 1.2, 1.35, 1.5];
 const PDF_UPLOAD_CHUNK_SIZE = 1024 * 1024;
+const PDFJS_SCRIPT_URLS = [
+  "./vendor/pdfjs/pdf.mjs",
+  "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs",
+];
+const PDFJS_WORKER_URL = "./vendor/pdfjs/pdf.worker.mjs";
 const MATHJAX_SCRIPT_URLS = [
   "./vendor/mathjax/tex-chtml.js",
   "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js",
@@ -81,6 +87,7 @@ let ocrCoreValidateRenderability = null;
 let ocrCorePatchLoadStarted = false;
 let ocrCorePatchWarningShown = false;
 let mathJaxLoadPromise = null;
+let pdfJsLoadPromise = null;
 let riskAnalysisTimer = null;
 let riskAnalysisRunId = 0;
 let renderCurrentPageRunId = 0;
@@ -596,12 +603,17 @@ function identifyRequiredUploadFiles(files) {
 }
 
 async function loadPdfFile(file) {
-  setStatus("上传 PDF", "busy", `${file.name} (${formatBytes(file.size || 0)})`);
+  setStatus("读取 PDF", "busy", `${file.name} (${formatBytes(file.size || 0)})`);
   await waitForNextPaint();
-  const upload = await uploadPreviewDocument(file);
+  const localDocument = await loadLocalPdfDocument(file).catch((error) => {
+    console.warn?.("[OCR Review] 浏览器本地 PDF 渲染不可用，回退到后端上传。", error);
+    return null;
+  });
+  const upload = localDocument ? null : await uploadPreviewDocument(file);
   state.pdfFile = file;
   state.pdfDataUrl = "";
-  state.pdfDocumentId = upload.documentId || "";
+  state.pdfDocumentId = upload?.documentId || "";
+  state.pdfLocalDocument = localDocument;
   state.pageCache.clear();
   state.pdfTextPageCache.clear();
   state.mathpixCache.clear();
@@ -620,7 +632,7 @@ async function loadPdfFile(file) {
   state.currentPage = 1;
   setStatus("渲染 PDF", "busy", file.name);
   const preview = await loadPagePreview(1);
-  state.pdfPageCount = preview.pageCount || upload.pageCount || preview.pages?.length || 1;
+  state.pdfPageCount = preview.pageCount || upload?.pageCount || preview.pages?.length || 1;
   cachePreviewPage(1, preview);
   if (state.mineruInfo) {
     analyzeCurrentMineruRiskPage();
@@ -693,6 +705,7 @@ function resetPage() {
   state.pdfFile = null;
   state.pdfDataUrl = "";
   state.pdfDocumentId = "";
+  state.pdfLocalDocument = null;
   state.pdfPageCount = 0;
   state.currentPage = 1;
   state.pageCache.clear();
@@ -1265,14 +1278,21 @@ async function loadPagePreview(pageNumber) {
   if (pendingPagePreviewRequests.has(requestedPage)) {
     return pendingPagePreviewRequests.get(requestedPage);
   }
-  const request = postJson(
-    "/api/ocr/preview-pages",
-    pdfPreviewPayload({
-      pageNumber: requestedPage,
-      maxPages: 1,
-      zoom: 1.8,
-      includeText: true,
-    }),
+  const request = (state.pdfLocalDocument
+    ? renderLocalPdfPreviewPage(requestedPage, {
+        zoom: 1.8,
+        includeText: true,
+        renderImages: true,
+      })
+    : postJson(
+        "/api/ocr/preview-pages",
+        pdfPreviewPayload({
+          pageNumber: requestedPage,
+          maxPages: 1,
+          zoom: 1.8,
+          includeText: true,
+        }),
+      )
   ).finally(() => {
     pendingPagePreviewRequests.delete(requestedPage);
   });
@@ -1283,6 +1303,96 @@ async function loadPagePreview(pageNumber) {
   }
   rememberPdfDocumentId(response);
   return response;
+}
+
+async function loadLocalPdfDocument(file) {
+  if (!file || String(file.type || "").startsWith("image/")) {
+    return null;
+  }
+  const pdfjs = await ensurePdfJsLoaded();
+  const data = await file.arrayBuffer();
+  const loadingTask = pdfjs.getDocument({ data });
+  return loadingTask.promise;
+}
+
+async function renderLocalPdfPreviewPage(pageNumber, options = {}) {
+  const document = state.pdfLocalDocument;
+  if (!document) {
+    return { ok: false, error: "Missing local PDF document" };
+  }
+  const total = Number(document.numPages) || 1;
+  const requestedPage = Math.max(1, Math.min(Number(pageNumber) || 1, total));
+  const page = await renderLocalPdfPage(requestedPage, options);
+  return {
+    ok: true,
+    documentId: "",
+    name: state.pdfFile?.name || "book.pdf",
+    mimeType: state.pdfFile?.type || "application/pdf",
+    pages: [page],
+    pageCount: total,
+    renderedCount: 1,
+  };
+}
+
+async function renderLocalPdfPage(pageNumber, options = {}) {
+  const pdfPage = await state.pdfLocalDocument.getPage(pageNumber);
+  const baseViewport = pdfPage.getViewport({ scale: 1 });
+  const renderImages = options.renderImages !== false;
+  const includeText = Boolean(options.includeText);
+  const zoom = Math.max(1, Math.min(Number(options.zoom) || 1.8, 3));
+  const page = {
+    pageNumber,
+    name: `page-${pageNumber}.png`,
+    mimeType: "image/png",
+    width: Number(baseViewport.width) || 0,
+    height: Number(baseViewport.height) || 0,
+  };
+  if (renderImages) {
+    const viewport = pdfPage.getViewport({ scale: zoom });
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("浏览器无法创建 PDF 渲染画布。");
+    }
+    canvas.width = Math.max(1, Math.ceil(viewport.width));
+    canvas.height = Math.max(1, Math.ceil(viewport.height));
+    await pdfPage.render({ canvasContext: context, viewport }).promise;
+    page.width = canvas.width;
+    page.height = canvas.height;
+    page.image = canvas.toDataURL("image/png");
+  }
+  if (includeText) {
+    page.textBlocks = await localPdfTextBlocks(pdfPage, baseViewport);
+    page.textPageSize = [Number(baseViewport.width) || page.width, Number(baseViewport.height) || page.height];
+  }
+  return page;
+}
+
+async function localPdfTextBlocks(pdfPage, viewport) {
+  const height = Number(viewport?.height) || 0;
+  const textContent = await pdfPage.getTextContent().catch(() => ({ items: [] }));
+  return (Array.isArray(textContent?.items) ? textContent.items : [])
+    .map((item) => {
+      const text = String(item?.str || "").trim();
+      const transform = Array.isArray(item?.transform) ? item.transform : [];
+      const x = Number(transform[4]) || 0;
+      const y = Number(transform[5]) || 0;
+      const width = Math.max(Number(item?.width) || 0, text.length * 3);
+      const itemHeight = Math.max(Number(item?.height) || Math.abs(Number(transform[3]) || 0) || 8, 1);
+      if (!text) {
+        return null;
+      }
+      return {
+        text,
+        bbox: [
+          x,
+          Math.max(0, height - y - itemHeight),
+          x + width,
+          Math.max(0, height - y),
+        ],
+      };
+    })
+    .filter(Boolean);
 }
 
 function scheduleAdjacentPagePreviewPrefetch() {
@@ -1359,6 +1469,19 @@ async function ensurePdfTextLayersForBook() {
   if (!missing) {
     return true;
   }
+  if (state.pdfLocalDocument) {
+    for (let pageNo = 1; pageNo <= total; pageNo += 1) {
+      if (state.pdfTextPageCache.has(pageNo)) {
+        continue;
+      }
+      const page = await renderLocalPdfPage(pageNo, {
+        includeText: true,
+        renderImages: false,
+      });
+      cachePdfTextPage(page);
+    }
+    return true;
+  }
   const response = await postJson(
     "/api/ocr/preview-pages",
     pdfPreviewPayload({
@@ -1424,7 +1547,7 @@ async function uploadPreviewDocument(file) {
 }
 
 function hasPdfSource() {
-  return Boolean(state.pdfDocumentId || state.pdfDataUrl);
+  return Boolean(state.pdfLocalDocument || state.pdfDocumentId || state.pdfDataUrl);
 }
 
 function rememberPdfDocumentId(response) {
@@ -9955,6 +10078,33 @@ function reportMathJaxError(error) {
 function rootHasMathContent(root) {
   const text = String(root?.textContent || "");
   return /(\$\$?|\\\(|\\\[|\\begin\{|\^|_\{)/.test(text);
+}
+
+async function ensurePdfJsLoaded() {
+  if (pdfJsLoadPromise) {
+    return pdfJsLoadPromise;
+  }
+  pdfJsLoadPromise = loadPdfJsFromFallbacks();
+  return pdfJsLoadPromise;
+}
+
+async function loadPdfJsFromFallbacks() {
+  const errors = [];
+  for (const url of PDFJS_SCRIPT_URLS) {
+    try {
+      const pdfjs = await import(url);
+      if (pdfjs?.GlobalWorkerOptions) {
+        pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+      }
+      if (typeof pdfjs?.getDocument !== "function") {
+        throw new Error(`PDF.js getDocument missing: ${url}`);
+      }
+      return pdfjs;
+    } catch (error) {
+      errors.push(error?.message || String(error || url));
+    }
+  }
+  throw new Error(`PDF.js 加载失败：${errors.join("; ")}`);
 }
 
 function ensureMathJaxLoaded() {

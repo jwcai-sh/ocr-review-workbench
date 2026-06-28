@@ -13,6 +13,8 @@ const ocrCompareHtml = fs.readFileSync("frontend/ocr-compare.html", "utf8");
 const ocrCompareCss = fs.readFileSync("frontend/ocr-compare.css", "utf8");
 const localMathJaxScript = fs.readFileSync("frontend/vendor/mathjax/tex-chtml.js", "utf8");
 const localMathJaxBoldsymbol = fs.readFileSync("frontend/vendor/mathjax/input/tex/extensions/boldsymbol.js", "utf8");
+const localPdfJsScript = fs.readFileSync("frontend/vendor/pdfjs/pdf.mjs", "utf8");
+const localPdfJsWorker = fs.readFileSync("frontend/vendor/pdfjs/pdf.worker.mjs", "utf8");
 const { hashBlockText: nodeHashBlockText } = require(path.resolve("frontend/ocr-core/patch/blockHasher"));
 const { createOcrPatch: nodeCreateOcrPatch } = require(path.resolve("frontend/ocr-core/patch/patchGenerator"));
 
@@ -154,9 +156,9 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('packages: { "[+]": ["boldsymbol"] }'), "MathJax should enable the boldsymbol TeX package");
   assert(ocrCompareHtml.includes('paths: {'), "MathJax config should define a local component base path");
   assert(ocrCompareHtml.includes('mathjax: "./vendor/mathjax"'), "MathJax boldsymbol extension should be served locally");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-direct-input-mathjax-ready"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-direct-input-mathjax-ready"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-direct-input-mathjax-ready"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-client-pdf-render"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-client-pdf-render"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-client-pdf-render"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
@@ -444,6 +446,16 @@ $$`;
 
 {
   assert(source.includes("pdfDocumentId"), "frontend should keep a server-side PDF document id after the first preview request");
+  assert(source.includes("pdfLocalDocument"), "frontend should keep a browser-side PDF document for remote deployments");
+  assert(source.includes("PDFJS_SCRIPT_URLS"), "frontend should lazy-load local PDF.js for browser-side PDF rendering");
+  assert(source.includes('"./vendor/pdfjs/pdf.mjs"'), "frontend should prefer bundled PDF.js over uploading the whole PDF");
+  assert(source.includes("PDFJS_WORKER_URL"), "frontend should use a bundled PDF.js worker");
+  assert(source.includes("loadLocalPdfDocument(file)"), "PDF upload should try browser-side rendering before backend upload");
+  assert(source.includes("renderLocalPdfPreviewPage"), "page previews should render from the browser-side PDF document when available");
+  assert(source.includes("renderLocalPdfPage"), "local PDF rendering should produce page images and text layers");
+  assert(source.includes("state.pdfLocalDocument || state.pdfDocumentId || state.pdfDataUrl"), "PDF-dependent controls should accept local browser PDF documents");
+  assert(localPdfJsScript.includes("getDocument"), "bundled PDF.js module should be present");
+  assert(localPdfJsWorker.includes("WorkerMessageHandler"), "bundled PDF.js worker should be present");
   assert(source.includes("payload.documentId = state.pdfDocumentId"), "page preview requests should reuse documentId instead of reposting the PDF");
   assert(source.includes("rememberPdfDocumentId(response)"), "preview responses should refresh the cached PDF document id");
   assert(source.includes("waitForNextPaint()"), "one-click upload should paint busy status before slow remote upload work starts");
