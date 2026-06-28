@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260628-review-polish-table-cleanup";
+const OCR_COMPARE_BUILD_ID = "20260628-science-inline-font";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -4491,32 +4491,19 @@ function replaceOutsideInlineMathSpans(text, transform) {
 }
 
 function normalizeGreekMathTextTokens(text) {
-  return String(text || "")
-    .replace(
-      /(^|[^\p{L}\p{N}\\$])([Δδ])?([Α-Ωα-ωµμ])(?:\s*[_]?\s*\{?([A-Za-z]{1,4})\}?)?\s*\/\s*\3(?:\s*[_]?\s*\{?\4\}?)?(?![\p{L}\p{N}])/gu,
-      (match, prefix, deltaSymbol, symbol, suffix) => {
-        const latex = latexGreekSymbol(symbol);
-        if (!latex) {
-          return match;
-        }
-        const deltaLatex = deltaSymbol ? latexGreekSymbol(deltaSymbol) : "";
-        const suffixText = String(suffix || "");
-        const subscript = suffixText ? `_{${/^[A-Z]{2,4}$/.test(suffixText) ? `\\rm ${suffixText}` : suffixText}}` : "";
-        return `${prefix}$${deltaLatex}${latex}${subscript}/${latex}${subscript}$`;
-      },
-    )
-    .replace(
-      /(^|[^\p{L}\p{N}\\$])([Α-Ωα-ωµμ])(?:\s*[_]?\s*\{?([A-Za-z]{1,4})\}?)?(?![\p{L}\p{N}])/gu,
-      (match, prefix, symbol, suffix) => {
-        const latex = latexGreekSymbol(symbol);
-        if (!latex) {
-          return match;
-        }
-        const suffixText = String(suffix || "");
-        const subscript = suffixText ? `_{${/^[A-Z]{2,4}$/.test(suffixText) ? `\\rm ${suffixText}` : suffixText}}` : "";
-        return `${prefix}$${latex}${subscript}$`;
-      },
-    );
+  return String(text || "").replace(
+    /(^|[^\p{L}\p{N}\\$])([Δδ])?([Α-Ωα-ωµμ])(?:\s*[_]?\s*\{?([A-Za-z]{1,4})\}?)?\s*\/\s*\3(?:\s*[_]?\s*\{?\4\}?)?(?![\p{L}\p{N}])/gu,
+    (match, prefix, deltaSymbol, symbol, suffix) => {
+      const latex = latexGreekSymbol(symbol);
+      if (!latex) {
+        return match;
+      }
+      const deltaLatex = deltaSymbol ? latexGreekSymbol(deltaSymbol) : "";
+      const suffixText = String(suffix || "");
+      const subscript = suffixText ? `_{${/^[A-Z]{1,4}$/.test(suffixText) ? `\\rm ${suffixText}` : suffixText}}` : "";
+      return `${prefix}$${deltaLatex}${latex}${subscript}/${latex}${subscript}$`;
+    },
+  );
 }
 
 function normalizeScientificPowerTextTokens(text) {
@@ -9870,10 +9857,10 @@ function renderMarkdownTable(lines) {
   const width = Math.max(header.length, ...bodyRows.map((row) => row.length), 1);
   const normalizeRow = (row) => row.concat(Array(Math.max(0, width - row.length)).fill(""));
   const headHtml = normalizeRow(header)
-    .map((cell) => `<th>${escapeHtml(cell)}</th>`)
+    .map((cell) => `<th>${renderInlineTextHtml(cell)}</th>`)
     .join("");
   const bodyHtml = bodyRows
-    .map((row) => `<tr>${normalizeRow(row).map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+    .map((row) => `<tr>${normalizeRow(row).map((cell) => `<td>${renderInlineTextHtml(cell)}</td>`).join("")}</tr>`)
     .join("");
   return `<div class="markdown-table-wrap"><table><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
 }
@@ -9938,10 +9925,10 @@ function renderLatexTableBlock(lines) {
   const normalizeRow = (row) => row.concat(Array(Math.max(0, width - row.length)).fill(""));
   const [header, ...bodyRows] = rows;
   const headHtml = normalizeRow(header)
-    .map((cell) => `<th>${escapeHtml(cell)}</th>`)
+    .map((cell) => `<th>${renderInlineTextHtml(cell)}</th>`)
     .join("");
   const bodyHtml = bodyRows
-    .map((row) => `<tr>${normalizeRow(row).map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+    .map((row) => `<tr>${normalizeRow(row).map((cell) => `<td>${renderInlineTextHtml(cell)}</td>`).join("")}</tr>`)
     .join("");
   return `<figure class="latex-table-figure">
     ${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ""}
@@ -9973,9 +9960,51 @@ function renderParagraph(lines) {
       .map((image) => renderMarkdownImage(image.alt || "image", image.src))
       .join("");
     const textWithoutImages = normalizeRenderedParagraphText(stripMarkdownImageReferences(text));
-    return `${imageHtml}${textWithoutImages ? `<p>${escapeHtml(textWithoutImages).replace(/\n/g, "<br>")}</p>` : ""}`;
+    return `${imageHtml}${textWithoutImages ? `<p>${renderInlineTextHtml(textWithoutImages).replace(/\n/g, "<br>")}</p>` : ""}`;
   }
-  return `<p>${escapeHtml(text).replace(/\n/g, "<br>")}</p>`;
+  return `<p>${renderInlineTextHtml(text).replace(/\n/g, "<br>")}</p>`;
+}
+
+function renderInlineTextHtml(text) {
+  return String(text || "")
+    .split(/(\$[^$\n]*\$|\\\([\s\S]*?\\\))/g)
+    .map((part) => {
+      if (!part) {
+        return "";
+      }
+      if (/^(\$[^$\n]*\$|\\\([\s\S]*?\\\))$/.test(part)) {
+        return escapeHtml(part);
+      }
+      return renderSimpleScienceTextHtml(part);
+    })
+    .join("");
+}
+
+function renderSimpleScienceTextHtml(text) {
+  const replacements = [];
+  const markerFor = (html) => {
+    const marker = `\uE000${replacements.length}\uE001`;
+    replacements.push(html);
+    return marker;
+  };
+  const withMarkers = String(text || "")
+    .replace(/\b([A-Za-z])_([A-Za-z]{1,3})\/([A-Za-z])_([A-Za-z]{1,3})\b/g, (_match, leftBase, leftSub, rightBase, rightSub) =>
+      markerFor(`${scienceInlineSymbolHtml(leftBase, leftSub)}/${scienceInlineSymbolHtml(rightBase, rightSub)}`),
+    )
+    .replace(
+      /(^|[^\p{L}\p{N}\\$])([Α-Ωα-ωµμ])\s*_\s*\{?([A-Za-z]{1,4})\}?(?![\p{L}\p{N}])/gu,
+      (_match, prefix, symbol, suffix) => `${prefix}${markerFor(scienceInlineSymbolHtml(symbol, suffix))}`,
+    )
+    .replace(/\b([A-Za-z])_([A-Za-z]{1,3})\b/g, (_match, base, suffix) =>
+      markerFor(scienceInlineSymbolHtml(base, suffix)),
+    );
+  return escapeHtml(withMarkers).replace(/\uE000(\d+)\uE001/g, (_match, index) => replacements[Number(index)] || "");
+}
+
+function scienceInlineSymbolHtml(base, suffix = "") {
+  const safeBase = escapeHtml(base);
+  const safeSuffix = escapeHtml(suffix);
+  return `<span class="science-inline-symbol">${safeBase}${safeSuffix ? `<sub>${safeSuffix}</sub>` : ""}</span>`;
 }
 
 function normalizeRenderedParagraphText(text) {
@@ -10004,7 +10033,7 @@ function renderList(lines) {
   const items = lines
     .map((line) => line.replace(/^\s*[-*+]\s+/, "").trim())
     .filter(Boolean)
-    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .map((item) => `<li>${renderInlineTextHtml(item)}</li>`)
     .join("");
   return items ? `<ul>${items}</ul>` : "";
 }

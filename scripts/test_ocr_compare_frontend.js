@@ -156,9 +156,10 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('packages: { "[+]": ["boldsymbol"] }'), "MathJax should enable the boldsymbol TeX package");
   assert(ocrCompareHtml.includes('paths: {'), "MathJax config should define a local component base path");
   assert(ocrCompareHtml.includes('mathjax: "./vendor/mathjax"'), "MathJax boldsymbol extension should be served locally");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-review-polish-table-cleanup"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-review-polish-table-cleanup"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-review-polish-table-cleanup"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-science-inline-font"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-science-inline-font"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-science-inline-font"'));
+  assert(ocrCompareCss.includes(".science-inline-symbol"));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
@@ -1597,6 +1598,16 @@ function assertOcrPatchShape(patch) {
 }
 
 {
+  const scientificSymbolsText = "structure constant α_EM, the weak interaction constant α_W, the electron-proton mass ratio m_e/m_p or the proton gyromagnetic ratio g_p, for example";
+  const rendered = call(`renderBlockContent(${JSON.stringify(scientificSymbolsText)}, { kind: "text", blockIndex: "science-inline-font" })`);
+  assert(rendered.includes('<span class="science-inline-symbol">α<sub>EM</sub></span>'), "standalone Greek scientific constants should use body-font HTML subscripts");
+  assert(rendered.includes('<span class="science-inline-symbol">α<sub>W</sub></span>'), "single-letter Greek subscripts should use body-font HTML subscripts");
+  assert(rendered.includes('<span class="science-inline-symbol">m<sub>e</sub></span>/<span class="science-inline-symbol">m<sub>p</sub></span>'), "ASCII scientific ratios should use body-font HTML subscripts");
+  assert(rendered.includes('<span class="science-inline-symbol">g<sub>p</sub></span>'), "single ASCII scientific constants should use body-font HTML subscripts");
+  assert(!rendered.includes("$\\alpha_{\\rm EM}$"), "standalone simple symbols should not need MathJax font rendering");
+}
+
+{
   const result = JSON.parse(
     call(`(() => {
       state.currentPage = 1;
@@ -2344,7 +2355,7 @@ function assertOcrPatchShape(patch) {
   ].join("\n");
   const cleaned = call(`cleanMathpixEditableMarkdown(${JSON.stringify(messyMathpixTable)})`);
   assert(cleaned.includes("Fine structure constant"), "Mathpix table cleanup should keep real table text");
-  assert(cleaned.includes("$\\alpha_{\\rm EM}$"), "Mathpix table cleanup should normalize Greek symbols in table cells");
+  assert(cleaned.includes("α_EM"), "Mathpix table cleanup should keep simple Greek constants editable as source text");
   assert(!cleaned.includes("\\multirow"), "Mathpix table cleanup should remove raw multirow commands from editable Markdown");
   assert(!cleaned.includes("||||"), "Mathpix table cleanup should remove collapsed empty pipe garbage");
   assert(!cleaned.includes("Weakinteractionconstant"), "Mathpix table cleanup should drop glued duplicate table fragments");
