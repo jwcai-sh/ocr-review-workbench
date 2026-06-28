@@ -36,6 +36,10 @@ textarea {
   font: inherit;
 }
 
+label[role="button"] {
+  user-select: none;
+}
+
 .ocr-shell {
   min-height: 100vh;
   display: grid;
@@ -172,6 +176,11 @@ textarea {
   border-radius: 8px;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.upload-button:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.45);
+  outline-offset: 2px;
 }
 
 .upload-button.primary-button {

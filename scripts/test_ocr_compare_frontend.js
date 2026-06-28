@@ -86,6 +86,8 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareCss.includes(".control-column-pdf"));
   assert(ocrCompareCss.includes(".upload-button.primary-button"));
   assert(ocrCompareCss.includes(".upload-all-button"));
+  assert(ocrCompareCss.includes('label[role="button"]'));
+  assert(ocrCompareCss.includes(".upload-button:focus-visible"));
   assert(ocrCompareCss.includes("font-size: calc(17px * var(--review-font-scale, 1));"));
   assert(ocrCompareCss.includes("font-size: calc(13px * var(--review-font-scale, 1));"));
   assert(ocrCompareCss.includes(".accepted-top-actions"));
@@ -145,9 +147,9 @@ function runOcrCompareInContext(testContext) {
   assert(!ocrCompareHtml.includes("cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"), "MathJax CDN should be lazy-loaded by ocr-compare.js");
   assert(ocrCompareHtml.includes('load: ["[tex]/boldsymbol"]'), "MathJax should load boldsymbol for vector formulas converted from pmb");
   assert(ocrCompareHtml.includes('packages: { "[+]": ["boldsymbol"] }'), "MathJax should enable the boldsymbol TeX package");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-file-input-events"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-file-input-events"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-file-input-events"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-native-file-labels"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-native-file-labels"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-native-file-labels"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
@@ -264,23 +266,21 @@ function runOcrCompareInContext(testContext) {
     call(`(() => {
       const input = {
         value: "/tmp/book.pdf",
-        clickCount: 0,
-        click() {
-          this.clickCount += 1;
-        }
+        dataset: { fileInputKey: "pdfInput" }
       };
       return JSON.stringify({
-        opened: openFilePicker(input),
+        opened: prepareFilePickerInput(input),
         value: input.value,
-        clickCount: input.clickCount,
-        missing: openFilePicker(null)
+        missing: prepareFilePickerInput(null)
       });
     })()`),
   );
   assert.strictEqual(pickerResult.opened, true);
   assert.strictEqual(pickerResult.value, "", "file input must reset so selecting the same file fires change again");
-  assert.strictEqual(pickerResult.clickCount, 1);
   assert.strictEqual(pickerResult.missing, false);
+  assert(ocrCompareHtml.includes('for="pdfInput"'), "PDF upload should use native label activation instead of JS-only click");
+  assert(ocrCompareHtml.includes('for="requiredFilesInput"'), "one-click upload should use native label activation instead of JS-only click");
+  assert(source.includes("bindNativeFilePickerLabel"), "file picker labels should prepare state without relying on JS click for mouse users");
   assert(source.includes('setStatus("上传 PDF", "busy"'));
   assert(source.includes('setStatus("渲染 PDF", "busy", file.name);'));
   assert(source.includes('setStatus("读取 MinerU", "busy", file.name);'));

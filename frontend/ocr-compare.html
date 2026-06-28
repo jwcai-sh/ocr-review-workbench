@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OCR 三栏对照</title>
-  <link rel="stylesheet" href="./ocr-compare.css?v=20260628-file-input-events">
+  <link rel="stylesheet" href="./ocr-compare.css?v=20260628-native-file-labels">
 </head>
 <body>
   <div class="ocr-shell">
@@ -22,7 +22,7 @@
       <input id="contentListInput" class="hidden-input" type="file" accept=".json,application/json">
       <input id="requiredFilesInput" class="hidden-input" type="file" accept=".pdf,application/pdf,.json,application/json" multiple>
       <div class="control-column control-column-pdf" aria-label="上传 OCR 输入文件">
-        <button id="pickPdfButton" class="primary-button upload-button" type="button">
+        <label id="pickPdfButton" class="primary-button upload-button" for="pdfInput" role="button" tabindex="0">
           <span class="upload-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
               <path d="M12 3v12"></path>
@@ -31,8 +31,8 @@
             </svg>
           </span>
           <span>上传 PDF</span>
-        </button>
-        <button id="pickMineruButton" class="secondary-button upload-button" type="button">
+        </label>
+        <label id="pickMineruButton" class="secondary-button upload-button" for="mineruInput" role="button" tabindex="0">
           <span class="upload-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
               <path d="M12 3v12"></path>
@@ -41,8 +41,8 @@
             </svg>
           </span>
           <span>上传 middle.json</span>
-        </button>
-        <button id="pickContentListButton" class="secondary-button upload-button" type="button">
+        </label>
+        <label id="pickContentListButton" class="secondary-button upload-button" for="contentListInput" role="button" tabindex="0">
           <span class="upload-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
               <path d="M12 3v12"></path>
@@ -51,8 +51,8 @@
             </svg>
           </span>
           <span>上传 content_list</span>
-        </button>
-        <button id="pickRequiredFilesButton" class="secondary-button upload-button upload-all-button" type="button">
+        </label>
+        <label id="pickRequiredFilesButton" class="secondary-button upload-button upload-all-button" for="requiredFilesInput" role="button" tabindex="0">
           <span class="upload-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
               <path d="M12 3v12"></path>
@@ -61,7 +61,7 @@
             </svg>
           </span>
           <span>一键上传所需文件</span>
-        </button>
+        </label>
         <div class="accepted-top-actions" aria-label="accepted 校正稿操作">
           <button id="previewAcceptedBookButton" class="secondary-button accepted-action-button" type="button" data-preview-accepted-book-patches disabled hidden>
             预览整书 accepted 校正稿
@@ -111,6 +111,6 @@
       }
     };
   </script>
-  <script src="./ocr-compare.js?v=20260628-file-input-events"></script>
+  <script src="./ocr-compare.js?v=20260628-native-file-labels"></script>
 </body>
 </html>

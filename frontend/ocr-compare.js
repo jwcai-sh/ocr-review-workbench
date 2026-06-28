@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260628-file-input-events";
+const OCR_COMPARE_BUILD_ID = "20260628-native-file-labels";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -374,10 +374,10 @@ function initialize() {
   restoreColumnWidths();
   restoreMiddleColumnCollapsed();
   applyMiddleColumnCollapsedState();
-  els.pickPdfButton.addEventListener("click", () => openFilePicker(els.pdfInput, "等待选择 PDF"));
-  els.pickMineruButton.addEventListener("click", () => openFilePicker(els.mineruInput, "等待选择 middle.json"));
-  els.pickContentListButton.addEventListener("click", () => openFilePicker(els.contentListInput, "等待选择 content_list"));
-  els.pickRequiredFilesButton?.addEventListener("click", () => openFilePicker(els.requiredFilesInput, "等待选择所需文件"));
+  bindNativeFilePickerLabel(els.pickPdfButton, els.pdfInput, "等待选择 PDF");
+  bindNativeFilePickerLabel(els.pickMineruButton, els.mineruInput, "等待选择 middle.json");
+  bindNativeFilePickerLabel(els.pickContentListButton, els.contentListInput, "等待选择 content_list");
+  bindNativeFilePickerLabel(els.pickRequiredFilesButton, els.requiredFilesInput, "等待选择所需文件");
   els.previewAcceptedBookButton?.addEventListener("click", toggleAcceptedBookPreview);
   els.downloadAcceptedCorrectedButton?.addEventListener("click", downloadAcceptedCorrectedFromTop);
   bindFileInputEvents(els.pdfInput, handlePdfChange, "pdfInput");
@@ -407,7 +407,25 @@ async function refreshRuntimeCapabilities() {
   }
 }
 
-function openFilePicker(input, waitingLabel = "") {
+function bindNativeFilePickerLabel(label, input, waitingLabel = "") {
+  if (!label || !input) {
+    return false;
+  }
+  const prepare = () => prepareFilePickerInput(input, waitingLabel);
+  label.addEventListener("pointerdown", prepare);
+  label.addEventListener("click", prepare);
+  label.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    prepare();
+    input.click();
+  });
+  return true;
+}
+
+function prepareFilePickerInput(input, waitingLabel = "") {
   if (!input) {
     return false;
   }
@@ -419,7 +437,6 @@ function openFilePicker(input, waitingLabel = "") {
     handledFileInputSignatures.delete(key);
   }
   input.value = "";
-  input.click();
   return true;
 }
 
