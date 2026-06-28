@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260627-width-fit-rules";
+const OCR_COMPARE_BUILD_ID = "20260628-known-cal-n";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -2443,11 +2443,13 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
           ${mathpixActionLabel}
         </button>`;
     const saveActionHtml = hasEditableMarkdown
-      ? `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="${hasMathpixDraft ? "保持修改" : "未修改"}" data-dirty-label="保持修改" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>${hasMathpixDraft ? "保持修改" : "未修改"}</button>`
-      : `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保持修改" disabled>未修改</button>`;
-    const revertActionHtml = hasMathpixDraft
-      ? `<button class="text-button selected-save-action" type="button" data-revert-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}">撤销修改</button>`
-      : "";
+      ? `<button class="text-button selected-edit-state" type="button" data-toolbar-edit-state data-clean-label="${hasMathpixDraft ? "保持修改" : "未修改"}" data-dirty-label="保持修改" disabled>${hasMathpixDraft ? "保持修改" : "未修改"}</button>
+        <button class="text-button selected-save-action" type="button" data-toolbar-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="保存" data-dirty-label="保存" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>保存</button>`
+      : `<button class="text-button selected-edit-state" type="button" data-toolbar-edit-state data-clean-label="未修改" data-dirty-label="保持修改" disabled>未修改</button>
+        <button class="text-button selected-save-action" type="button" data-toolbar-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="保存" data-dirty-label="保存" disabled>保存</button>`;
+    const cancelActionHtml = hasMathpixDraft
+      ? `<button class="text-button selected-cancel-action" type="button" data-revert-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}">取消</button>`
+      : `<button class="text-button selected-cancel-action" type="button" data-review-correction-toggle="${escapeHtml(reviewKey)}">取消</button>`;
     return `
       <div class="selected-block-toolbar review-item ${isReviewOnly ? "is-normal" : ""} ${isCorrected ? "is-corrected" : ""} ${hasMathpixDraft ? "has-mathpix-draft" : ""} ${isCrossPage ? "is-cross-page" : ""} is-expanded" data-review-item-state="${escapeHtml(itemState)}" data-source-block-id="${escapeHtml(String(segment.blockIndex))}">
         <div class="selected-block-toolbar-head">
@@ -2456,10 +2458,10 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
           </div>
           <div class="review-item-actions">
             ${renderOcrPatchStatusControls(ocrPatch)}
-            <button class="text-button review-toolbar-collapse" type="button" data-review-correction-toggle="${escapeHtml(reviewKey)}" aria-label="收起校正面板" title="收起">⌃</button>
+            <button class="text-button review-toolbar-collapse" type="button" data-review-correction-toggle="${escapeHtml(reviewKey)}" aria-label="收起校正面板" title="收起">⌃⌃</button>
             ${mathpixActionHtml}
             ${saveActionHtml}
-            ${revertActionHtml}
+            ${cancelActionHtml}
           </div>
         </div>
         <div class="selected-block-toolbar-body">
@@ -2519,7 +2521,7 @@ function buildReviewCorrectionViewModel({
   ocrPatch = null,
   fallbackMarkdown = "",
 } = {}) {
-  const liveDraftText = String(liveDraft?.markdown || "");
+  const liveDraftText = autoCorrectKnownEquationOcrMarkdown(String(liveDraft?.markdown || ""));
   const draftText = String(mathpixDraftMarkdown || "");
   const patchText = String(patchMarkdown || "");
   const correctedText = String(correctedMarkdown || "");
@@ -2645,7 +2647,7 @@ function componentCorrectionStateForMergedSegment(pageNumber, segment = {}) {
 }
 
 function normalizedReviewMarkdownForActiveCorrection(markdown) {
-  return cleanMathpixEditableMarkdown(prepareMathpixMarkdown(markdown));
+  return autoCorrectKnownEquationOcrMarkdown(cleanMathpixEditableMarkdown(prepareMathpixMarkdown(markdown)));
 }
 
 function liveReviewMarkdownForEditor(editor) {
@@ -2662,7 +2664,7 @@ function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditab
   const mathpixMarkdown = escapeHtml(String(editableMarkdown || ""));
   const sourceEditorHtml = hasEditableMarkdown
     ? `<details class="block-source-detail selected-source-detail">
-        <summary>查看/编辑 Mathpix draft / accepted Markdown</summary>
+        <summary>查看/编辑</summary>
         <textarea class="mathpix-source-editor" data-mathpix-edit="${blockIndex}" spellcheck="false">${mathpixMarkdown}</textarea>
         <div class="mathpix-edit-actions">
           <button class="text-button" type="button" data-apply-mathpix-block-edit="${blockIndex}" data-clean-label="${mathpixEditorIsSaved ? "未修改" : "保持修改"}" data-dirty-label="保持修改" ${mathpixEditorIsSaved ? 'data-disable-when-clean="1" disabled' : ""}>
@@ -2691,7 +2693,8 @@ function updateReviewEditorActionState(editor) {
   const container = editor?.closest?.(".block-source-detail") || editor?.closest?.(".review-item");
   const button = container?.querySelector?.("[data-apply-mathpix-block-edit], [data-apply-mineru-source-edit]");
   const toolbar = editor?.closest?.(".selected-block-toolbar");
-  const toolbarButton = toolbar?.querySelector?.("[data-toolbar-apply-mathpix-block-edit], [data-toolbar-apply-mineru-source-edit]");
+  const toolbarButtons = Array.from(toolbar?.querySelectorAll?.("[data-toolbar-apply-mathpix-block-edit], [data-toolbar-apply-mineru-source-edit]") || []);
+  const toolbarStates = Array.from(toolbar?.querySelectorAll?.("[data-toolbar-edit-state]") || []);
   const currentValue = String(editor.value || "");
   const initialValue = String(editor.defaultValue ?? "");
   const isDirty = currentValue !== initialValue;
@@ -2709,7 +2712,11 @@ function updateReviewEditorActionState(editor) {
     }
   };
   syncButton(button);
-  syncButton(toolbarButton);
+  toolbarButtons.forEach((toolbarButton) => syncButton(toolbarButton));
+  toolbarStates.forEach((stateButton) => {
+    stateButton.disabled = true;
+    stateButton.textContent = isDirty ? stateButton.dataset.dirtyLabel || "保持修改" : stateButton.dataset.cleanLabel || "未修改";
+  });
   if (button?.dataset?.disableWhenClean === "1") {
     button.disabled = !isDirty;
     return isDirty;
@@ -3291,10 +3298,19 @@ function applyAutomaticLocalCorrectionsForPage(pageNumber) {
     }
     const existingPatch = getLatestOcrPatchForBlock(pageNo, blockKey, sourceMarkdown);
     const existingAutoCorrection = String(existingPatch?.metadata?.autoCorrection || "");
-    if (existingPatch?.status === "draft" || isManualAcceptedOcrPatch(existingPatch)) {
+    if (existingPatch?.status === "draft") {
       return;
     }
     const activeMarkdown = mathpixDrafts.get(blockKey) || blockOverrides.get(blockKey) || reviewPatchMarkdown(existingPatch) || sourceMarkdown;
+    if (isManualAcceptedOcrPatch(existingPatch)) {
+      const knownManualEquationMarkdown = autoCorrectKnownEquationOcrMarkdown(activeMarkdown);
+      if (knownManualEquationMarkdown && knownManualEquationMarkdown !== activeMarkdown.replace(/\r\n?/g, "\n").trim()) {
+        if (saveAutomaticAcceptedBlockPatch(pageNo, blockKey, sourceMarkdown, knownManualEquationMarkdown, "known_equation_ocr_cleanup")) {
+          changedCount += 1;
+        }
+      }
+      return;
+    }
     const numberedMarkdown = autoCorrectMathEquationNumberMarkdown(pageNo, blockKey, activeMarkdown, segment);
     if (numberedMarkdown && numberedMarkdown !== activeMarkdown.replace(/\r\n?/g, "\n").trim()) {
       const correctedNumberedMarkdown = autoCorrectKnownEquationOcrMarkdown(numberedMarkdown);
@@ -3398,17 +3414,43 @@ function autoCorrectMathEquationNumberMarkdown(pageNo, blockKey, sourceMarkdown,
 
 function autoCorrectKnownEquationOcrMarkdown(markdown) {
   const source = String(markdown || "").replace(/\r\n?/g, "\n").trim();
-  if (!source || !/(?:\\mathcal\s*\{\s*N\s*\}|\\mathcal\s+N\b|\\mathcalN\b)/.test(source)) {
+  if (!source) {
     return source;
   }
-  if (!isKnownScalarWaveNVectorEquation(source)) {
+  let output = autoCorrectKnownScalarWaveBoxMarkdown(source);
+  output = autoCorrectKnownScalarWaveNVectorMarkdown(output);
+  return output.trim();
+}
+
+function autoCorrectKnownScalarWaveBoxMarkdown(markdown) {
+  return String(markdown || "")
+    .replace(
+      /□\s*Ψ\s*=\s*[-−]\s*8\s*π\s*ζ\s*ρ\s*\*\s*\(\s*1\s*-\s*2\s*s\s*\)/g,
+      "$\\Box\\Psi = -8\\pi\\zeta\\rho^{*}(1 - 2s)$",
+    )
+    .replace(
+      /\\sqcup\s*\\Psi\s*=\s*[-−]\s*8\s*\\pi\s*\\zeta\s*\\rho\s*(?:\^\s*(?:\{\s*\*\s*\}|\*))?\s*\(\s*1\s*-\s*2\s*s\s*\)/g,
+      "\\Box\\Psi = -8\\pi\\zeta\\rho^{*}(1 - 2s)",
+    );
+}
+
+function autoCorrectKnownScalarWaveNVectorMarkdown(markdown) {
+  const source = String(markdown || "");
+  if (!hasKnownScalarWaveNVectorTarget(source) || !isKnownScalarWaveNVectorEquation(source)) {
     return source;
   }
   return source
-    .replace(/\\mathcal\s*\{\s*N\s*\}/g, "N")
-    .replace(/\\mathcal\s+N\b/g, "N")
-    .replace(/\\mathcalN\b/g, "N")
-    .trim();
+    .replace(/\{\s*\\+(?:mathcal|mathscr|mathfrak|cal)\s*\{\s*(?:\\mathrm\s*\{\s*)?N\s*\}?\s*\}\s*\}/g, "N")
+    .replace(/\{\s*\\+(?:mathcal|mathscr|mathfrak|cal)\s+N\s*\}/g, "N")
+    .replace(/\{\s*\\+(?:mathcal|mathscr|mathfrak|cal)N\s*\}/g, "N")
+    .replace(/\\+(?:mathcal|mathscr|mathfrak|cal)\s*\{\s*(?:\\mathrm\s*\{\s*)?N\s*\}?\s*\}/g, "N")
+    .replace(/\\+(?:mathcal|mathscr|mathfrak|cal)\s+N\b/g, "N")
+    .replace(/\\+(?:mathcal|mathscr|mathfrak|cal)N\b/g, "N")
+    .replace(/[𝓝𝒩𝑁]/gu, "N");
+}
+
+function hasKnownScalarWaveNVectorTarget(markdown) {
+  return /(?:\\+(?:mathcal|mathscr|mathfrak|cal)\s*\{\s*(?:\\mathrm\s*\{\s*)?N\s*\}?\s*\}|\\+(?:mathcal|mathscr|mathfrak|cal)\s+N\b|\\+(?:mathcal|mathscr|mathfrak|cal)N\b|[𝓝𝒩𝑁]|(^|[^\\A-Za-z])N\s*(?=(?:\\cdot|[·⋅])\s*(?:v|\\nu|ν)))/u.test(String(markdown || ""));
 }
 
 function isKnownScalarWaveNVectorEquation(markdown) {
@@ -3417,7 +3459,16 @@ function isKnownScalarWaveNVectorEquation(markdown) {
     return true;
   }
   const compact = source.replace(/\s+/g, "");
-  return /\\Psi=/.test(compact) && /\\sum_?\{?a\}?/.test(compact) && /1-2s/.test(compact);
+  if (!/(?:\\Psi|Ψ)=/.test(compact)) {
+    return false;
+  }
+  if (/\\sum_?\{?a\}?/.test(compact) && /1-2s/.test(compact)) {
+    return true;
+  }
+  return /(?:\\zeta|ζ)/.test(compact) &&
+    /(?:\\eta|η)/.test(compact) &&
+    /s_?\{?2\}?-s_?\{?1\}?/.test(compact) &&
+    /(?:\\cdot|[·⋅])v/.test(compact);
 }
 
 function autoCorrectFigureCaptionLabelMarkdown(pageNo, blockKey, sourceMarkdown) {
@@ -4108,10 +4159,11 @@ function renderBlockContent(markdown, entry) {
   if (shouldRenderAsAlgorithmBlock(markdown, entry)) {
     return renderAlgorithmBlock(markdownToAlgorithmLines(markdown));
   }
+  const displayMarkdown = autoCorrectKnownEquationOcrMarkdown(markdown);
   const normalizedMarkdown = normalizeReferenceSpacing(
     normalizeEditableProseLineBreaksOutsideStructuredBlocks(
       normalizeMathpixCollapsedProse(
-        normalizeSingleLineDisplayMath(normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(markdown))),
+        normalizeSingleLineDisplayMath(normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(displayMarkdown))),
       ),
     ),
   );
@@ -6279,7 +6331,8 @@ function buildAcceptedPatchPreviewForPage(pageNo) {
   const mergedBlocks = (Array.isArray(result?.mergedBlocks) ? result.mergedBlocks : blocks).map((block) => {
     const rawText = String(block?.text || "");
     const segment = segmentByBlockId.get(String(block?.blockId || ""));
-    const text = autoCorrectMathEquationNumberMarkdown(pageNumber, segment?.blockIndex, rawText, segment) || rawText;
+    const numberedText = autoCorrectMathEquationNumberMarkdown(pageNumber, segment?.blockIndex, rawText, segment) || rawText;
+    const text = autoCorrectKnownEquationOcrMarkdown(numberedText);
     return {
       ...block,
       text,
@@ -6301,15 +6354,18 @@ function acceptedPatchesWithEquationNumberFallback(pageNo, acceptedPatches, sour
     const blockIndex = ocrPatchBlockIndex(patch);
     const segment = segmentByBlock.get(blockIndex) || null;
     const patchedMarkdown = autoCorrectMathEquationNumberMarkdown(pageNo, blockIndex, patch?.newText || "", segment);
-    if (!patchedMarkdown) {
+    const sourceMarkdown = patchedMarkdown || String(patch?.newText || "");
+    const knownMarkdown = autoCorrectKnownEquationOcrMarkdown(sourceMarkdown);
+    if (!patchedMarkdown && knownMarkdown === sourceMarkdown.replace(/\r\n?/g, "\n").trim()) {
       return patch;
     }
     return {
       ...patch,
-      newText: patchedMarkdown,
+      newText: knownMarkdown,
       metadata: {
         ...(patch.metadata || {}),
-        previewEquationNumberFallback: true,
+        ...(patchedMarkdown ? { previewEquationNumberFallback: true } : {}),
+        ...(knownMarkdown !== sourceMarkdown.replace(/\r\n?/g, "\n").trim() ? { previewKnownEquationFallback: true } : {}),
       },
     };
   });

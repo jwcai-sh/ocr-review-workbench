@@ -1281,14 +1281,30 @@ textarea {
 }
 
 .review-toolbar-collapse {
-  width: 34px;
-  min-width: 34px;
+  width: 40px;
+  min-width: 40px;
   min-height: 32px;
   padding: 0;
   color: #475569;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 800;
   line-height: 1;
+}
+
+.selected-edit-state {
+  color: #93a4bc;
+  border-color: #dbe4ef;
+  background: #f8fafc;
+  cursor: default;
+}
+
+.selected-edit-state:disabled {
+  opacity: 1;
+}
+
+.selected-cancel-action {
+  color: #475569;
+  border-color: #dbe4ef;
 }
 
 .selected-block-toolbar-body {

@@ -145,8 +145,9 @@ function runOcrCompareInContext(testContext) {
   assert(!ocrCompareHtml.includes("cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"), "MathJax CDN should be lazy-loaded by ocr-compare.js");
   assert(ocrCompareHtml.includes('load: ["[tex]/boldsymbol"]'), "MathJax should load boldsymbol for vector formulas converted from pmb");
   assert(ocrCompareHtml.includes('packages: { "[+]": ["boldsymbol"] }'), "MathJax should enable the boldsymbol TeX package");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260627-width-fit-rules"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260627-width-fit-rules"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-known-cal-n"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-known-cal-n"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-known-cal-n"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
@@ -1762,18 +1763,41 @@ function assertOcrPatchShape(patch) {
       els.statusBadge = { textContent: "", className: "" };
       const segments = reviewSegmentsForPage(1);
       const automaticCount = applyAutomaticLocalCorrectionsForPage(1);
+      const preview = buildAcceptedPatchPreviewForPage(1);
       return JSON.stringify({
         blockIndexes: segments.map((segment) => segment.blockIndex),
         canAuto: canAutoCorrectPlainMineruMarkdown(segments.map((segment) => segment.markdown).join("\\n")),
         automaticCount,
-        patches: state.ocrPatches
+        patches: state.ocrPatches.map((patch) => ({ status: patch.status, source: patch.source, newText: patch.newText, autoCorrection: patch.metadata?.autoCorrection || "" })),
+        previewMarkdown: preview.markdown
       });
     })()`),
   );
   assert.deepStrictEqual(result.blockIndexes, ["0", "1"], "plain-prose merge must not combine blocks that contain unwrapped scientific math symbols");
   assert.strictEqual(result.canAuto, false, "unwrapped scientific math symbols should not be treated as safe plain-text cleanup");
-  assert.strictEqual(result.automaticCount, 0, "unwrapped scientific math symbols should not create automatic accepted cleanup patches");
-  assert.deepStrictEqual(result.patches, [], "unsafe math-like prose should remain a manual/Mathpix correction target");
+  assert.strictEqual(result.automaticCount, 1, "known scalar-wave Box OCR should create one automatic accepted cleanup patch");
+  assert.strictEqual(result.patches.length, 1);
+  assert.strictEqual(result.patches[0].status, "accepted");
+  assert.strictEqual(result.patches[0].autoCorrection, "known_equation_ocr_cleanup");
+  assert(result.previewMarkdown.includes("$\\Box\\Psi = -8\\pi\\zeta\\rho^{*}(1 - 2s)$"), "known Box correction should appear in accepted preview");
+  assert(!result.previewMarkdown.includes("form □Ψ"), "known Box correction should not fall back to raw OCR");
+}
+
+{
+  const correctedSqcup = call(`(() => {
+    const text = ${JSON.stringify("to show that the equation takes the form $\\sqcup \\Psi = -8 \\pi \\zeta \\rho^{*} (1 -2 s)$, where the sensitivity $s$ arises from the derivative $\\partial T / \\partial \\phi$.")};
+    return autoCorrectKnownEquationOcrMarkdown(text);
+  })()`);
+  assert(correctedSqcup.includes("$\\Box\\Psi = -8\\pi\\zeta\\rho^{*}(1 - 2s)$"), "known scalar-wave equation should repair sqcup to Box inside inline math");
+  assert(!correctedSqcup.includes("\\sqcup"), "known scalar-wave equation should not keep sqcup");
+}
+
+{
+  const ordinaryRiskyProse = call(`(() => {
+    const text = "The parameter μ appears in this paragraph, but it is not the scalar wave Box equation.";
+    return autoCorrectKnownEquationOcrMarkdown(text);
+  })()`);
+  assert.strictEqual(ordinaryRiskyProse, "The parameter μ appears in this paragraph, but it is not the scalar wave Box equation.");
 }
 
 {
@@ -1835,6 +1859,171 @@ function assertOcrPatchShape(patch) {
   assert(!result.previewMarkdown.includes("\\mathcal N"), "accepted preview should not keep mathcal N in equation 11.114");
   assert(result.previewMarkdown.includes("(1+N\\cdot v_a+\\ldots)"), "equation 11.113 should use ordinary N");
   assert(result.previewMarkdown.includes("(s_2-s_1)N\\cdot v"), "equation 11.114 should use ordinary N");
+}
+
+{
+  const correctedUntaggedN = call(`(() => {
+    const text = ${JSON.stringify("$$\n\\Psi = \\frac{4\\zeta}{R}\\eta m(s_2-s_1)\\mathcal N\\cdot v\n$$")};
+    return autoCorrectKnownEquationOcrMarkdown(text);
+  })()`);
+  assert(correctedUntaggedN.includes("(s_2-s_1)N\\cdot v"), "untagged equation 11.114 form should still repair mathcal N");
+  assert(!correctedUntaggedN.includes("\\mathcal N"), "untagged equation 11.114 form should not keep mathcal N");
+
+  const correctedOldStyleCalN = call(`(() => {
+    const text = ${JSON.stringify("$$\n\\Psi = \\frac{2\\zeta}{R}\\sum_a m_a(1-2s_a)\\left(1+{\\cal N}\\cdot \\boldsymbol{\\nu}_{a}+\\ldots\\right)\\tag{11.113}\n$$")};
+    return autoCorrectKnownEquationOcrMarkdown(text);
+  })()`);
+  assert(correctedOldStyleCalN.includes("\\left(1+N\\cdot \\boldsymbol{\\nu}_{a}+\\ldots\\right)"), "old-style {\\cal N} should be repaired to ordinary N");
+  assert(!correctedOldStyleCalN.includes("\\cal N"), "old-style {\\cal N} should not survive cleanup");
+
+  const unicodeNSource = "$$\n\\Psi = \\frac{4\\zeta}{R}\\eta m(s_2-s_1)" + String.fromCodePoint(0x1d4a9) + "\\cdot v\n$$";
+  const correctedUnicodeN = call(`(() => {
+    const text = ${JSON.stringify(unicodeNSource)};
+    return autoCorrectKnownEquationOcrMarkdown(text);
+  })()`);
+  assert(correctedUnicodeN.includes("(s_2-s_1)N\\cdot v"), "known equation cleanup should repair Unicode calligraphic N");
+
+  const correctedMathscrN = call(`(() => {
+    const text = ${JSON.stringify("$$\n\\Psi = \\frac{2\\zeta}{R}\\sum_a m_a(1-2s_a)(1+\\mathscr{N}\\cdot v_a+\\ldots)\n$$")};
+    return autoCorrectKnownEquationOcrMarkdown(text);
+  })()`);
+  assert(correctedMathscrN.includes("(1+N\\cdot v_a+\\ldots)"), "known equation cleanup should repair script N commands");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.contentListItems = [];
+      state.contentListFileName = "";
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      state.reviewNeedsCorrection.clear();
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [600, 800],
+            para_blocks: [
+              {
+                type: "interline_equation",
+                bbox: [120, 340, 420, 390],
+                lines: [{ spans: [{ content: "$$\\\\n\\\\Psi = \\\\frac{4\\\\zeta}{R}\\\\eta m(s_2-s_1)\\\\mathcal N\\\\cdot v\\\\n$$" }] }]
+              }
+            ]
+          }
+        ]
+      };
+      const source = reviewSegmentsForPage(1)[0].markdown;
+      saveAutomaticAcceptedBlockPatch(
+        1,
+        "0",
+        source,
+        "$$\\\\n\\\\Psi = \\\\frac{4\\\\zeta}{R}\\\\eta m(s_2-s_1)\\\\mathcal N\\\\cdot v\\\\n$$",
+        "equation_number_preservation"
+      );
+      const automaticCount = applyAutomaticLocalCorrectionsForPage(1);
+      const preview = buildAcceptedPatchPreviewForPage(1);
+      const latest = getLatestOcrPatchForBlock(1, "0", source);
+      return JSON.stringify({
+        automaticCount,
+        latestText: latest?.newText || "",
+        latestAutoCorrection: latest?.metadata?.autoCorrection || "",
+        previewMarkdown: preview.markdown,
+        patches: state.ocrPatches.map((patch) => ({ status: patch.status, autoCorrection: patch.metadata?.autoCorrection || "", newText: patch.newText }))
+      });
+    })()`),
+  );
+  assert.strictEqual(result.automaticCount, 1, "stale automatic accepted equation patch should be refreshed by known-equation cleanup");
+  assert.strictEqual(result.latestAutoCorrection, "known_equation_ocr_cleanup");
+  assert(result.latestText.includes("(s_2-s_1)N\\cdot v"), "latest accepted patch should use ordinary N");
+  assert(!result.previewMarkdown.includes("\\mathcal N"), "accepted preview should not keep stale mathcal N from old automatic patch");
+  assert(result.patches.some((patch) => patch.status === "rejected" && patch.autoCorrection === "equation_number_preservation"), "stale automatic patch should be rejected when refreshed");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.contentListItems = [];
+      state.contentListFileName = "";
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      state.reviewNeedsCorrection.clear();
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [600, 800],
+            para_blocks: [
+              {
+                type: "interline_equation",
+                bbox: [120, 240, 420, 290],
+                lines: [{ spans: [{ content: "$$\\\\n\\\\Psi = \\\\frac{2\\\\zeta}{R}\\\\sum_a m_a(1-2s_a)(1+\\\\mathcal{N}\\\\cdot v_a+\\\\ldots)\\\\n$$" }] }]
+              }
+            ]
+          }
+        ]
+      };
+      const source = reviewSegmentsForPage(1)[0].markdown;
+      const manual = createAndStoreDraftOcrPatch({
+        pageNo: 1,
+        blockIndex: "0",
+        oldText: source,
+        newText: "$$\\\\n\\\\Psi = \\\\frac{2\\\\zeta}{R}\\\\sum_a m_a(1-2s_a)(1+\\\\mathcal{N}\\\\cdot v_a+\\\\ldots)\\\\n$$\\\\n\\\\nmanual note kept",
+        source: "human"
+      }).patch;
+      updateOcrPatchStatus(manual.patchId, "accepted");
+      const automaticCount = applyAutomaticLocalCorrectionsForPage(1);
+      const latest = getLatestOcrPatchForBlock(1, "0", source);
+      const preview = buildAcceptedPatchPreviewForPage(1);
+      return JSON.stringify({
+        automaticCount,
+        patchCount: state.ocrPatches.length,
+        manualStatus: state.ocrPatches.find((patch) => patch.patchId === manual.patchId)?.status || "",
+        latestText: latest?.newText || "",
+        latestAutoCorrection: latest?.metadata?.autoCorrection || "",
+        previewMarkdown: preview.markdown
+      });
+    })()`),
+  );
+  assert.strictEqual(result.automaticCount, 1, "stale manual accepted known equation should be refreshed by deterministic cleanup");
+  assert.strictEqual(result.patchCount, 2, "refresh should preserve patch history instead of mutating the old accepted patch in place");
+  assert.strictEqual(result.manualStatus, "rejected", "stale manual accepted patch should be superseded by the cleaned patch");
+  assert.strictEqual(result.latestAutoCorrection, "known_equation_ocr_cleanup");
+  assert(result.latestText.includes("(1+N\\cdot v_a+\\ldots)"), "refreshed manual patch should use ordinary N");
+  assert(result.latestText.includes("manual note kept"), "refreshed manual patch should preserve other manual edits");
+  assert(!result.previewMarkdown.includes("\\mathcal{N}"), "accepted preview should not keep stale mathcal N from manual patch");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      const markdown = ${JSON.stringify("$$\n\\Psi = \\frac{2\\zeta}{R}\\sum_a m_a(1-2s_a)(1+\\mathcal{N}\\cdot v_a+\\ldots)\n$$")};
+      const html = renderBlockContent(markdown, { type: "interline_equation", blockIndex: "0" });
+      const editable = normalizedReviewMarkdownForActiveCorrection(markdown);
+      const liveView = buildReviewCorrectionViewModel({
+        liveDraft: {
+          markdown: ${JSON.stringify("$$\n\\Psi = \\frac{2\\zeta}{R}\\sum_a m_a(1-2s_a)\\left(1+{\\cal N}\\cdot \\boldsymbol{\\nu}_{a}+\\ldots\\right)\\tag{11.113}\n$$")},
+        },
+      });
+      return JSON.stringify({ html, editable, liveDisplay: liveView.displayMarkdown, liveEditable: liveView.editableMarkdown });
+    })()`),
+  );
+  assert(!result.html.includes("\\mathcal"), "right-column render path should not pass stale mathcal N into MathJax");
+  assert(result.html.includes("N\\cdot v_a"), "right-column render path should pass ordinary N into MathJax");
+  assert(!result.editable.includes("\\mathcal"), "source editor path should not keep stale mathcal N");
+  assert(result.editable.includes("N\\cdot v_a"), "source editor path should expose ordinary N");
+  assert(!result.liveEditable.includes("\\cal N"), "live draft editor path should not keep old-style cal N");
+  assert(result.liveEditable.includes("\\left(1+N\\cdot \\boldsymbol{\\nu}_{a}+\\ldots\\right)"), "live draft editor path should repair old-style cal N");
 }
 
 {
@@ -5399,6 +5588,9 @@ function setupPreviewBookExpression(pages) {
   assert(canvasResult.correctionCanvas.includes('data-risk-mathpix="1"'), "correction panel should expose the Mathpix block action");
   assert(canvasResult.correctionCanvas.includes("查看/编辑 MinerU 源码"), "correction panel should expose source editing");
   assert(canvasResult.correctionCanvas.includes('aria-label="收起校正面板"'), "correction panel should expose an explicit collapse action");
+  assert(canvasResult.correctionCanvas.includes(">⌃⌃</button>"), "correction panel collapse action should use a double-arrow glyph");
+  assert(canvasResult.correctionCanvas.includes(">保存</button>"), "correction panel should expose an explicit save action");
+  assert(canvasResult.correctionCanvas.includes(">取消</button>"), "correction panel should expose an explicit cancel action");
   assert(canvasResult.hotspots.includes('data-review-left-hotspot="1:0"'), "block with bbox should render a left-column hotspot");
   assert(canvasResult.hotspots.includes('data-review-left-hotspot="1:1"'), "formula block with bbox should render a left-column hotspot");
   assert(!canvasResult.hotspots.includes('data-review-left-hotspot="1:2"'), "block without bbox should not render a left-column hotspot");
@@ -5434,7 +5626,8 @@ function setupPreviewBookExpression(pages) {
       return JSON.stringify({ acceptedCanvas, mineruCanvas });
     })()`),
   );
-  assert(sourceChoice.acceptedCanvas.includes("查看/编辑 Mathpix draft / accepted Markdown"), "accepted blocks should expose the corrected markdown editor");
+  assert(sourceChoice.acceptedCanvas.includes("<summary>查看/编辑</summary>"), "accepted blocks should expose a concise corrected markdown editor summary");
+  assert(!sourceChoice.acceptedCanvas.includes("查看/编辑 Mathpix draft / accepted Markdown"), "accepted editor summary should not include the old verbose English suffix");
   assert(!sourceChoice.acceptedCanvas.includes("查看/编辑 MinerU 源码"), "accepted blocks should not show a second MinerU source editor");
   assert(sourceChoice.mineruCanvas.includes("查看/编辑 MinerU 源码"), "uncorrected blocks should still expose the MinerU source editor");
   assert(!sourceChoice.mineruCanvas.includes("查看/编辑 Mathpix draft / accepted Markdown"), "uncorrected blocks should not show an empty corrected markdown editor");
