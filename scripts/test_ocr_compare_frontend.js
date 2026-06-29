@@ -1752,6 +1752,81 @@ function assertOcrPatchShape(patch) {
 {
   const result = JSON.parse(
     call(`(() => {
+      ${setupPreviewPageExpression(["Assuming the 1σ bound of |η| < 2 × 10^{-13} from Eöt-Wash experiments"])}
+      state.currentPage = 1;
+      state.ocrPatches = [];
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      const patchResult = createAndStoreDraftOcrPatch({
+        pageNo: 1,
+        blockIndex: "0",
+        oldText: "Assuming the 1σ bound of |η| < 2 × 10^{-13} from Eöt-Wash experiments",
+        newText: "Assuming the 1σ bound of |η| < 2 × 10^{-13} from Eöt-Wash experiments (Wagner et al., 2012)",
+        source: "human"
+      });
+      updateOcrPatchStatus(patchResult.patch.patchId, "accepted");
+      getMathpixBlockDrafts(1).set("0", "Stale Mathpix draft should not own the color state");
+      const html = renderPageReviewCanvas(reviewEntriesForCurrentPage());
+      return JSON.stringify({ html });
+    })()`),
+  );
+  assert(result.html.includes('data-review-item-state="corrected"'), "accepted corrections should own the review block color state");
+  assert(result.html.includes("is-corrected"), "accepted corrections should render with corrected block styling");
+  assert(!result.html.includes("Stale Mathpix draft should not own the color state"), "stale drafts should not replace accepted human edits");
+}
+
+{
+  const sourceTable = "Table 2.1 Bounds on nA l parameters fromthe Eot-Wash experiments.\\n\\n| Energy type | Be-Ti | Be-A1 |\\n| --- | --- | --- |\\n| Strong | 4.9 ×10-11 | 6.5 ×10-11 |";
+  const acceptedTable = "Table 2.1 Bounds on η^A parameters from the Eöt-Wash experiments.\\n\\n| Energy type | Be-Ti | Be-Al |\\n| --- | --- | --- |\\n| Strong | $4.9 \\\\times 10^{-11}$ | $6.5 \\\\times 10^{-11}$ |";
+  const result = JSON.parse(
+    call(`(() => {
+      ${setupPreviewPageExpression([sourceTable])}
+      state.currentPage = 1;
+      state.ocrPatches = [];
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      const sourceTable = ${JSON.stringify(sourceTable)};
+      const acceptedTable = ${JSON.stringify(acceptedTable)};
+      const accepted = createAndStoreDraftOcrPatch({
+        pageNo: 1,
+        blockIndex: "0",
+        oldText: sourceTable,
+        newText: acceptedTable,
+        source: "human"
+      }).patch;
+      updateOcrPatchStatus(accepted.patchId, "accepted");
+      const rejected = createAndStoreDraftOcrPatch({
+        pageNo: 1,
+        blockIndex: "0",
+        oldText: sourceTable,
+        newText: "Rejected stale Mathpix table",
+        source: "mathpix"
+      }).patch;
+      updateOcrPatchStatus(rejected.patchId, "rejected");
+      state.reviewCorrectionOpen.add(reviewBlockKey(1, "0"));
+      const latest = getLatestOcrPatchForBlock(1, "0", sourceTable);
+      const html = renderPageReviewCanvas(reviewEntriesForCurrentPage());
+      const preview = buildAcceptedPatchPreviewForPage(1);
+      return JSON.stringify({
+        latestStatus: latest?.status || "",
+        latestText: latest?.newText || "",
+        html,
+        previewMarkdown: preview.markdown
+      });
+    })()`),
+  );
+  assert.strictEqual(result.latestStatus, "accepted", "rejected Mathpix attempts must not hide the latest accepted table edit");
+  assert(result.latestText.includes("$4.9 \\\\times 10^{-11}$"), "latest visible patch should keep the manually wrapped table value");
+  assert(result.html.includes("4.9") && result.html.includes("times 10^{-11}"), "review source editor should load the accepted table Markdown after a rejected stale patch");
+  assert(result.previewMarkdown.includes("$4.9 \\\\times 10^{-11}$"), "accepted preview should keep the manually wrapped table value");
+  assert(!result.html.includes("Rejected stale Mathpix table"), "rejected Mathpix table text must not be visible");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
       state.currentPage = 1;
       state.ocrPatches = [];
       state.acceptedPatchPreview = null;

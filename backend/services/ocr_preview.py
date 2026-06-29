@@ -11,6 +11,8 @@ from typing import Any
 import fitz
 from PIL import Image
 
+from backend.services.oss_storage import OSS_STORAGE_SERVICE
+
 
 def _parse_data_url(data_url: str) -> tuple[str, bytes] | None:
     match = re.match(r"^data:([^;,]+);base64,(.+)$", data_url, flags=re.DOTALL)
@@ -153,6 +155,9 @@ class OcrPreviewService:
         except Exception as error:  # noqa: BLE001
             return {"ok": False, "error": str(error)}
 
+        if OSS_STORAGE_SERVICE.enabled:
+            self._persist_rendered_pages(document_id, pages)
+
         return {
             "ok": True,
             "documentId": document_id,
@@ -257,16 +262,32 @@ class OcrPreviewService:
     def _store_document(self, *, mime_type: str, content: bytes, name: str) -> dict[str, Any]:
         self._prune_documents()
         document_id = uuid.uuid4().hex
+        oss_key = ""
+        if OSS_STORAGE_SERVICE.enabled:
+            oss_key = OSS_STORAGE_SERVICE.document_key(document_id, name)
+            OSS_STORAGE_SERVICE.put_bytes(oss_key, content, content_type=mime_type or "application/octet-stream")
         document = {
             "id": document_id,
             "mimeType": mime_type,
             "content": content,
             "name": name,
+            "ossKey": oss_key,
             "lastAccessedAt": time.monotonic(),
         }
         with self._lock:
             self._documents[document_id] = document
         return document
+
+    def _persist_rendered_pages(self, document_id: str, pages: list[dict[str, Any]]) -> None:
+        for page in pages:
+            parsed = _parse_data_url(str(page.get("image") or ""))
+            page_number = int(page.get("pageNumber") or 0)
+            if not parsed or not page_number:
+                continue
+            mime_type, content = parsed
+            key = OSS_STORAGE_SERVICE.page_image_key(document_id, page_number)
+            if OSS_STORAGE_SERVICE.put_bytes(key, content, content_type=mime_type):
+                page["ossKey"] = key
 
     def _document_page_count(self, document: dict[str, Any]) -> int:
         mime_type = str(document.get("mimeType") or "")

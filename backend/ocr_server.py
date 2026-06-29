@@ -11,6 +11,7 @@ from backend.config import SETTINGS
 from backend.services.mathpix_ocr import MATHPIX_OCR_SERVICE
 from backend.services.ocr_correction import OCR_CORRECTION_SERVICE
 from backend.services.ocr_preview import OCR_PREVIEW_SERVICE
+from backend.services.oss_storage import OSS_STORAGE_SERVICE
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
@@ -43,6 +44,9 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
                     "service": "ocr-workbench",
                     "mathpixConfigured": SETTINGS.mathpix_configured,
                     "mathpixConfigError": SETTINGS.mathpix_config_error or None,
+                    "ossConfigured": SETTINGS.oss_configured,
+                    "ossStorageEnabled": OSS_STORAGE_SERVICE.enabled,
+                    "ossStorageError": OSS_STORAGE_SERVICE.error or None,
                 }
             )
             return
@@ -81,6 +85,12 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/ocr/preview-pages":
             self._send_json(OCR_PREVIEW_SERVICE.preview_pages(payload))
             return
+        if parsed.path == "/api/ocr/workspace/load":
+            self._send_json(self._load_workspace(payload))
+            return
+        if parsed.path == "/api/ocr/workspace/save":
+            self._send_json(self._save_workspace(payload))
+            return
         if parsed.path == "/api/ocr/correct":
             self._send_json(OCR_CORRECTION_SERVICE.correct_markdown(payload))
             return
@@ -95,6 +105,32 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             return
 
         self._send_json({"ok": False, "error": "Not found"}, status=HTTPStatus.NOT_FOUND)
+
+    def _load_workspace(self, payload: dict) -> dict:
+        workspace_id = str(payload.get("workspaceId") or "").strip()
+        if not workspace_id:
+            return {"ok": False, "error": "Missing workspaceId"}
+        if not OSS_STORAGE_SERVICE.enabled:
+            return {"ok": True, "workspace": None, "storage": "local", "ossError": OSS_STORAGE_SERVICE.error or None}
+        workspace = OSS_STORAGE_SERVICE.get_json(OSS_STORAGE_SERVICE.workspace_key(workspace_id))
+        return {"ok": True, "workspace": workspace, "storage": "oss", "ossError": OSS_STORAGE_SERVICE.error or None}
+
+    def _save_workspace(self, payload: dict) -> dict:
+        workspace_id = str(payload.get("workspaceId") or "").strip()
+        workspace = payload.get("workspace")
+        if not workspace_id:
+            return {"ok": False, "error": "Missing workspaceId"}
+        if not isinstance(workspace, dict):
+            return {"ok": False, "error": "Missing workspace"}
+        if not OSS_STORAGE_SERVICE.enabled:
+            return {"ok": True, "saved": False, "storage": "local", "ossError": OSS_STORAGE_SERVICE.error or None}
+        ok = OSS_STORAGE_SERVICE.put_json(OSS_STORAGE_SERVICE.workspace_key(workspace_id), workspace)
+        return {
+            "ok": ok,
+            "saved": ok,
+            "storage": "oss",
+            "error": None if ok else OSS_STORAGE_SERVICE.error or "OSS workspace save failed",
+        }
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A003
         return

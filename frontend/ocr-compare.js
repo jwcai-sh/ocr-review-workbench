@@ -41,6 +41,8 @@ const state = {
   middleColumnCollapsed: false,
   mathpixConfigured: null,
   mathpixConfigError: "",
+  ossConfigured: false,
+  workspaceRemoteSaveTimer: null,
   busy: false,
 };
 state.ocrPatches = state.ocrPatches || [];
@@ -404,12 +406,14 @@ async function refreshRuntimeCapabilities() {
     const data = await response.json();
     state.mathpixConfigured = Boolean(data.mathpixConfigured);
     state.mathpixConfigError = String(data.mathpixConfigError || "");
+    state.ossConfigured = Boolean(data.ossStorageEnabled || data.ossConfigured);
     if (state.mineruInfo) {
       await renderCurrentPage();
     }
   } catch {
     state.mathpixConfigured = null;
     state.mathpixConfigError = "";
+    state.ossConfigured = false;
   }
 }
 
@@ -623,7 +627,7 @@ async function loadPdfFile(file) {
   cachePreviewPage(1, preview);
   if (state.mineruInfo) {
     analyzeCurrentMineruRiskPage();
-    restoreOcrWorkspaceState();
+    await restoreOcrWorkspaceStateRemoteFirst();
   }
   updatePager();
   await renderCurrentPage();
@@ -658,7 +662,7 @@ async function loadMineruFile(file) {
   if (!state.pdfPageCount) {
     state.pdfPageCount = pdfInfo.length;
   }
-  restoreOcrWorkspaceState();
+  await restoreOcrWorkspaceStateRemoteFirst();
   updatePager();
   await renderCurrentPage();
   scheduleMineruRiskAnalysis();
@@ -733,6 +737,11 @@ function ocrWorkspaceStorageKey() {
   return `${OCR_WORKSPACE_STORAGE_PREFIX}:${state.mineruFileName}:${pageCount}`;
 }
 
+function ocrWorkspaceRemoteId() {
+  const key = ocrWorkspaceStorageKey();
+  return key ? key.replace(/^uma-ocr-compare-workspace-v1:/, "") : "";
+}
+
 function getOcrWorkspaceStorage() {
   try {
     if (typeof globalThis !== "undefined" && globalThis.localStorage) {
@@ -756,6 +765,7 @@ function saveOcrWorkspaceState() {
   const payload = buildOcrWorkspacePayload();
   try {
     storage.setItem(key, JSON.stringify(payload));
+    scheduleRemoteOcrWorkspaceSave(payload);
     return true;
   } catch (error) {
     if (typeof console !== "undefined" && typeof console.warn === "function") {
@@ -763,6 +773,10 @@ function saveOcrWorkspaceState() {
     }
     return false;
   }
+}
+
+async function restoreOcrWorkspaceStateRemoteFirst() {
+  return (await restoreRemoteOcrWorkspaceState()) || restoreOcrWorkspaceState();
 }
 
 function restoreOcrWorkspaceState() {
@@ -788,6 +802,51 @@ function restoreOcrWorkspaceState() {
     }
     return false;
   }
+}
+
+async function restoreRemoteOcrWorkspaceState() {
+  const workspaceId = ocrWorkspaceRemoteId();
+  if (!workspaceId) {
+    return false;
+  }
+  try {
+    const response = await postJson("/api/ocr/workspace/load", { workspaceId });
+    if (!response?.ok || !response.workspace) {
+      return false;
+    }
+    if (!applyOcrWorkspacePayload(response.workspace)) {
+      return false;
+    }
+    const storage = getOcrWorkspaceStorage();
+    const key = ocrWorkspaceStorageKey();
+    if (storage && key) {
+      storage.setItem(key, JSON.stringify(response.workspace));
+    }
+    return true;
+  } catch (error) {
+    if (typeof console !== "undefined" && typeof console.warn === "function") {
+      console.warn("[OCR Workspace] 无法从后端恢复 OCR 工作区。", error);
+    }
+    return false;
+  }
+}
+
+function scheduleRemoteOcrWorkspaceSave(payload) {
+  const workspaceId = ocrWorkspaceRemoteId();
+  if (!workspaceId || !payload || typeof setTimeout !== "function") {
+    return;
+  }
+  if (state.workspaceRemoteSaveTimer) {
+    clearTimeout(state.workspaceRemoteSaveTimer);
+  }
+  state.workspaceRemoteSaveTimer = setTimeout(() => {
+    state.workspaceRemoteSaveTimer = null;
+    postJson("/api/ocr/workspace/save", { workspaceId, workspace: payload }).catch((error) => {
+      if (typeof console !== "undefined" && typeof console.warn === "function") {
+        console.warn("[OCR Workspace] 无法保存 OCR 工作区到后端。", error);
+      }
+    });
+  }, 500);
 }
 
 function buildOcrWorkspacePayload() {
@@ -2658,16 +2717,23 @@ function buildReviewCorrectionViewModel({
   const draftText = String(mathpixDraftMarkdown || "");
   const patchText = String(patchMarkdown || "");
   const correctedText = String(correctedMarkdown || "");
-  const activeCorrectionMarkdown = liveDraftText || draftText || patchText || correctedText || "";
-  const editableMarkdown = activeCorrectionMarkdown
-    ? liveDraftText
-      ? liveDraftText
-      : normalizedReviewMarkdownForActiveCorrection(activeCorrectionMarkdown)
-    : "";
-  const hasEditableMarkdown = Boolean(editableMarkdown.trim());
   const hasPatchDraft = Boolean(patchText.trim() && ocrPatch?.status === "draft");
   const hasAcceptedPatchMarkdown = Boolean(patchText.trim() && ocrPatch?.status === "accepted");
-  const hasMathpixDraft = Boolean(liveDraftText.trim() || draftText.trim()) || hasPatchDraft;
+  const acceptedText = hasAcceptedPatchMarkdown
+    ? patchText
+    : !liveDraftText.trim() && !draftText.trim() && corrected
+      ? correctedText
+      : "";
+  const activeCorrectionMarkdown = acceptedText || liveDraftText || draftText || patchText || correctedText || "";
+  const editableMarkdown = activeCorrectionMarkdown
+    ? acceptedText
+      ? normalizedReviewMarkdownForActiveCorrection(activeCorrectionMarkdown)
+      : liveDraftText
+        ? liveDraftText
+        : normalizedReviewMarkdownForActiveCorrection(activeCorrectionMarkdown)
+    : "";
+  const hasEditableMarkdown = Boolean(editableMarkdown.trim());
+  const hasMathpixDraft = !hasAcceptedPatchMarkdown && Boolean(liveDraftText.trim() || draftText.trim() || hasPatchDraft);
   const isCorrected = Boolean(corrected || hasAcceptedPatchMarkdown);
   const previewMarkdown = hasMathpixDraft || hasAcceptedPatchMarkdown ? editableMarkdown : correctedText;
   const mathpixEditorIsSaved = Boolean(
@@ -6366,18 +6432,26 @@ function getLatestOcrPatchForBlock(pageNo, blockIndex, oldText) {
   const patches = Array.isArray(state.ocrPatches) ? state.ocrPatches : [];
   for (let index = patches.length - 1; index >= 0; index -= 1) {
     const patch = patches[index];
-    if (patch?.blockId === context.blockId) {
+    if (patch?.blockId === context.blockId && isActiveReviewOcrPatch(patch)) {
       return patch;
     }
   }
   const blockIdPrefix = `p${pageNo}_b${blockIndex}_`;
   for (let index = patches.length - 1; index >= 0; index -= 1) {
     const patch = patches[index];
-    if (Number(patch?.metadata?.pageNo) === Number(pageNo) && String(patch?.blockId || "").startsWith(blockIdPrefix)) {
+    if (
+      Number(patch?.metadata?.pageNo) === Number(pageNo) &&
+      String(patch?.blockId || "").startsWith(blockIdPrefix) &&
+      isActiveReviewOcrPatch(patch)
+    ) {
       return patch;
     }
   }
   return null;
+}
+
+function isActiveReviewOcrPatch(patch) {
+  return Boolean(patch && ["draft", "accepted"].includes(patch.status));
 }
 
 function updateOcrPatchStatus(patchId, nextStatus) {

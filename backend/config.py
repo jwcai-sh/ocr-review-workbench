@@ -73,6 +73,24 @@ class Settings:
     yunwu_gpt55_model: str = os.getenv("YUNWU_GPT55_MODEL", "gpt-5.5")
     yunwu_chat_path: str = os.getenv("YUNWU_CHAT_PATH", "/v1/chat/completions")
 
+    oss_access_key_id: str = os.getenv("OSS_ACCESS_KEY_ID", "")
+    oss_access_key_secret: str = os.getenv("OSS_ACCESS_KEY_SECRET", "")
+    oss_bucket: str = os.getenv("OSS_BUCKET", "")
+    oss_region: str = os.getenv("OSS_REGION", "")
+    oss_endpoint: str = os.getenv("OSS_ENDPOINT", "")
+    oss_prefix: str = os.getenv("OSS_PREFIX", "books")
+
+    @property
+    def oss_endpoint_url(self) -> str:
+        endpoint = self.oss_endpoint.strip()
+        if not endpoint:
+            return ""
+        return endpoint if endpoint.startswith(("http://", "https://")) else f"https://{endpoint}"
+
+    @property
+    def oss_configured(self) -> bool:
+        return bool(self.oss_access_key_id and self.oss_access_key_secret and self.oss_bucket and self.oss_endpoint_url)
+
     @property
     def mathpix_config_error(self) -> str:
         return mathpix_credentials_error(self.mathpix_app_id, self.mathpix_app_key)
@@ -90,6 +108,9 @@ class Settings:
             "mathpixConfigError": self.mathpix_config_error or None,
             "ocrCorrectionConfigured": bool(self.ocr_correction_api_key and self.ocr_correction_model),
             "ocrCorrectionProvider": self.ocr_correction_provider,
+            "ossConfigured": self.oss_configured,
+            "ossBucket": self.oss_bucket or None,
+            "ossPrefix": self.oss_prefix or None,
         }
 
 
