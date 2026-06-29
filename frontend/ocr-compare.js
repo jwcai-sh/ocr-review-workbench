@@ -5963,6 +5963,12 @@ function sortEntriesByVisualReadingOrder(entries) {
       if (!left.geometry || !right.geometry) {
         return left.geometry ? -1 : right.geometry ? 1 : left.index - right.index;
       }
+      if (shouldKeepTopMediaBeforeFollowingText(left, right)) {
+        return -1;
+      }
+      if (shouldKeepTopMediaBeforeFollowingText(right, left)) {
+        return 1;
+      }
       if (shouldKeepTopTableBeforeReferencingProse(left, right)) {
         return -1;
       }
@@ -5977,6 +5983,36 @@ function sortEntriesByVisualReadingOrder(entries) {
       return left.geometry.left - right.geometry.left || left.index - right.index;
     })
     .map((item) => item.entry);
+}
+
+function shouldKeepTopMediaBeforeFollowingText(mediaItem, textItem) {
+  const mediaEntry = mediaItem?.entry;
+  const textEntry = textItem?.entry;
+  if (!mediaEntry || !textEntry || !mediaItem.geometry || !textItem.geometry) {
+    return false;
+  }
+  const mediaType = String(mediaEntry?.block?.type || mediaEntry?.kind || "").toLowerCase();
+  const textType = String(textEntry?.block?.type || textEntry?.kind || "").toLowerCase();
+  if (!["image", "table"].includes(mediaType) || ["image", "table"].includes(textType)) {
+    return false;
+  }
+  const pageHeight = Math.max(mediaItem.geometry.pageHeight, textItem.geometry.pageHeight, 1);
+  const mediaTopRatio = mediaItem.geometry.top / pageHeight;
+  const textTopRatio = textItem.geometry.top / pageHeight;
+  if (mediaTopRatio > 0.42 || textTopRatio > 0.78) {
+    return false;
+  }
+  if (textItem.geometry.top >= mediaItem.geometry.top) {
+    return false;
+  }
+  const mediaMarkdown = String(mediaEntry.markdown || "");
+  const textMarkdown = String(textEntry.markdown || "");
+  const mediaLabel = leadingFigureOrTableReferenceLabel(mediaMarkdown) || firstFigureOrTableReferenceLabel(mediaMarkdown);
+  const textLabel = firstFigureOrTableReferenceLabel(textMarkdown);
+  if (mediaLabel && textLabel && (mediaLabel.type !== textLabel.type || mediaLabel.number !== textLabel.number)) {
+    return false;
+  }
+  return textItem.geometry.bottom <= mediaItem.geometry.bottom + pageHeight * 0.32 || (mediaLabel && markdownMentionsReferenceLabel(textMarkdown, mediaLabel));
 }
 
 function shouldKeepTopTableBeforeReferencingProse(tableItem, proseItem) {
@@ -6674,7 +6710,17 @@ function acceptedPreviewSegmentOrder(segment, orderByKey) {
   if (segment?.syntheticPlacement === "page_bottom") {
     return Number.MAX_SAFE_INTEGER - 500;
   }
-  return orderByKey.get(String(segment?.blockIndex)) ?? Number.MAX_SAFE_INTEGER / 2;
+  const bboxOrder = visualOrderForPageEntry(segment, Number.MAX_SAFE_INTEGER / 4);
+  if (segment?.syntheticPlacement === "after_anchor") {
+    if (normalizedBBox(segment?.bbox) && Number.isFinite(bboxOrder)) {
+      return bboxOrder;
+    }
+    const anchorOrder = orderByKey.get(String(segment?.anchorBlockIndex));
+    if (Number.isFinite(anchorOrder)) {
+      return anchorOrder + 0.001;
+    }
+  }
+  return orderByKey.get(String(segment?.blockIndex)) ?? bboxOrder ?? Number.MAX_SAFE_INTEGER / 2;
 }
 
 function syntheticSegmentsForAcceptedPatches(pageNumber, acceptedPatches, hashBlockText) {
@@ -6690,7 +6736,10 @@ function syntheticSegmentsForAcceptedPatches(pageNumber, acceptedPatches, hashBl
         blockIndex: risk.blockIndex,
         markdown,
         kind: "synthetic",
+        bbox: risk.bbox,
+        pageSize: risk.pageSize,
         syntheticPlacement: risk.syntheticPlacement,
+        anchorBlockIndex: risk.anchorBlockIndex,
         blockId: `p${pageNumber}_b${risk.blockIndex}_${oldHash.slice(0, 8)}`,
       };
     })
@@ -7665,7 +7714,9 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
     return null;
   }
   const rawText = contentListItemText(item);
-  const continuation = figureOrTableNarrativeContinuation(rawText, sourceSegments);
+  const bbox = normalizedBBox(item.bbox);
+  const geometry = bbox ? bboxGeometryForPageSize(bbox, pageSize) : null;
+  const continuation = figureOrTableNarrativeContinuation(rawText, sourceSegments, { bbox, pageSize });
   const text = continuation?.text || rawText;
   const normalized = normalizeTextForComparison(text);
   if (
@@ -7681,8 +7732,6 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
   if (isLikelyBibliographyText(text) && pageHasBibliographyBodyCandidate(pageNumber, { excludeContentListIndex: item.__contentListIndex })) {
     return null;
   }
-  const bbox = normalizedBBox(item.bbox);
-  const geometry = bbox ? bboxGeometryForPageSize(bbox, pageSize) : null;
   if (isLikelyPageHeaderText(text, bbox, pageSize) || isLikelyContentListHeaderFooterNoise(text, bbox, pageSize, sourceSegments)) {
     return null;
   }
@@ -7772,7 +7821,8 @@ function findPageTopTableAnchorForReferencingProse(text, sourceSegments = []) {
 }
 
 function isContentListDuplicateOfReviewSegment(text, sourceSegments = []) {
-  const candidate = canonicalTextForOverlap(text);
+  const candidateText = stripLeadingFigureOrTableNarrativeLabel(text) || text;
+  const candidate = canonicalTextForOverlap(candidateText);
   if (!candidate || candidate.length < 80) {
     return false;
   }
@@ -7864,7 +7914,7 @@ function canonicalHeadingText(text) {
     .toLowerCase();
 }
 
-function figureOrTableNarrativeContinuation(text, sourceSegments = []) {
+function figureOrTableNarrativeContinuation(text, sourceSegments = [], options = {}) {
   const raw = String(text || "").replace(/\s+/g, " ").trim();
   const leading = leadingFigureOrTableReferenceLabel(raw);
   if (!leading) {
@@ -7877,7 +7927,23 @@ function figureOrTableNarrativeContinuation(text, sourceSegments = []) {
   const anchor = (Array.isArray(sourceSegments) ? sourceSegments : []).find((segment) =>
     markdownMentionsReferenceLabel(segment?.markdown, leading),
   );
-  return anchor ? { text: body, anchorBlockIndex: String(anchor.blockIndex) } : null;
+  if (!anchor) {
+    return null;
+  }
+  if (shouldPreserveVisualOrderForNarrativeContinuation(options?.bbox, options?.pageSize, anchor)) {
+    return { text: body, anchorBlockIndex: null };
+  }
+  return { text: body, anchorBlockIndex: String(anchor.blockIndex) };
+}
+
+function shouldPreserveVisualOrderForNarrativeContinuation(candidateBBox, pageSize, anchorSegment) {
+  const candidate = bboxReadingGeometry(candidateBBox, pageSize);
+  const anchor = bboxReadingGeometry(anchorSegment?.bbox, anchorSegment?.pageSize || pageSize);
+  if (!candidate || !anchor) {
+    return false;
+  }
+  const pageHeight = Math.max(candidate.pageHeight, anchor.pageHeight, 1);
+  return candidate.top > anchor.bottom + pageHeight * 0.08;
 }
 
 function leadingFigureOrTableReferenceLabel(text) {
@@ -7891,6 +7957,28 @@ function leadingFigureOrTableReferenceLabel(text) {
     type,
     number: match[2],
   };
+}
+
+function firstFigureOrTableReferenceLabel(text) {
+  const match = String(text || "").match(/\b(Fig(?:ure)?\.?|Table)\s*(\d+(?:\.\d+)*[A-Za-z]?)/i);
+  if (!match) {
+    return null;
+  }
+  return {
+    raw: match[0],
+    type: /^tab/i.test(match[1]) ? "table" : "figure",
+    number: match[2],
+  };
+}
+
+function stripLeadingFigureOrTableNarrativeLabel(text) {
+  const raw = String(text || "").replace(/\s+/g, " ").trim();
+  const leading = leadingFigureOrTableReferenceLabel(raw);
+  if (!leading) {
+    return "";
+  }
+  const body = raw.slice(leading.raw.length).replace(/^[:.．、\s-]+/, "").trim();
+  return startsLikeNarrativeProse(body) && !looksLikeFigureCaptionText(body) ? body : "";
 }
 
 function startsLikeNarrativeProse(text) {
