@@ -2044,17 +2044,6 @@ function renderReviewCard() {
       }
     });
   });
-  card.querySelectorAll("[data-review-fit-page]").forEach((button) => {
-    button.addEventListener("click", async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      state.reviewFitToPage = !state.reviewFitToPage;
-      saveOcrWorkspaceState();
-      if (!refreshRightWorkbenchOnly({ preserveReviewScroll: true })) {
-        await renderCurrentPage();
-      }
-    });
-  });
   card.querySelectorAll("[data-page-jump]").forEach((button) => {
     button.addEventListener("click", () => goToPagerTarget(button.dataset.pageJump));
   });
@@ -2178,9 +2167,6 @@ function renderReviewNavigationBar(reviewEntries) {
     <div class="review-navigation-bar" data-review-block-navigator>
       <div class="review-nav-controls">
         <div class="review-font-nav-group">
-          <button class="text-button image-zoom-button image-fit-button ${state.reviewFitToPage ? "is-active" : ""}" type="button" data-review-fit-page aria-label="校正稿整页适配窗口" title="整页适配">
-            <span class="fit-page-glyph" aria-hidden="true">⛶</span>
-          </button>
           <button class="text-button image-zoom-button" type="button" data-review-font-scale="out" ${fontScaleIndex <= 0 ? "disabled" : ""} aria-label="缩小右栏字体" title="缩小右栏字体">
             <span class="image-zoom-glyph" aria-hidden="true"><span>A</span><span>⌄</span></span>
           </button>
@@ -2332,6 +2318,7 @@ function orderRisksBySegment(risks, segments) {
 
 function buildReviewEntriesForPage(risks, segments, pageNumber) {
   const riskByKey = new Map((Array.isArray(risks) ? risks : []).map((risk) => [String(risk.blockIndex), risk]));
+  const segmentTexts = new Set((Array.isArray(segments) ? segments : []).map((segment) => normalizeTextForComparison(segment.markdown)).filter(Boolean));
   const seen = new Set();
   const entries = segments
     .map((segment) => {
@@ -2352,6 +2339,9 @@ function buildReviewEntriesForPage(risks, segments, pageNumber) {
   (Array.isArray(risks) ? risks : []).forEach((risk) => {
     const key = String(risk.blockIndex);
     if (seen.has(key)) {
+      return;
+    }
+    if (risk?.supplementalSource === "content_list" && isTextRedundantWithNormalizedSet(risk.text, segmentTexts)) {
       return;
     }
     entries.push({
@@ -2392,6 +2382,9 @@ function riskVisualOrder(risk, orderByKey) {
   const bboxOrder = visualOrderForPageEntry(risk, Number.MAX_SAFE_INTEGER / 4);
   const hasVisualBBox = Boolean(normalizedBBox(risk?.bbox));
   if (risk?.syntheticPlacement === "after_anchor") {
+    if (hasVisualBBox && Number.isFinite(bboxOrder)) {
+      return bboxOrder;
+    }
     const anchorOrder = orderByKey.get(String(risk?.anchorBlockIndex));
     if (Number.isFinite(anchorOrder)) {
       return anchorOrder + 0.001;
@@ -4414,7 +4407,7 @@ function normalizeInlineMathSpacingOutsideDisplayMath(markdown) {
 
 function cleanMathpixEditableMarkdown(markdown) {
   const lineBreakRepaired = normalizeEditableProseLineBreaksOutsideStructuredBlocks(
-    normalizeMathpixCollapsedProse(String(markdown || "")),
+    normalizeDanglingProseEquationTags(normalizeMathpixCollapsedProse(String(markdown || ""))),
   );
   const proseRepaired = normalizeMathpixEditableSource(
     normalizeInlineMathSpacingOutsideDisplayMath(repairLatexDisplayMathStructure(lineBreakRepaired)),
@@ -4426,7 +4419,9 @@ function cleanMathpixEditableMarkdown(markdown) {
 }
 
 function normalizeMathpixOcrArtifacts(markdown) {
-  return normalizeMathpixScientificNotationArtifacts(normalizeMathpixCollapsedProse(normalizeMathpixBrokenDiacritics(markdown)));
+  return normalizeDanglingProseEquationTags(
+    normalizeMathpixScientificNotationArtifacts(normalizeMathpixCollapsedProse(normalizeMathpixBrokenDiacritics(markdown))),
+  );
 }
 
 function normalizeMathpixCollapsedProse(markdown) {
@@ -4453,6 +4448,30 @@ function normalizeMathpixScientificNotationArtifacts(markdown) {
     .replace(/\byr\s*\^\s*-\s*(\d+)/gi, "yr^{-$1}")
     .replace(/\\mathrm\s*\{\s*y\s*r\s*\}\s*\^\s*\{\s*-\s*(\d+)\s*\}/gi, "\\mathrm{yr}^{-$1}")
     .replace(/\\mathrm\s*\{\s*y\s*r\s*\}\s*\^\s*-\s*(\d+)/gi, "\\mathrm{yr}^{-$1}");
+}
+
+function normalizeDanglingProseEquationTags(markdown) {
+  const source = String(markdown || "").replace(/\r\n?/g, "\n");
+  if (hasLatexMathEnvironment(source)) {
+    return source;
+  }
+  const lines = source.split("\n");
+  let inDisplayMath = false;
+  return lines
+    .map((line) => {
+      const trimmed = line.trim();
+      const startsOrEndsDisplay = /^\s*(?:\$\$|\\\[)/.test(line) || /(?:\$\$|\\\])\s*$/.test(line);
+      const shouldPreserve = inDisplayMath || startsOrEndsDisplay || hasLatexMathEnvironment(line);
+      const displayFenceCount = (line.match(/\$\$/g) || []).length + (line.match(/\\\[/g) || []).length + (line.match(/\\\]/g) || []).length;
+      if (displayFenceCount % 2 === 1) {
+        inDisplayMath = !inDisplayMath;
+      }
+      if (shouldPreserve || !trimmed || /^\\(?:tag|tga)\s*\{/.test(trimmed)) {
+        return line;
+      }
+      return line.replace(/\s*\\(?:tag|tga)\s*\{\s*\d+(?:\s*\.\s*\d+)*[a-zA-Z]?\s*\}\s*$/g, "");
+    })
+    .join("\n");
 }
 
 function normalizeEditableProseLineBreaksOutsideStructuredBlocks(markdown) {
@@ -5827,7 +5846,21 @@ function contentListTableCaptionText(item) {
       values.push(...value.map((entry) => (typeof entry === "string" ? entry : contentListItemText(entry))));
     }
   });
-  return values.map((value) => String(value || "").replace(/\s+/g, " ").trim()).filter(Boolean).join(" ").trim();
+  const text = values.map((value) => String(value || "").replace(/\s+/g, " ").trim()).filter(Boolean).join(" ").trim();
+  return isLikelyTableCaptionText(text) ? text : "";
+}
+
+function isLikelyTableCaptionText(text) {
+  const raw = String(text || "").replace(/\s+/g, " ").trim();
+  const label = leadingFigureOrTableReferenceLabel(raw);
+  if (!label || label.type !== "table") {
+    return false;
+  }
+  const body = raw.slice(label.raw.length).replace(/^[:.．、\s-]+/, "").trim();
+  if (!body) {
+    return true;
+  }
+  return !startsLikeNarrativeProse(body);
 }
 
 function tableLabelFromText(text) {
@@ -5966,7 +5999,7 @@ function shouldKeepTopTableBeforeReferencingProse(tableItem, proseItem) {
   const pageHeight = Math.max(tableItem.geometry.pageHeight, proseItem.geometry.pageHeight, 1);
   const tableTopRatio = tableItem.geometry.top / pageHeight;
   const proseTopRatio = proseItem.geometry.top / pageHeight;
-  if (tableTopRatio > 0.28 || proseTopRatio > 0.62 || (!label && !proseLabel)) {
+  if (tableTopRatio > 0.38 || proseTopRatio > 0.68 || (!label && !proseLabel)) {
     return false;
   }
   return proseItem.geometry.top < tableItem.geometry.top || proseItem.geometry.top <= tableItem.geometry.bottom + pageHeight * 0.18;
@@ -7640,7 +7673,8 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
     normalized.length < 4 ||
     isLikelyReferenceHeading(text) ||
     isPageNumberOnlyText(normalized) ||
-    isTextRedundantWithNormalizedSet(normalized, middleTexts)
+    isTextRedundantWithNormalizedSet(normalized, middleTexts) ||
+    isContentListDuplicateOfReviewSegment(text, sourceSegments)
   ) {
     return null;
   }
@@ -7655,7 +7689,9 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
   const scored = scoreRiskBlock(text);
   const reasons = scored.reasons.slice();
   let score = scored.score;
-  const isAnchoredContinuation = Boolean(continuation?.anchorBlockIndex != null);
+  const tableReferenceAnchor = continuation ? null : findPageTopTableAnchorForReferencingProse(text, sourceSegments);
+  const anchorBlockIndex = continuation?.anchorBlockIndex ?? tableReferenceAnchor?.blockIndex;
+  const isAnchoredContinuation = Boolean(anchorBlockIndex != null);
   const isTopCandidate = Boolean(!isAnchoredContinuation && geometry?.topRatio <= 0.2 && text.length >= 6);
   if (isTopCandidate && hasCrossPageContinuationForPage(pageNumber)) {
     return null;
@@ -7713,8 +7749,51 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
     syntheticLabel: isFootnoteCandidate ? "content_list 脚注候选" : isTopCandidate ? "content_list 标题候选" : isAnchoredContinuation ? "content_list 续段候选" : "content_list 补充候选",
     supplementalSource: "content_list",
     contentListIndex: item.__contentListIndex,
-    anchorBlockIndex: continuation?.anchorBlockIndex,
+    anchorBlockIndex,
   };
+}
+
+function findPageTopTableAnchorForReferencingProse(text, sourceSegments = []) {
+  const proseLabel = tableLabelFromText(text);
+  if (!proseLabel) {
+    return null;
+  }
+  return (Array.isArray(sourceSegments) ? sourceSegments : []).find((segment) => {
+    if (String(segment?.block?.type || "").toLowerCase() !== "table") {
+      return false;
+    }
+    const geometry = bboxReadingGeometry(segment?.bbox, segment?.pageSize);
+    if (!geometry || geometry.top / Math.max(geometry.pageHeight, 1) > 0.38) {
+      return false;
+    }
+    const tableLabel = tableLabelFromText(segment?.markdown || "");
+    return !tableLabel || tableLabel === proseLabel;
+  }) || null;
+}
+
+function isContentListDuplicateOfReviewSegment(text, sourceSegments = []) {
+  const candidate = canonicalTextForOverlap(text);
+  if (!candidate || candidate.length < 80) {
+    return false;
+  }
+  return (Array.isArray(sourceSegments) ? sourceSegments : []).some((segment) => {
+    const source = canonicalTextForOverlap(segment?.markdown || "");
+    if (!source || source.length < 80) {
+      return false;
+    }
+    const shorter = candidate.length <= source.length ? candidate : source;
+    const longer = candidate.length > source.length ? candidate : source;
+    if (longer.includes(shorter) && shorter.length / longer.length >= 0.72) {
+      return true;
+    }
+    const shortTokens = new Set(shorter.split(/\s+/).filter((token) => token.length > 1));
+    const longTokens = new Set(longer.split(/\s+/).filter((token) => token.length > 1));
+    if (shortTokens.size < 12) {
+      return false;
+    }
+    const shared = Array.from(shortTokens).filter((token) => longTokens.has(token)).length;
+    return shared / shortTokens.size >= 0.96;
+  });
 }
 
 function isLikelyContentListHeaderFooterNoise(text, bbox, pageSize, sourceSegments = []) {
@@ -7815,7 +7894,7 @@ function leadingFigureOrTableReferenceLabel(text) {
 }
 
 function startsLikeNarrativeProse(text) {
-  return /^(Although|Because|However|Therefore|Thus|If|In\s+fact|In\s+this|From|Using|We|It|This|These|The|For|As|Where|When|Once)\b/i.test(
+  return /^(Although|Another|Because|Finally|However|Therefore|Thus|If|In|From|Using|We|It|This|These|The|For|As|Where|When|Once)\b/i.test(
     String(text || "").trim(),
   );
 }

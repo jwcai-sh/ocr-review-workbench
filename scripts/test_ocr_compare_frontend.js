@@ -560,6 +560,18 @@ assert(mathpixScientificTable.includes("× 10^{-11}"), "Mathpix table cleanup sh
 assert(mathpixScientificTable.includes("× 10^{-16}"), "Mathpix table cleanup should normalize spaced caret powers");
 assert(mathpixScientificTable.includes("yr^{-1}"), "Mathpix table cleanup should normalize inverse year units");
 
+const proseWithDanglingMathpixTag = prepareMathpix(
+  "Return to the terms in I_NG, in Eq. (2.62), that depend on the first-order displacements. The resulting restricted proof was first formulated by Lightman and Lee (1973).\\tga{2.62}"
+);
+assert(!proseWithDanglingMathpixTag.includes("\\tga{2.62}"), "Mathpix prose cleanup should drop typo dangling equation tags");
+assert(!proseWithDanglingMathpixTag.includes("\\tag{2.62}"), "Mathpix prose cleanup should drop dangling equation tags outside display math");
+const editableProseWithDanglingTag = call(`cleanMathpixEditableMarkdown(${JSON.stringify(
+  "Return to the terms in I_NG, in Eq. (2.62), that depend on the first-order displacements.\\tag{2.62}",
+)})`);
+assert(!editableProseWithDanglingTag.includes("\\tag{2.62}"), "editable Mathpix prose cleanup should drop dangling equation tags");
+const displayMathTagPreserved = prepareMathpix("$$\nE = mc^2\\tag{2.62}\n$$");
+assert(displayMathTagPreserved.includes("\\tag{2.62}"), "Mathpix cleanup should preserve legitimate display math tags");
+
 assert.strictEqual(prepareMathpix("   "), "", "prepareMathpixMarkdown should tolerate empty Mathpix output");
 
 const latexTable = "\\begin{tabular}{cc}\na & b \\\\ c & d\n\\end{tabular}";
@@ -3744,6 +3756,57 @@ function setupPreviewBookExpression(pages) {
 {
   const result = JSON.parse(
     call(`(() => {
+      state.currentPage = 2;
+      state.contentListItems = normalizeContentListItems([
+        {
+          type: "discarded",
+          page_idx: 1,
+          bbox: [80, 80, 470, 185],
+          text: "In a similar manner, reanalyses of decay rates of 187Rhenium in ancient meteorites gave the bound on any variation of the weak interaction coupling constant. The current best bounds are summarized in Table 2.2."
+        }
+      ]);
+      state.mineruInfo = {
+        pdf_info: [
+          {},
+          {
+            page_size: [510, 697],
+            para_blocks: [
+              {
+                type: "text",
+                bbox: [80, 430, 470, 560],
+                lines: [
+                  { spans: [{ content: "In a similar manner, reanalyses of decay rates of 187Rhenium in ancient meteorites gave the bound on any variation of the weak interaction coupling constant. The current best bounds are summarized in Table 2.2." }] }
+                ]
+              },
+              {
+                type: "table",
+                bbox: [80, 225, 470, 410],
+                table_body: "<table><tr><th>Constant k</th><th>Limit on k/k</th></tr><tr><td>Fine structure</td><td><1.3 × 10-16</td></tr></table>"
+              }
+            ]
+          }
+        ]
+      };
+      const risks = detectRiskCandidatesForPage(2);
+      const segments = reviewSegmentsForPage(2);
+      const entries = buildReviewEntriesForPage(risks, segments, 2);
+      return JSON.stringify({
+        candidates: detectContentListRiskCandidatesForPage(2),
+        segments: segments.map((segment) => ({ key: String(segment.blockIndex), type: segment.block?.type || segment.kind, markdown: segment.markdown })),
+        entries: entries.map((entry) => ({ key: entry.key, markdown: entry.segment.markdown }))
+      });
+    })()`),
+  );
+  assert.strictEqual(result.candidates.length, 0, "content_list copy of a Table-referencing prose block should not duplicate MinerU text");
+  assert.strictEqual(result.segments[0].type, "table", "captionless page-top table should remain before prose that references Table 2.2");
+  assert(result.segments[1].markdown.includes("summarized in Table 2.2"));
+  assert.strictEqual(result.entries.filter((entry) => entry.markdown.includes("summarized in Table 2.2")).length, 1, "Table-referencing prose should appear once after the table");
+  assert(!result.entries.some((entry) => String(entry.key).startsWith("content-list-discarded-2")), "duplicate content_list prose should not be rendered as a third-column block");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
       ${setupPreviewPageExpression([
         "The Eotv¨os experiment and the gravitational redshift experiment are used as probes of equivalence principles."
       ])}
@@ -4186,6 +4249,55 @@ function setupPreviewBookExpression(pages) {
 {
   const result = JSON.parse(
     call(`(() => {
+      state.currentPage = 19;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.riskByPage.clear();
+      state.contentListItems = [
+        {
+          type: "discarded",
+          page_idx: 18,
+          page_size: [919, 1256],
+          bbox: [190, 760, 850, 930],
+          text: "Table 12.3 The first two companion candidates, the helium star and the white dwarf, fell out of favor because of orbital perturbations."
+        }
+      ];
+      state.mineruInfo = {
+        pdf_info: Array.from({ length: 19 }, (_unused, index) => index === 18
+          ? {
+              page_size: [919, 1256],
+              para_blocks: [
+                {
+                  type: "table",
+                  bbox: [190, 90, 850, 380],
+                  lines: [{ spans: [{ html: "<table><tr><th>Parameter</th><th>Value</th></tr></table>" }] }]
+                },
+                {
+                  type: "text",
+                  bbox: [190, 500, 850, 690],
+                  lines: [{ spans: [{ content: "companion that were considered early on were a helium main-sequence star, a white dwarf, a neutron star and a black hole." }] }]
+                }
+              ]
+            }
+          : { page_size: [919, 1256], para_blocks: [] })
+      };
+      const risks = detectRiskCandidatesForPage(19);
+      const entries = buildReviewEntriesForPage(risks, reviewSegmentsForPage(19), 19);
+      return JSON.stringify(entries.map((entry) => ({ key: entry.key, text: entry.segment.markdown })));
+    })()`),
+  );
+  assert.strictEqual(result[0].key, "0", "page-top table should remain first");
+  assert.strictEqual(result[1].key, "1", "real prose immediately below a table should not be jumped over by lower content_list supplements");
+  assert.strictEqual(result[2].key, "content-list-discarded-19-0", "lower content_list continuation should follow prose above its bbox");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
       state.currentPage = 12;
       state.mineruInfo = {
         pdf_info: Array.from({ length: 12 }, (_unused, index) => index === 11
@@ -4246,7 +4358,7 @@ function setupPreviewBookExpression(pages) {
     ]);
   })()`);
   assert(navHtml.includes("review-font-nav-group"));
-  assert(navHtml.includes("data-review-fit-page"));
+  assert(!navHtml.includes("data-review-fit-page"), "right-column fit-page button should not be rendered");
   assert(navHtml.includes('data-review-font-scale="out"'));
   assert(navHtml.includes('data-review-font-scale="in"'));
   assert(!navHtml.includes("review-page-nav-group"));
