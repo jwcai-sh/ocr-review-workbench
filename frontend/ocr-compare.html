@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OCR 三栏对照</title>
-  <link rel="stylesheet" href="./ocr-compare.css?v=20260628-science-html-symbols">
+  <link rel="stylesheet" href="./ocr-compare.css?v=20260628-upload-label-mathjax">
 </head>
 <body>
   <div class="ocr-shell">
@@ -17,9 +17,12 @@
     </header>
 
     <section class="control-band">
+      <input id="pdfInput" class="hidden-input" type="file" accept=".pdf,application/pdf,image/*">
+      <input id="mineruInput" class="hidden-input" type="file" accept=".json,application/json">
+      <input id="contentListInput" class="hidden-input" type="file" accept=".json,application/json">
+      <input id="requiredFilesInput" class="hidden-input" type="file" accept=".pdf,application/pdf,.json,application/json" multiple>
       <div class="control-column control-column-pdf" aria-label="上传 OCR 输入文件">
-        <label id="pickPdfButton" class="primary-button upload-button" role="button" tabindex="0">
-          <input id="pdfInput" class="file-input-overlay" type="file" accept=".pdf,application/pdf,image/*" aria-label="上传 PDF">
+        <label id="pickPdfButton" class="primary-button upload-button" for="pdfInput" role="button" tabindex="0">
           <span class="upload-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
               <path d="M12 3v12"></path>
@@ -29,8 +32,7 @@
           </span>
           <span>上传 PDF</span>
         </label>
-        <label id="pickMineruButton" class="secondary-button upload-button" role="button" tabindex="0">
-          <input id="mineruInput" class="file-input-overlay" type="file" accept=".json,application/json" aria-label="上传 middle.json">
+        <label id="pickMineruButton" class="secondary-button upload-button" for="mineruInput" role="button" tabindex="0">
           <span class="upload-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
               <path d="M12 3v12"></path>
@@ -40,8 +42,7 @@
           </span>
           <span>上传 middle.json</span>
         </label>
-        <label id="pickContentListButton" class="secondary-button upload-button" role="button" tabindex="0">
-          <input id="contentListInput" class="file-input-overlay" type="file" accept=".json,application/json" aria-label="上传 content_list">
+        <label id="pickContentListButton" class="secondary-button upload-button" for="contentListInput" role="button" tabindex="0">
           <span class="upload-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
               <path d="M12 3v12"></path>
@@ -51,8 +52,7 @@
           </span>
           <span>上传 content_list</span>
         </label>
-        <label id="pickRequiredFilesButton" class="secondary-button upload-button upload-all-button" role="button" tabindex="0">
-          <input id="requiredFilesInput" class="file-input-overlay" type="file" accept=".pdf,application/pdf,.json,application/json" multiple aria-label="一键上传所需文件">
+        <label id="pickRequiredFilesButton" class="secondary-button upload-button upload-all-button" for="requiredFilesInput" role="button" tabindex="0">
           <span class="upload-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
               <path d="M12 3v12"></path>
@@ -91,9 +91,6 @@
   <script>
     window.MathJax = {
       loader: {
-        paths: {
-          mathjax: "./vendor/mathjax"
-        },
         load: ["[tex]/boldsymbol"]
       },
       tex: {
@@ -108,12 +105,12 @@
       startup: {
         typeset: false,
         pageReady: () =>
-          window.MathJax.startup.defaultPageReady().then(() => {
+          MathJax.startup.defaultPageReady().then(() => {
             window.dispatchEvent(new Event("mathjax-ready"));
           })
       }
     };
   </script>
-  <script src="./ocr-compare.js?v=20260628-science-html-symbols"></script>
+  <script src="./ocr-compare.js?v=20260628-upload-label-mathjax"></script>
 </body>
 </html>

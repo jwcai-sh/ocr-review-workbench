@@ -11,10 +11,6 @@ const source = fs
 const patchBrowserSource = fs.readFileSync("frontend/ocr-core/patch/ocrPatch.browser.js", "utf8");
 const ocrCompareHtml = fs.readFileSync("frontend/ocr-compare.html", "utf8");
 const ocrCompareCss = fs.readFileSync("frontend/ocr-compare.css", "utf8");
-const localMathJaxScript = fs.readFileSync("frontend/vendor/mathjax/tex-chtml.js", "utf8");
-const localMathJaxBoldsymbol = fs.readFileSync("frontend/vendor/mathjax/input/tex/extensions/boldsymbol.js", "utf8");
-const localPdfJsScript = fs.readFileSync("frontend/vendor/pdfjs/pdf.mjs", "utf8");
-const localPdfJsWorker = fs.readFileSync("frontend/vendor/pdfjs/pdf.worker.mjs", "utf8");
 const { hashBlockText: nodeHashBlockText } = require(path.resolve("frontend/ocr-core/patch/blockHasher"));
 const { createOcrPatch: nodeCreateOcrPatch } = require(path.resolve("frontend/ocr-core/patch/patchGenerator"));
 
@@ -90,9 +86,8 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareCss.includes(".control-column-pdf"));
   assert(ocrCompareCss.includes(".upload-button.primary-button"));
   assert(ocrCompareCss.includes(".upload-all-button"));
-  assert(!/\.file-input-overlay\s*\{[^}]*display:\s*none/.test(ocrCompareCss), "file inputs must remain directly clickable, not display:none");
-  assert(/\.file-input-overlay\s*\{[^}]*position:\s*absolute/.test(ocrCompareCss), "file inputs should cover their upload buttons");
-  assert(/\.file-input-overlay\s*\{[^}]*opacity:\s*0/.test(ocrCompareCss), "file inputs should be transparent while remaining clickable");
+  assert(!/\.hidden-input\s*\{[^}]*display:\s*none/.test(ocrCompareCss), "file inputs must stay label-activatable, not display:none");
+  assert(/\.hidden-input\s*\{[^}]*opacity:\s*0/.test(ocrCompareCss), "file inputs should be visually hidden while remaining activatable by labels");
   assert(ocrCompareCss.includes('label[role="button"]'));
   assert(ocrCompareCss.includes(".upload-button:focus-visible"));
   assert(ocrCompareCss.includes("font-size: calc(17px * var(--review-font-scale, 1));"));
@@ -154,24 +149,14 @@ function runOcrCompareInContext(testContext) {
   assert(!ocrCompareHtml.includes("cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"), "MathJax CDN should be lazy-loaded by ocr-compare.js");
   assert(ocrCompareHtml.includes('load: ["[tex]/boldsymbol"]'), "MathJax should load boldsymbol for vector formulas converted from pmb");
   assert(ocrCompareHtml.includes('packages: { "[+]": ["boldsymbol"] }'), "MathJax should enable the boldsymbol TeX package");
-  assert(ocrCompareHtml.includes('paths: {'), "MathJax config should define a local component base path");
-  assert(ocrCompareHtml.includes('mathjax: "./vendor/mathjax"'), "MathJax boldsymbol extension should be served locally");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-science-html-symbols"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-science-html-symbols"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-science-html-symbols"'));
-  assert(ocrCompareCss.includes(".science-inline-symbol"));
-  assert(ocrCompareCss.includes(".science-power"));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-upload-label-mathjax"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-upload-label-mathjax"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-upload-label-mathjax"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
   assert(source.includes("ensureMathJaxLoaded().catch((error) => reportMathJaxError(error));"));
   assert(source.includes("MATHJAX_SCRIPT_URLS"), "MathJax should have fallback script sources");
-  assert(source.includes('"./vendor/mathjax/tex-chtml.js"'), "MathJax should prefer the local bundled component before external CDNs");
-  assert(source.includes("function configureMathJax()"), "MathJax config should be set immediately before lazy loading");
-  assert(source.includes("MathJax loaded without typesetPromise"), "MathJax loader should not treat a half-loaded component as ready");
-  assert(source.includes("MathJax startup promise missing"), "MathJax loader should fall back when startup never initializes");
-  assert(localMathJaxScript.includes("MathJax.loader"), "local MathJax component should be present in the frontend bundle");
-  assert(localMathJaxBoldsymbol.includes("boldsymbol"), "local MathJax boldsymbol extension should be present in the frontend bundle");
   assert(source.includes("MATHJAX_LOAD_TIMEOUT_MS"), "MathJax loading should time out instead of leaving raw TeX forever");
   assert(source.includes("loadMathJaxScriptFromFallbacks"), "MathJax loader should try fallback CDNs");
   assert(ocrCompareHtml.includes("<div>校对工作台</div>"));
@@ -298,9 +283,9 @@ function runOcrCompareInContext(testContext) {
   assert.strictEqual(pickerResult.opened, true);
   assert.strictEqual(pickerResult.value, "", "file input must reset so selecting the same file fires change again");
   assert.strictEqual(pickerResult.missing, false);
-  assert(ocrCompareHtml.includes('id="pdfInput" class="file-input-overlay"'), "PDF upload should expose a real clickable file input over the button");
-  assert(ocrCompareHtml.includes('id="requiredFilesInput" class="file-input-overlay"'), "one-click upload should expose a real clickable multi-file input over the button");
-  assert(source.includes("bindNativeFilePickerLabel"), "file picker labels should prepare state before the browser file picker opens");
+  assert(ocrCompareHtml.includes('for="pdfInput"'), "PDF upload should use native label activation instead of JS-only click");
+  assert(ocrCompareHtml.includes('for="requiredFilesInput"'), "one-click upload should use native label activation instead of JS-only click");
+  assert(source.includes("bindNativeFilePickerLabel"), "file picker labels should prepare state without relying on JS click for mouse users");
   assert(source.includes('setStatus("上传 PDF", "busy"'));
   assert(source.includes('setStatus("渲染 PDF", "busy", file.name);'));
   assert(source.includes('setStatus("读取 MinerU", "busy", file.name);'));
@@ -448,16 +433,6 @@ $$`;
 
 {
   assert(source.includes("pdfDocumentId"), "frontend should keep a server-side PDF document id after the first preview request");
-  assert(source.includes("pdfLocalDocument"), "frontend should keep a browser-side PDF document for remote deployments");
-  assert(source.includes("PDFJS_SCRIPT_URLS"), "frontend should lazy-load local PDF.js for browser-side PDF rendering");
-  assert(source.includes('"./vendor/pdfjs/pdf.mjs"'), "frontend should prefer bundled PDF.js over uploading the whole PDF");
-  assert(source.includes("PDFJS_WORKER_URL"), "frontend should use a bundled PDF.js worker");
-  assert(source.includes("loadLocalPdfDocument(file)"), "PDF upload should try browser-side rendering before backend upload");
-  assert(source.includes("renderLocalPdfPreviewPage"), "page previews should render from the browser-side PDF document when available");
-  assert(source.includes("renderLocalPdfPage"), "local PDF rendering should produce page images and text layers");
-  assert(source.includes("state.pdfLocalDocument || state.pdfDocumentId || state.pdfDataUrl"), "PDF-dependent controls should accept local browser PDF documents");
-  assert(localPdfJsScript.includes("getDocument"), "bundled PDF.js module should be present");
-  assert(localPdfJsWorker.includes("WorkerMessageHandler"), "bundled PDF.js worker should be present");
   assert(source.includes("payload.documentId = state.pdfDocumentId"), "page preview requests should reuse documentId instead of reposting the PDF");
   assert(source.includes("rememberPdfDocumentId(response)"), "preview responses should refresh the cached PDF document id");
   assert(source.includes("waitForNextPaint()"), "one-click upload should paint busy status before slow remote upload work starts");
@@ -1036,14 +1011,14 @@ function assertOcrPatchShape(patch) {
   assert(!parsed.draftHtml.includes("data-ocr-patch-status-action=\"accepted\""));
   assert(!parsed.draftHtml.includes(">接受<"));
   assert(!parsed.draftHtml.includes(">拒绝<"));
-  assert(/>\s*保存\s*<\/button>/.test(parsed.draftHtml), "draft edits should be accepted through the single save action");
+  assert(parsed.draftHtml.includes("保持修改"), "draft edits should be accepted through the single save action");
   assert(parsed.draftHtml.includes('data-revert-mathpix-block-edit="3"'), "Mathpix draft edits should expose an explicit undo action");
   assert(!parsed.draftHtml.includes("确认 MinerU 有误后"));
   assert(!parsed.acceptedHtml.includes("Patch：accepted"));
   assert(!parsed.acceptedHtml.includes("已接受 patch"));
   assert(parsed.acceptedHtml.includes("已接受校正稿"));
   assert(parsed.acceptedHtml.includes("data-mathpix-edit=\"3\""));
-  assert(!parsed.acceptedHtml.includes("未修改"));
+  assert(parsed.acceptedHtml.includes("未修改"));
   assert(/data-apply-mathpix-block-edit="3"[^>]*data-disable-when-clean="1"[^>]*disabled/.test(parsed.acceptedHtml));
   assert(parsed.acceptedHtml.includes("F=\\sigma T^4"));
   assert(!parsed.acceptedHtml.includes("确认 MinerU 有误后"));
@@ -1589,26 +1564,6 @@ function assertOcrPatchShape(patch) {
   assert(result.cleaned.includes("evolutionary models for binary systems"), "editable cleanup should keep continuous prose on one line");
   assert(!result.cleaned.includes("white dwarf,\\na neutron"), "editable cleanup should remove hard OCR line breaks inside one paragraph");
   assert(!result.rendered.includes("<br>"), "rendered prose should not preserve artificial OCR line breaks");
-}
-
-{
-  const scientificText = "The Webb group reported Δα_EM/α_EM = (-0.72 ± 0.18) x 10^{-5} and a linear drift of 6.4 x 10^{-16}yr^{-1}.";
-  const rendered = call(`renderBlockContent(${JSON.stringify(scientificText)}, { kind: "text", blockIndex: "scientific-symbols" })`);
-  assert(rendered.includes('<span class="science-inline-symbol">Δα<sub>EM</sub></span>/<span class="science-inline-symbol">α<sub>EM</sub></span>'), "rendered scientific prose should use body-font HTML for Greek ratios");
-  assert(rendered.includes('<span class="science-power">10<sup>-5</sup></span>'), "rendered scientific prose should use body-font HTML superscripts for powers");
-  assert(rendered.includes('<span class="science-power">6.4 × 10<sup>-16</sup></span><span class="science-power">yr<sup>-1</sup></span>'), "rendered scientific prose should use body-font HTML for scientific power units");
-  assert(!rendered.includes("$\\Delta\\alpha"), "simple scientific ratios should not be sent to MathJax");
-}
-
-{
-  const scientificSymbolsText = "structure constant α_EM, the weak interaction constant α_W, the electron-proton mass ratio m_e/m_p or the proton gyromagnetic ratio g_p, for example, then a limit on g_EM follows";
-  const rendered = call(`renderBlockContent(${JSON.stringify(scientificSymbolsText)}, { kind: "text", blockIndex: "science-inline-font" })`);
-  assert(rendered.includes('<span class="science-inline-symbol">α<sub>EM</sub></span>'), "standalone Greek scientific constants should use body-font HTML subscripts");
-  assert(rendered.includes('<span class="science-inline-symbol">α<sub>W</sub></span>'), "single-letter Greek subscripts should use body-font HTML subscripts");
-  assert(rendered.includes('<span class="science-inline-symbol">m<sub>e</sub></span>/<span class="science-inline-symbol">m<sub>p</sub></span>'), "ASCII scientific ratios should use body-font HTML subscripts");
-  assert(rendered.includes('<span class="science-inline-symbol">g<sub>p</sub></span>'), "single ASCII scientific constants should use body-font HTML subscripts");
-  assert(rendered.includes('<span class="science-inline-symbol">g<sub>EM</sub></span>'), "ASCII constants with uppercase subscripts should use body-font HTML subscripts");
-  assert(!rendered.includes("$\\alpha_{\\rm EM}$"), "standalone simple symbols should not need MathJax font rendering");
 }
 
 {
@@ -2345,24 +2300,6 @@ function assertOcrPatchShape(patch) {
   assert(!result.includes("{\\cos}"), "display math cleanup should not keep redundant command braces");
   assert(!result.includes("{=}"), "display math cleanup should not keep redundant operator braces");
   assert(!result.includes("~ {\\sin}"), "display math cleanup should remove noisy tilde spacing");
-}
-
-{
-  const messyMathpixTable = [
-    "| Constant k | Limit on k/k (yr^{-1}) | Redshift | Method |",
-    "| --- | --- | --- | --- |",
-    "| \\multirow[t]{4}{*}{Fine structure constant (α_EM = e^2/hc)} | < 1.3 x 10^{-16} | 0 | Clock comparisons |",
-    "| | < 0.5 x 10^{-16} | 0.15 | Oklo natural reactor |",
-    "| $ | | | |",
-    "||||",
-    "||||Weakinteractionconstant\\left(\\alpha_{\\mathrm{W}}=G_f m_p^2 c/\\hbar^3\\right)||0.1510^{9}|OklonaturalreactorBigBangnucleosynthesis||",
-  ].join("\n");
-  const cleaned = call(`cleanMathpixEditableMarkdown(${JSON.stringify(messyMathpixTable)})`);
-  assert(cleaned.includes("Fine structure constant"), "Mathpix table cleanup should keep real table text");
-  assert(cleaned.includes("α_EM"), "Mathpix table cleanup should keep simple Greek constants editable as source text");
-  assert(!cleaned.includes("\\multirow"), "Mathpix table cleanup should remove raw multirow commands from editable Markdown");
-  assert(!cleaned.includes("||||"), "Mathpix table cleanup should remove collapsed empty pipe garbage");
-  assert(!cleaned.includes("Weakinteractionconstant"), "Mathpix table cleanup should drop glued duplicate table fragments");
 }
 
 {
@@ -3557,12 +3494,6 @@ function setupPreviewBookExpression(pages) {
           page_idx: 1,
           bbox: [80, 100, 450, 180],
           text: "that bodies made of different material fall with the same acceleration. The theory must incorporate a complete set of electrodynamic and quantum mechanical laws"
-        },
-        {
-          type: "discarded",
-          page_idx: 1,
-          bbox: [80, 450, 450, 620],
-          text: "In a similar manner, reanalyses of decay rates of 187Rhenium in ancient meteorites gave the bound |α_EM/α_EM| < 3.4 x 10^{-16}yr^{-1}. Finally, bounds on any variation of the weak interaction coupling constant α_W have been set by comparing predicted abundances of the light elements produced during Big-Bang nucleosynthesis and the observationally inferred primordial abundances. The current best bounds are summarized in Table 2.2."
         }
       ]);
       state.mineruInfo = {
@@ -3576,13 +3507,6 @@ function setupPreviewBookExpression(pages) {
                 bbox: [80, 100, 450, 230],
                 lines: [
                   { spans: [{ content: "that bodies made of different material fall with the same acceleration. The theory must incorporate a complete set of electrodynamic and quantum mechanical laws, which can be used to calculate real bodies." }] }
-                ]
-              },
-              {
-                type: "text",
-                bbox: [80, 440, 450, 620],
-                lines: [
-                  { spans: [{ content: "In a similar manner, reanalyses of decay rates of 187Rhenium in ancient meteorites gave the bound |dot alpha_EM/alpha_EM| < 3.4 x 10^-16 yr^-1. Finally, bounds on any variation of the weak interaction coupling constant alpha_W have been set by comparing predicted abundances of the light elements produced during Big-Bang nucleosynthesis and the observationally inferred primordial abundances. The current best bounds are summarized in Table 2.2." }] }
                 ]
               }
             ]
@@ -5683,12 +5607,12 @@ function setupPreviewBookExpression(pages) {
   assert(canvasResult.correctionCanvas.includes("selected-block-toolbar"), "correction panel should restore the original block correction UI on demand");
   assert(canvasResult.correctionCanvas.includes('data-risk-mathpix="1"'), "correction panel should expose the Mathpix block action");
   assert(canvasResult.correctionCanvas.includes("查看/编辑 MinerU 源码"), "correction panel should expose source editing");
-  assert(canvasResult.correctionCanvas.includes('aria-label="收起校正面板"'), "correction panel should expose an explicit collapse action");
-  assert(canvasResult.correctionCanvas.includes(">⌃</button>"), "correction panel collapse action should use a single-arrow glyph");
-  assert(!canvasResult.correctionCanvas.includes(">⌃⌃</button>"), "correction panel collapse action should not duplicate the arrow glyph");
+  assert(!canvasResult.correctionCanvas.includes('aria-label="收起校正面板"'), "correction panel toolbar should not expose a separate collapse action");
+  assert(!canvasResult.correctionCanvas.includes(">⌃⌃</button>"), "correction panel toolbar should not render the old double-arrow collapse action");
   assert(canvasResult.correctionCanvas.includes(">保存</button>"), "correction panel should expose an explicit save action");
-  assert(canvasResult.correctionCanvas.includes(">取消</button>"), "correction panel should expose an explicit cancel action");
-  assert(!canvasResult.correctionCanvas.includes(">未修改</button>"), "correction panel should not render a non-action unmodified button");
+  assert(canvasResult.correctionCanvas.includes(">撤销</button>"), "correction panel should expose an explicit revert action");
+  assert(!canvasResult.correctionCanvas.includes(">取消</button>"), "correction panel toolbar should not use the old cancel wording");
+  assert(!canvasResult.correctionCanvas.includes("selected-edit-state"), "correction panel toolbar should not show the old keep-edit state action");
   assert(canvasResult.hotspots.includes('data-review-left-hotspot="1:0"'), "block with bbox should render a left-column hotspot");
   assert(canvasResult.hotspots.includes('data-review-left-hotspot="1:1"'), "formula block with bbox should render a left-column hotspot");
   assert(!canvasResult.hotspots.includes('data-review-left-hotspot="1:2"'), "block without bbox should not render a left-column hotspot");
@@ -6063,8 +5987,7 @@ assert(reviewHtml.includes('data-review-item-state="mathpix-draft"'), "new Mathp
 assert(!reviewHtml.includes('class="review-item-state"'), "new Mathpix draft should not add noisy state badges in the toolbar");
 assert(!reviewHtml.includes("待核查"), "review item title should avoid noisy pending copy");
 assert(!reviewHtml.includes("公式被拆散"), "review item title should avoid long risk reason chains");
-assert(/>\s*保存\s*<\/button>/.test(reviewHtml), "editing Mathpix Markdown should use the streamlined save action");
-assert(!reviewHtml.includes("未修改"), "editing Mathpix Markdown should not show the old non-action state button");
+assert(reviewHtml.includes("保持修改"), "editing Mathpix Markdown should use the streamlined save action");
 assert(!reviewHtml.includes("应用到校正稿"), "old apply wording should not be shown in block edit UI");
 assert(reviewHtml.includes("New Mathpix draft"), "pending Mathpix draft should be previewed");
 assert(!reviewHtml.includes("Old applied correction</div>"), "old applied correction should not be the visible pending preview");

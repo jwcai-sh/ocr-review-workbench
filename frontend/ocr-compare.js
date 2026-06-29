@@ -4,14 +4,13 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260628-science-html-symbols";
+const OCR_COMPARE_BUILD_ID = "20260628-upload-label-mathjax";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
   pdfFile: null,
   pdfDataUrl: "",
   pdfDocumentId: "",
-  pdfLocalDocument: null,
   pdfPageCount: 0,
   currentPage: 1,
   pageCache: new Map(),
@@ -53,13 +52,7 @@ const OCR_WORKSPACE_STORAGE_PREFIX = "uma-ocr-compare-workspace-v1";
 const PDF_IMAGE_ZOOM_LEVELS = [1, 1.25, 1.5, 1.75, 2, 2.5];
 const REVIEW_FONT_SCALE_LEVELS = [0.9, 1, 1.1, 1.2, 1.35, 1.5];
 const PDF_UPLOAD_CHUNK_SIZE = 1024 * 1024;
-const PDFJS_SCRIPT_URLS = [
-  "./vendor/pdfjs/pdf.mjs",
-  "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs",
-];
-const PDFJS_WORKER_URL = "./vendor/pdfjs/pdf.worker.mjs";
 const MATHJAX_SCRIPT_URLS = [
-  "./vendor/mathjax/tex-chtml.js",
   "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js",
   "https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-chtml.min.js",
   "https://unpkg.com/mathjax@3/es5/tex-chtml.js",
@@ -87,7 +80,6 @@ let ocrCoreValidateRenderability = null;
 let ocrCorePatchLoadStarted = false;
 let ocrCorePatchWarningShown = false;
 let mathJaxLoadPromise = null;
-let pdfJsLoadPromise = null;
 let riskAnalysisTimer = null;
 let riskAnalysisRunId = 0;
 let renderCurrentPageRunId = 0;
@@ -603,17 +595,12 @@ function identifyRequiredUploadFiles(files) {
 }
 
 async function loadPdfFile(file) {
-  setStatus("读取 PDF", "busy", `${file.name} (${formatBytes(file.size || 0)})`);
+  setStatus("上传 PDF", "busy", `${file.name} (${formatBytes(file.size || 0)})`);
   await waitForNextPaint();
-  const localDocument = await loadLocalPdfDocument(file).catch((error) => {
-    console.warn?.("[OCR Review] 浏览器本地 PDF 渲染不可用，回退到后端上传。", error);
-    return null;
-  });
-  const upload = localDocument ? null : await uploadPreviewDocument(file);
+  const upload = await uploadPreviewDocument(file);
   state.pdfFile = file;
   state.pdfDataUrl = "";
-  state.pdfDocumentId = upload?.documentId || "";
-  state.pdfLocalDocument = localDocument;
+  state.pdfDocumentId = upload.documentId || "";
   state.pageCache.clear();
   state.pdfTextPageCache.clear();
   state.mathpixCache.clear();
@@ -632,7 +619,7 @@ async function loadPdfFile(file) {
   state.currentPage = 1;
   setStatus("渲染 PDF", "busy", file.name);
   const preview = await loadPagePreview(1);
-  state.pdfPageCount = preview.pageCount || upload?.pageCount || preview.pages?.length || 1;
+  state.pdfPageCount = preview.pageCount || upload.pageCount || preview.pages?.length || 1;
   cachePreviewPage(1, preview);
   if (state.mineruInfo) {
     analyzeCurrentMineruRiskPage();
@@ -705,7 +692,6 @@ function resetPage() {
   state.pdfFile = null;
   state.pdfDataUrl = "";
   state.pdfDocumentId = "";
-  state.pdfLocalDocument = null;
   state.pdfPageCount = 0;
   state.currentPage = 1;
   state.pageCache.clear();
@@ -1278,21 +1264,14 @@ async function loadPagePreview(pageNumber) {
   if (pendingPagePreviewRequests.has(requestedPage)) {
     return pendingPagePreviewRequests.get(requestedPage);
   }
-  const request = (state.pdfLocalDocument
-    ? renderLocalPdfPreviewPage(requestedPage, {
-        zoom: 1.8,
-        includeText: true,
-        renderImages: true,
-      })
-    : postJson(
-        "/api/ocr/preview-pages",
-        pdfPreviewPayload({
-          pageNumber: requestedPage,
-          maxPages: 1,
-          zoom: 1.8,
-          includeText: true,
-        }),
-      )
+  const request = postJson(
+    "/api/ocr/preview-pages",
+    pdfPreviewPayload({
+      pageNumber: requestedPage,
+      maxPages: 1,
+      zoom: 1.8,
+      includeText: true,
+    }),
   ).finally(() => {
     pendingPagePreviewRequests.delete(requestedPage);
   });
@@ -1303,96 +1282,6 @@ async function loadPagePreview(pageNumber) {
   }
   rememberPdfDocumentId(response);
   return response;
-}
-
-async function loadLocalPdfDocument(file) {
-  if (!file || String(file.type || "").startsWith("image/")) {
-    return null;
-  }
-  const pdfjs = await ensurePdfJsLoaded();
-  const data = await file.arrayBuffer();
-  const loadingTask = pdfjs.getDocument({ data });
-  return loadingTask.promise;
-}
-
-async function renderLocalPdfPreviewPage(pageNumber, options = {}) {
-  const document = state.pdfLocalDocument;
-  if (!document) {
-    return { ok: false, error: "Missing local PDF document" };
-  }
-  const total = Number(document.numPages) || 1;
-  const requestedPage = Math.max(1, Math.min(Number(pageNumber) || 1, total));
-  const page = await renderLocalPdfPage(requestedPage, options);
-  return {
-    ok: true,
-    documentId: "",
-    name: state.pdfFile?.name || "book.pdf",
-    mimeType: state.pdfFile?.type || "application/pdf",
-    pages: [page],
-    pageCount: total,
-    renderedCount: 1,
-  };
-}
-
-async function renderLocalPdfPage(pageNumber, options = {}) {
-  const pdfPage = await state.pdfLocalDocument.getPage(pageNumber);
-  const baseViewport = pdfPage.getViewport({ scale: 1 });
-  const renderImages = options.renderImages !== false;
-  const includeText = Boolean(options.includeText);
-  const zoom = Math.max(1, Math.min(Number(options.zoom) || 1.8, 3));
-  const page = {
-    pageNumber,
-    name: `page-${pageNumber}.png`,
-    mimeType: "image/png",
-    width: Number(baseViewport.width) || 0,
-    height: Number(baseViewport.height) || 0,
-  };
-  if (renderImages) {
-    const viewport = pdfPage.getViewport({ scale: zoom });
-    const canvas = document.createElement("canvas");
-    const context = canvas.getContext("2d");
-    if (!context) {
-      throw new Error("浏览器无法创建 PDF 渲染画布。");
-    }
-    canvas.width = Math.max(1, Math.ceil(viewport.width));
-    canvas.height = Math.max(1, Math.ceil(viewport.height));
-    await pdfPage.render({ canvasContext: context, viewport }).promise;
-    page.width = canvas.width;
-    page.height = canvas.height;
-    page.image = canvas.toDataURL("image/png");
-  }
-  if (includeText) {
-    page.textBlocks = await localPdfTextBlocks(pdfPage, baseViewport);
-    page.textPageSize = [Number(baseViewport.width) || page.width, Number(baseViewport.height) || page.height];
-  }
-  return page;
-}
-
-async function localPdfTextBlocks(pdfPage, viewport) {
-  const height = Number(viewport?.height) || 0;
-  const textContent = await pdfPage.getTextContent().catch(() => ({ items: [] }));
-  return (Array.isArray(textContent?.items) ? textContent.items : [])
-    .map((item) => {
-      const text = String(item?.str || "").trim();
-      const transform = Array.isArray(item?.transform) ? item.transform : [];
-      const x = Number(transform[4]) || 0;
-      const y = Number(transform[5]) || 0;
-      const width = Math.max(Number(item?.width) || 0, text.length * 3);
-      const itemHeight = Math.max(Number(item?.height) || Math.abs(Number(transform[3]) || 0) || 8, 1);
-      if (!text) {
-        return null;
-      }
-      return {
-        text,
-        bbox: [
-          x,
-          Math.max(0, height - y - itemHeight),
-          x + width,
-          Math.max(0, height - y),
-        ],
-      };
-    })
-    .filter(Boolean);
 }
 
 function scheduleAdjacentPagePreviewPrefetch() {
@@ -1469,19 +1358,6 @@ async function ensurePdfTextLayersForBook() {
   if (!missing) {
     return true;
   }
-  if (state.pdfLocalDocument) {
-    for (let pageNo = 1; pageNo <= total; pageNo += 1) {
-      if (state.pdfTextPageCache.has(pageNo)) {
-        continue;
-      }
-      const page = await renderLocalPdfPage(pageNo, {
-        includeText: true,
-        renderImages: false,
-      });
-      cachePdfTextPage(page);
-    }
-    return true;
-  }
   const response = await postJson(
     "/api/ocr/preview-pages",
     pdfPreviewPayload({
@@ -1547,7 +1423,7 @@ async function uploadPreviewDocument(file) {
 }
 
 function hasPdfSource() {
-  return Boolean(state.pdfLocalDocument || state.pdfDocumentId || state.pdfDataUrl);
+  return Boolean(state.pdfDocumentId || state.pdfDataUrl);
 }
 
 function rememberPdfDocumentId(response) {
@@ -2663,8 +2539,8 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
             <summary>编辑当前块 MinerU Markdown 源码</summary>
             <textarea class="mathpix-source-editor block-source-editor" data-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" spellcheck="false">${escapeHtml(segment.markdown)}</textarea>
             <div class="mathpix-edit-actions">
-              <button class="text-button" type="button" data-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="保存" data-dirty-label="保存" disabled>
-                保存
+              <button class="text-button" type="button" data-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保持修改" disabled>
+                未修改
               </button>
             </div>
           </details>
@@ -2680,8 +2556,8 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
             <summary>编辑 Markdown 源码（保存后进入 accepted 校正稿）</summary>
             <textarea class="mathpix-source-editor" data-mathpix-edit="${escapeHtml(String(segment.blockIndex))}" spellcheck="false">${escapeHtml(editableMarkdown)}</textarea>
             <div class="mathpix-edit-actions">
-              <button class="text-button" type="button" data-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="保存" data-dirty-label="保存" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>
-                保存
+              <button class="text-button" type="button" data-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="${hasMathpixDraft ? "保持修改" : "未修改"}" data-dirty-label="保持修改" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>
+                ${hasMathpixDraft ? "保持修改" : "未修改"}
               </button>
               ${hasMathpixDraft ? `<button class="text-button" type="button" data-revert-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}">撤销修改</button>` : ""}
             </div>
@@ -2706,8 +2582,8 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
       ? `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="保存" data-dirty-label="保存" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>保存</button>`
       : `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="保存" data-dirty-label="保存" disabled>保存</button>`;
     const cancelActionHtml = hasMathpixDraft
-      ? `<button class="text-button selected-cancel-action" type="button" data-revert-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}">取消</button>`
-      : `<button class="text-button selected-cancel-action" type="button" data-review-correction-toggle="${escapeHtml(reviewKey)}">取消</button>`;
+      ? `<button class="text-button selected-cancel-action" type="button" data-revert-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}">撤销</button>`
+      : `<button class="text-button selected-cancel-action" type="button" data-review-correction-toggle="${escapeHtml(reviewKey)}">撤销</button>`;
     return `
       <div class="selected-block-toolbar review-item ${isReviewOnly ? "is-normal" : ""} ${isCorrected ? "is-corrected" : ""} ${hasMathpixDraft ? "has-mathpix-draft" : ""} ${isCrossPage ? "is-cross-page" : ""} is-expanded" data-review-item-state="${escapeHtml(itemState)}" data-source-block-id="${escapeHtml(String(segment.blockIndex))}">
         <div class="selected-block-toolbar-head">
@@ -2716,7 +2592,6 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
           </div>
           <div class="review-item-actions">
             ${renderOcrPatchStatusControls(ocrPatch)}
-            <button class="text-button review-toolbar-collapse" type="button" data-review-correction-toggle="${escapeHtml(reviewKey)}" aria-label="收起校正面板" title="收起">⌃</button>
             ${mathpixActionHtml}
             ${saveActionHtml}
             ${cancelActionHtml}
@@ -2925,8 +2800,8 @@ function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditab
         <summary>查看/编辑</summary>
         <textarea class="mathpix-source-editor" data-mathpix-edit="${blockIndex}" spellcheck="false">${mathpixMarkdown}</textarea>
         <div class="mathpix-edit-actions">
-          <button class="text-button" type="button" data-apply-mathpix-block-edit="${blockIndex}" data-clean-label="保存" data-dirty-label="保存" ${mathpixEditorIsSaved ? 'data-disable-when-clean="1" disabled' : ""}>
-            保存
+          <button class="text-button" type="button" data-apply-mathpix-block-edit="${blockIndex}" data-clean-label="${mathpixEditorIsSaved ? "未修改" : "保持修改"}" data-dirty-label="保持修改" ${mathpixEditorIsSaved ? 'data-disable-when-clean="1" disabled' : ""}>
+            ${mathpixEditorIsSaved ? "未修改" : "保持修改"}
           </button>
           ${hasMathpixDraft ? `<button class="text-button" type="button" data-revert-mathpix-block-edit="${blockIndex}">撤销修改</button>` : ""}
         </div>
@@ -2935,8 +2810,8 @@ function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditab
         <summary>查看/编辑 MinerU 源码</summary>
         <textarea class="mathpix-source-editor block-source-editor" data-mineru-source-edit="${blockIndex}" spellcheck="false">${mineruMarkdown}</textarea>
         <div class="mathpix-edit-actions">
-          <button class="text-button" type="button" data-apply-mineru-source-edit="${blockIndex}" data-disable-when-clean="1" data-clean-label="保存" data-dirty-label="保存" disabled>
-            保存
+          <button class="text-button" type="button" data-apply-mineru-source-edit="${blockIndex}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保持修改" disabled>
+            未修改
           </button>
         </div>
       </details>`;
@@ -2962,7 +2837,7 @@ function updateReviewEditorActionState(editor) {
     }
     if (targetButton.dataset?.disableWhenClean === "1") {
       targetButton.disabled = !isDirty;
-      targetButton.textContent = isDirty ? targetButton.dataset.dirtyLabel || "保存" : targetButton.dataset.cleanLabel || "保存";
+      targetButton.textContent = isDirty ? targetButton.dataset.dirtyLabel || "保持修改" : targetButton.dataset.cleanLabel || "未修改";
       return;
     }
     if (targetButton.dataset?.dirtyLabel && isDirty) {
@@ -2973,7 +2848,7 @@ function updateReviewEditorActionState(editor) {
   toolbarButtons.forEach((toolbarButton) => syncButton(toolbarButton));
   toolbarStates.forEach((stateButton) => {
     stateButton.disabled = true;
-    stateButton.textContent = isDirty ? stateButton.dataset.dirtyLabel || "保存" : stateButton.dataset.cleanLabel || "保存";
+    stateButton.textContent = isDirty ? stateButton.dataset.dirtyLabel || "保持修改" : stateButton.dataset.cleanLabel || "未修改";
   });
   if (button?.dataset?.disableWhenClean === "1") {
     button.disabled = !isDirty;
@@ -2985,6 +2860,9 @@ function updateReviewEditorActionState(editor) {
 function handleReviewEditorInput(editor) {
   updateReviewEditorActionState(editor);
   storeLiveReviewDraftForEditor(editor);
+  if (editor?.closest?.(".selected-block-toolbar")) {
+    return;
+  }
   scheduleLiveReviewPreviewForEditor(editor);
 }
 
@@ -4419,11 +4297,9 @@ function renderBlockContent(markdown, entry) {
   }
   const displayMarkdown = autoCorrectKnownEquationOcrMarkdown(markdown);
   const normalizedMarkdown = normalizeReferenceSpacing(
-    normalizeScientificUnicodeMathForRender(
-      normalizeEditableProseLineBreaksOutsideStructuredBlocks(
-        normalizeMathpixCollapsedProse(
-          normalizeSingleLineDisplayMath(normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(displayMarkdown))),
-        ),
+    normalizeEditableProseLineBreaksOutsideStructuredBlocks(
+      normalizeMathpixCollapsedProse(
+        normalizeSingleLineDisplayMath(normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(displayMarkdown))),
       ),
     ),
   );
@@ -4441,139 +4317,6 @@ function normalizeInlineMathSpacingForRender(markdown) {
     return normalizeInlineMathSpacing(text);
   }
   return normalizeInlineMathSpacingOutsideDisplayMath(text);
-}
-
-function normalizeScientificUnicodeMathForRender(markdown) {
-  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
-  let inDisplayMath = false;
-  let inCodeFence = false;
-  return lines
-    .map((line) => {
-      const trimmed = line.trim();
-      if (isCodeFenceStart(line)) {
-        inCodeFence = !inCodeFence;
-        return line;
-      }
-      if (inCodeFence) {
-        return line;
-      }
-      if (trimmed === "$$" || trimmed === "\\[" || trimmed === "\\]") {
-        inDisplayMath = trimmed === "\\]" ? false : trimmed === "\\[" ? true : !inDisplayMath;
-        return line;
-      }
-      if (inDisplayMath || hasLatexMathEnvironment(line)) {
-        return line;
-      }
-      return normalizeScientificUnicodeMathInTextLine(line);
-    })
-    .join("\n");
-}
-
-function normalizeScientificUnicodeMathInTextLine(line) {
-  return String(line || "");
-}
-
-function replaceOutsideInlineMathSpans(text, transform) {
-  const source = String(text || "");
-  let output = "";
-  let cursor = 0;
-  const pattern = /(\$[^$\n]*\$|\\\([\s\S]*?\\\))/g;
-  let match;
-  while ((match = pattern.exec(source))) {
-    output += transform(source.slice(cursor, match.index));
-    output += match[0];
-    cursor = match.index + match[0].length;
-  }
-  output += transform(source.slice(cursor));
-  return output;
-}
-
-function normalizeGreekMathTextTokens(text) {
-  return String(text || "").replace(
-    /(^|[^\p{L}\p{N}\\$])([Δδ])?([Α-Ωα-ωµμ])(?:\s*[_]?\s*\{?([A-Za-z]{1,4})\}?)?\s*\/\s*\3(?:\s*[_]?\s*\{?\4\}?)?(?![\p{L}\p{N}])/gu,
-    (match, prefix, deltaSymbol, symbol, suffix) => {
-      const latex = latexGreekSymbol(symbol);
-      if (!latex) {
-        return match;
-      }
-      const deltaLatex = deltaSymbol ? latexGreekSymbol(deltaSymbol) : "";
-      const suffixText = String(suffix || "");
-      const subscript = suffixText ? `_{${/^[A-Z]{1,4}$/.test(suffixText) ? `\\rm ${suffixText}` : suffixText}}` : "";
-      return `${prefix}$${deltaLatex}${latex}${subscript}/${latex}${subscript}$`;
-    },
-  );
-}
-
-function normalizeScientificPowerTextTokens(text) {
-  return String(text || "").replace(
-    /(^|[^\p{L}\p{N}\\$])((?:[<>]\s*)?\d+(?:\.\d+)?\s*(?:[×x]\s*)?10\s*\^\s*\{?\s*[-+]?\d+\s*\}?(?:\s*yr\s*\^\s*\{?\s*[-+]?\d+\s*\}?)?)/gu,
-    (match, prefix, token) => `${prefix}$${formatScientificPowerToken(token)}$`,
-  );
-}
-
-function formatScientificPowerToken(token) {
-  return String(token || "")
-    .replace(/\s+/g, " ")
-    .replace(/\s*×\s*/g, " \\times ")
-    .replace(/\sx\s*/g, " \\times ")
-    .replace(/10\s*\^\s*\{?\s*([-+]?\d+)\s*\}?/g, "10^{$1}")
-    .replace(/\s*yr\s*\^\s*\{?\s*([-+]?\d+)\s*\}?/gi, "\\mathrm{yr}^{$1}")
-    .trim();
-}
-
-function latexGreekSymbol(symbol) {
-  const symbols = {
-    Α: "A",
-    α: "\\alpha",
-    Β: "B",
-    β: "\\beta",
-    Γ: "\\Gamma",
-    γ: "\\gamma",
-    Δ: "\\Delta",
-    δ: "\\delta",
-    Ε: "E",
-    ε: "\\epsilon",
-    Ζ: "Z",
-    ζ: "\\zeta",
-    Η: "H",
-    η: "\\eta",
-    Θ: "\\Theta",
-    θ: "\\theta",
-    Ι: "I",
-    ι: "\\iota",
-    Κ: "K",
-    κ: "\\kappa",
-    Λ: "\\Lambda",
-    λ: "\\lambda",
-    Μ: "M",
-    μ: "\\mu",
-    µ: "\\mu",
-    Ν: "N",
-    ν: "\\nu",
-    Ξ: "\\Xi",
-    ξ: "\\xi",
-    Ο: "O",
-    ο: "o",
-    Π: "\\Pi",
-    π: "\\pi",
-    Ρ: "P",
-    ρ: "\\rho",
-    Σ: "\\Sigma",
-    σ: "\\sigma",
-    Τ: "T",
-    τ: "\\tau",
-    Υ: "\\Upsilon",
-    υ: "\\upsilon",
-    Φ: "\\Phi",
-    φ: "\\phi",
-    Χ: "X",
-    χ: "\\chi",
-    Ψ: "\\Psi",
-    ψ: "\\psi",
-    Ω: "\\Omega",
-    ω: "\\omega",
-  };
-  return symbols[symbol] || "";
 }
 
 function normalizeInlineMathSpacingOutsideDisplayMath(markdown) {
@@ -4604,9 +4347,8 @@ function normalizeInlineMathSpacingOutsideDisplayMath(markdown) {
 }
 
 function cleanMathpixEditableMarkdown(markdown) {
-  const tableRepaired = normalizeMathpixTableMarkdownArtifacts(String(markdown || ""));
   const lineBreakRepaired = normalizeEditableProseLineBreaksOutsideStructuredBlocks(
-    normalizeMathpixCollapsedProse(tableRepaired),
+    normalizeMathpixCollapsedProse(String(markdown || "")),
   );
   const proseRepaired = normalizeMathpixEditableSource(
     normalizeInlineMathSpacingOutsideDisplayMath(repairLatexDisplayMathStructure(lineBreakRepaired)),
@@ -4614,17 +4356,7 @@ function cleanMathpixEditableMarkdown(markdown) {
   const formatted = formatDisplayMathSourceForEditing(
     normalizeInlineMathSpacingOutsideDisplayMath(compactLatexSourceSpacing(proseRepaired)),
   );
-  return repairKnownMathpixTextualBoundArtifacts(
-    normalizeEditableProseLineBreaksOutsideStructuredBlocks(
-      repairLatexDisplayMathStructure(normalizeMathpixTableMarkdownArtifacts(formatted)),
-    ),
-  ).trim();
-}
-
-function repairKnownMathpixTextualBoundArtifacts(markdown) {
-  return String(markdown || "")
-    .replace(/\bof\s*\|\\eta\|\s*</g, "of $|\\eta| <")
-    .replace(/(\\times\s+10)\^([+-]?\d+)/g, "$1^{$2}");
+  return normalizeEditableProseLineBreaksOutsideStructuredBlocks(repairLatexDisplayMathStructure(formatted)).trim();
 }
 
 function normalizeMathpixOcrArtifacts(markdown) {
@@ -4640,71 +4372,6 @@ function normalizeMathpixCollapsedProse(markdown) {
     .replace(/\brequiredorders\b/gi, "required orders")
     .replace(/\s+([,.;:])/g, "$1")
     .replace(/[ \t]{2,}/g, " ");
-}
-
-function normalizeMathpixTableMarkdownArtifacts(markdown) {
-  return String(markdown || "")
-    .replace(/\r\n?/g, "\n")
-    .split("\n")
-    .map(cleanMathpixTableArtifactLine)
-    .filter((line) => line != null)
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n");
-}
-
-function cleanMathpixTableArtifactLine(line) {
-  const source = String(line || "");
-  const trimmed = source.trim();
-  if (!trimmed) {
-    return source;
-  }
-  if (trimmed === "$" || /^\|{2,}\s*$/.test(trimmed)) {
-    return null;
-  }
-  if (isCollapsedTableGarbageLine(trimmed)) {
-    return null;
-  }
-  if (!trimmed.includes("|") && !/\\multirow\b/.test(trimmed)) {
-    return source;
-  }
-  const withoutMultirow = stripLatexMultirow(source);
-  if (!withoutMultirow.includes("|")) {
-    return cleanMathpixTableCell(withoutMultirow);
-  }
-  const cells = withoutMultirow.split("|").map((cell) => cleanMathpixTableCell(cell));
-  if (!cells.some((cell) => cell.trim())) {
-    return null;
-  }
-  return cells.join("|").replace(/[ \t]+\|/g, " |").replace(/\|[ \t]+/g, "|").trimEnd();
-}
-
-function isCollapsedTableGarbageLine(line) {
-  const trimmed = String(line || "").trim();
-  if (/^\|{3,}/.test(trimmed)) {
-    return true;
-  }
-  if (!trimmed.includes("|")) {
-    return false;
-  }
-  const text = trimmed.replace(/[|$]/g, "").trim();
-  return text.length > 40 && !/\s/.test(text) && /[A-Za-z]{12,}/.test(text);
-}
-
-function stripLatexMultirow(text) {
-  return String(text || "").replace(/\\multirow(?:\[[^\]]*])?\{[^{}\n]*\}\{[^{}\n]*\}\{([^{}\n]*)\}/g, "$1");
-}
-
-function cleanMathpixTableCell(cell) {
-  return normalizeScientificUnicodeMathInTextLine(
-    String(cell || "")
-      .replace(/\\hline\b/g, "")
-      .replace(/\\cline\{[^}]*\}/g, "")
-      .replace(/^\s*\$+\s*|\s*\$+\s*$/g, "")
-      .replace(/\{([^{}\\]+)\}/g, "$1")
-      .replace(/\s+([,.;:])/g, "$1")
-      .replace(/[ \t]{2,}/g, " ")
-      .trim(),
-  );
 }
 
 function normalizeEditableProseLineBreaksOutsideStructuredBlocks(markdown) {
@@ -4803,9 +4470,9 @@ function normalizeMathpixEditableSource(markdown) {
       }
       return line
         .replace(/\\{2,}(?=[A-Za-z])/g, "\\")
-        .replace(/\b([Tt])he\s*([0-9]+)\s+\\+sigma\s*\$bound\b/g, (_match, prefix, number) => `${prefix}he ${number} $\\sigma$ bound`)
-        .replace(/\\+sigma\s*\$bound\b/g, "$\\sigma$ bound")
-        .replace(/\$?\|\s*\\+eta\s*\|\s*</g, "$|\\eta| <")
+        .replace(/\b([Tt])he\s*([0-9]+)\s+\\+sigma\$bound\b/g, (_match, prefix, number) => `${prefix}he ${number} $\\sigma$ bound`)
+        .replace(/\\+sigma\$bound\b/g, "$\\sigma$ bound")
+        .replace(/\$\|\s*\\+eta\s*\|\s*</g, "$|\\eta| <")
         .replace(/\s+([,.;:])/g, "$1")
         .replace(/[ \t]{2,}/g, " ");
     })
@@ -7852,12 +7519,7 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
     normalized.length < 4 ||
     isLikelyReferenceHeading(text) ||
     isPageNumberOnlyText(normalized) ||
-    isTextRedundantWithNormalizedSet(normalized, middleTexts) ||
-    isTextRedundantWithLooseSourceText(normalized, middleTexts) ||
-    isTextRedundantWithLooseSourceText(
-      normalized,
-      (Array.isArray(sourceSegments) ? sourceSegments : []).map((segment) => segment?.markdown),
-    )
+    isTextRedundantWithNormalizedSet(normalized, middleTexts)
   ) {
     return null;
   }
@@ -8286,71 +7948,6 @@ function isTextRedundantWithNormalizedSet(text, normalizedTexts) {
     return shared / shortTokens.size >= 0.88;
   });
 }
-
-function isTextRedundantWithLooseSourceText(text, sourceTexts) {
-  const normalized = normalizeTextForComparison(text);
-  if (!normalized) {
-    return false;
-  }
-  const sourceItems = sourceTexts instanceof Set ? Array.from(sourceTexts) : Array.isArray(sourceTexts) ? sourceTexts : [];
-  return sourceItems.some((candidate) => {
-    const candidateNormalized = normalizeTextForComparison(candidate);
-    if (!candidateNormalized) {
-      return false;
-    }
-    if (isTextRedundantWithNormalizedSet(normalized, [candidateNormalized])) {
-      return true;
-    }
-    return textTokenOverlapRatio(normalized, candidateNormalized) >= 0.72;
-  });
-}
-
-function textTokenOverlapRatio(left, right) {
-  const leftTokens = comparableTokenSet(left);
-  const rightTokens = comparableTokenSet(right);
-  const smaller = leftTokens.size <= rightTokens.size ? leftTokens : rightTokens;
-  const larger = leftTokens.size > rightTokens.size ? leftTokens : rightTokens;
-  if (smaller.size < 12) {
-    return 0;
-  }
-  const shared = Array.from(smaller).filter((token) => larger.has(token)).length;
-  return shared / smaller.size;
-}
-
-function comparableTokenSet(text) {
-  return new Set(
-    canonicalTextForOverlap(text)
-      .split(/\s+/)
-      .filter((token) => token.length > 2 && !COMMON_OVERLAP_STOPWORDS.has(token)),
-  );
-}
-
-const COMMON_OVERLAP_STOPWORDS = new Set([
-  "the",
-  "and",
-  "that",
-  "for",
-  "with",
-  "this",
-  "from",
-  "are",
-  "were",
-  "been",
-  "have",
-  "has",
-  "can",
-  "any",
-  "but",
-  "not",
-  "all",
-  "one",
-  "two",
-  "its",
-  "into",
-  "onto",
-  "our",
-  "their",
-]);
 
 function isPageNumberOnlyText(text) {
   return /^[\s\dIVXLCDMivxlcdm.()-]+$/.test(String(text || "").trim());
@@ -9855,10 +9452,10 @@ function renderMarkdownTable(lines) {
   const width = Math.max(header.length, ...bodyRows.map((row) => row.length), 1);
   const normalizeRow = (row) => row.concat(Array(Math.max(0, width - row.length)).fill(""));
   const headHtml = normalizeRow(header)
-    .map((cell) => `<th>${renderInlineTextHtml(cell)}</th>`)
+    .map((cell) => `<th>${escapeHtml(cell)}</th>`)
     .join("");
   const bodyHtml = bodyRows
-    .map((row) => `<tr>${normalizeRow(row).map((cell) => `<td>${renderInlineTextHtml(cell)}</td>`).join("")}</tr>`)
+    .map((row) => `<tr>${normalizeRow(row).map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
     .join("");
   return `<div class="markdown-table-wrap"><table><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
 }
@@ -9923,10 +9520,10 @@ function renderLatexTableBlock(lines) {
   const normalizeRow = (row) => row.concat(Array(Math.max(0, width - row.length)).fill(""));
   const [header, ...bodyRows] = rows;
   const headHtml = normalizeRow(header)
-    .map((cell) => `<th>${renderInlineTextHtml(cell)}</th>`)
+    .map((cell) => `<th>${escapeHtml(cell)}</th>`)
     .join("");
   const bodyHtml = bodyRows
-    .map((row) => `<tr>${normalizeRow(row).map((cell) => `<td>${renderInlineTextHtml(cell)}</td>`).join("")}</tr>`)
+    .map((row) => `<tr>${normalizeRow(row).map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
     .join("");
   return `<figure class="latex-table-figure">
     ${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ""}
@@ -9958,136 +9555,9 @@ function renderParagraph(lines) {
       .map((image) => renderMarkdownImage(image.alt || "image", image.src))
       .join("");
     const textWithoutImages = normalizeRenderedParagraphText(stripMarkdownImageReferences(text));
-    return `${imageHtml}${textWithoutImages ? `<p>${renderInlineTextHtml(textWithoutImages).replace(/\n/g, "<br>")}</p>` : ""}`;
+    return `${imageHtml}${textWithoutImages ? `<p>${escapeHtml(textWithoutImages).replace(/\n/g, "<br>")}</p>` : ""}`;
   }
-  return `<p>${renderInlineTextHtml(text).replace(/\n/g, "<br>")}</p>`;
-}
-
-function renderInlineTextHtml(text) {
-  return String(text || "")
-    .split(/(\$[^$\n]*\$|\\\([\s\S]*?\\\))/g)
-    .map((part) => {
-      if (!part) {
-        return "";
-      }
-      if (/^(\$[^$\n]*\$|\\\([\s\S]*?\\\))$/.test(part)) {
-        const simpleScienceHtml = renderSimpleScienceMathSpanHtml(part);
-        return simpleScienceHtml || escapeHtml(part);
-      }
-      return renderSimpleScienceTextHtml(part);
-    })
-    .join("");
-}
-
-function renderSimpleScienceMathSpanHtml(mathSpan) {
-  const raw = String(mathSpan || "");
-  const body = raw.startsWith("$")
-    ? raw.slice(1, -1)
-    : raw.startsWith("\\(") && raw.endsWith("\\)")
-      ? raw.slice(2, -2)
-      : "";
-  if (!body || !isSimpleScienceMathBody(body)) {
-    return "";
-  }
-  const html = renderSimpleScienceTextHtml(latexSimpleScienceBodyToText(body));
-  return /science-inline-symbol|science-power/.test(html) ? html : "";
-}
-
-function isSimpleScienceMathBody(body) {
-  const text = String(body || "").trim();
-  if (!text || /\\(?:frac|sum|int|sqrt|begin|left|right|boldsymbol|mathcal)\b/.test(text)) {
-    return false;
-  }
-  return /\\(?:Delta|delta|alpha|beta|gamma|mu|nu|rho|sigma|omega|Omega|Phi)\b|[Α-Ωα-ωµμ]|(?:^|[^A-Za-z])(?:[A-Za-z]_\{?[A-Za-z]{1,4}\}?|10\s*\^)/.test(
-    text,
-  );
-}
-
-function latexSimpleScienceBodyToText(body) {
-  return String(body || "")
-    .replace(/\\Delta\b/g, "Δ")
-    .replace(/\\delta\b/g, "δ")
-    .replace(/\\alpha\b/g, "α")
-    .replace(/\\beta\b/g, "β")
-    .replace(/\\gamma\b/g, "γ")
-    .replace(/\\mu\b/g, "μ")
-    .replace(/\\nu\b/g, "ν")
-    .replace(/\\rho\b/g, "ρ")
-    .replace(/\\sigma\b/g, "σ")
-    .replace(/\\omega\b/g, "ω")
-    .replace(/\\Omega\b/g, "Ω")
-    .replace(/\\Phi\b/g, "Φ")
-    .replace(/_\{\s*\\(?:rm|mathrm)\s*\{?([A-Za-z]{1,4})\}?\s*\}/g, "_$1")
-    .replace(/_\{\s*([A-Za-z]{1,4})\s*\}/g, "_$1")
-    .replace(/\\mathrm\{\s*yr\s*\}/gi, "yr")
-    .replace(/\\times\b/g, "×")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function renderSimpleScienceTextHtml(text) {
-  const replacements = [];
-  const markerFor = (html) => {
-    const marker = `\uE000${replacements.length}\uE001`;
-    replacements.push(html);
-    return marker;
-  };
-  const withMarkers = String(text || "")
-    .replace(
-      /((?:\d+(?:\.\d+)?\s*[×x]\s*)?10\s*(?:\^\s*\{?\s*([−-]?\d+)\s*\}?|([−-]\d+)))/g,
-      (_match, _token, bracedExponent, plainExponent) => markerFor(sciencePowerHtml("10", bracedExponent || plainExponent, _token)),
-    )
-    .replace(/yr\s*(?:\^\s*\{?\s*([−-]?\d+)\s*\}?|([−-]\d+))/gi, (_match, bracedExponent, plainExponent) =>
-      markerFor(`<span class="science-power">yr${scienceSupHtml(bracedExponent || plainExponent)}</span>`),
-    )
-    .replace(
-      /(^|[^\p{L}\p{N}\\$])((?:[Δδ])?[Α-Ωα-ωµμ]\u0307?\s*_\s*\{?[A-Za-z]{1,4}\}?\s*\/\s*[Α-Ωα-ωµμ]\u0307?\s*_\s*\{?[A-Za-z]{1,4}\}?)/gu,
-      (_match, prefix, ratio) => `${prefix}${markerFor(scienceRatioHtml(ratio))}`,
-    )
-    .replace(/\b([A-Za-z])_([A-Za-z]{1,3})\/([A-Za-z])_([A-Za-z]{1,3})\b/g, (_match, leftBase, leftSub, rightBase, rightSub) =>
-      markerFor(`${scienceInlineSymbolHtml(leftBase, leftSub)}/${scienceInlineSymbolHtml(rightBase, rightSub)}`),
-    )
-    .replace(
-      /(^|[^\p{L}\p{N}\\$])([Α-Ωα-ωµμ])\s*_\s*\{?([A-Za-z]{1,4})\}?(?![\p{L}\p{N}])/gu,
-      (_match, prefix, symbol, suffix) => `${prefix}${markerFor(scienceInlineSymbolHtml(symbol, suffix))}`,
-    )
-    .replace(/\b([A-Za-z])_([A-Za-z]{1,3})\b/g, (_match, base, suffix) =>
-      markerFor(scienceInlineSymbolHtml(base, suffix)),
-    );
-  return escapeHtml(withMarkers).replace(/\uE000(\d+)\uE001/g, (_match, index) => replacements[Number(index)] || "");
-}
-
-function scienceRatioHtml(ratio) {
-  return String(ratio || "")
-    .split("/")
-    .map((part) => {
-      const parsed = parseScienceSymbolText(part);
-      return parsed ? scienceInlineSymbolHtml(parsed.base, parsed.suffix) : escapeHtml(part.trim());
-    })
-    .join("/");
-}
-
-function parseScienceSymbolText(text) {
-  const match = String(text || "")
-    .trim()
-    .match(/^((?:[Δδ])?[Α-Ωα-ωµμ]\u0307?|[A-Za-z])\s*_\s*\{?([A-Za-z]{1,4})\}?$/u);
-  return match ? { base: match[1], suffix: match[2] } : null;
-}
-
-function scienceInlineSymbolHtml(base, suffix = "") {
-  const safeBase = escapeHtml(base);
-  const safeSuffix = escapeHtml(suffix);
-  return `<span class="science-inline-symbol">${safeBase}${safeSuffix ? `<sub>${safeSuffix}</sub>` : ""}</span>`;
-}
-
-function sciencePowerHtml(base, exponent, token = "") {
-  const prefixMatch = String(token || "").match(/^(\d+(?:\.\d+)?\s*[×x]\s*)10/);
-  const prefix = prefixMatch ? escapeHtml(prefixMatch[1].replace(/\s*x\s*/i, " × ").replace(/\s*×\s*/g, " × ")) : "";
-  return `<span class="science-power">${prefix}${escapeHtml(base)}${scienceSupHtml(exponent)}</span>`;
-}
-
-function scienceSupHtml(exponent) {
-  return `<sup>${escapeHtml(String(exponent || "").replace("−", "-").trim())}</sup>`;
+  return `<p>${escapeHtml(text).replace(/\n/g, "<br>")}</p>`;
 }
 
 function normalizeRenderedParagraphText(text) {
@@ -10116,7 +9586,7 @@ function renderList(lines) {
   const items = lines
     .map((line) => line.replace(/^\s*[-*+]\s+/, "").trim())
     .filter(Boolean)
-    .map((item) => `<li>${renderInlineTextHtml(item)}</li>`)
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
     .join("");
   return items ? `<ul>${items}</ul>` : "";
 }
@@ -10486,33 +9956,6 @@ function rootHasMathContent(root) {
   return /(\$\$?|\\\(|\\\[|\\begin\{|\^|_\{)/.test(text);
 }
 
-async function ensurePdfJsLoaded() {
-  if (pdfJsLoadPromise) {
-    return pdfJsLoadPromise;
-  }
-  pdfJsLoadPromise = loadPdfJsFromFallbacks();
-  return pdfJsLoadPromise;
-}
-
-async function loadPdfJsFromFallbacks() {
-  const errors = [];
-  for (const url of PDFJS_SCRIPT_URLS) {
-    try {
-      const pdfjs = await import(url);
-      if (pdfjs?.GlobalWorkerOptions) {
-        pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
-      }
-      if (typeof pdfjs?.getDocument !== "function") {
-        throw new Error(`PDF.js getDocument missing: ${url}`);
-      }
-      return pdfjs;
-    } catch (error) {
-      errors.push(error?.message || String(error || url));
-    }
-  }
-  throw new Error(`PDF.js 加载失败：${errors.join("; ")}`);
-}
-
 function ensureMathJaxLoaded() {
   if (window.MathJax?.typesetPromise) {
     return Promise.resolve(window.MathJax);
@@ -10523,48 +9966,8 @@ function ensureMathJaxLoaded() {
   if (typeof document === "undefined" || typeof document.createElement !== "function") {
     return Promise.reject(new Error("MathJax loader requires document.createElement."));
   }
-  configureMathJax();
   mathJaxLoadPromise = loadMathJaxScriptFromFallbacks();
   return mathJaxLoadPromise;
-}
-
-function configureMathJax() {
-  const existing = window.MathJax && typeof window.MathJax === "object" ? window.MathJax : {};
-  window.MathJax = {
-    ...existing,
-    loader: {
-      ...(existing.loader || {}),
-      paths: {
-        ...((existing.loader && existing.loader.paths) || {}),
-        mathjax: "./vendor/mathjax",
-      },
-      load: Array.from(new Set([...(existing.loader?.load || []), "[tex]/boldsymbol"])),
-    },
-    tex: {
-      ...(existing.tex || {}),
-      packages: {
-        ...((existing.tex && existing.tex.packages) || {}),
-        "[+]": Array.from(new Set([...(existing.tex?.packages?.["[+]"] || []), "boldsymbol"])),
-      },
-      inlineMath: existing.tex?.inlineMath || [["$", "$"], ["\\(", "\\)"]],
-      displayMath: existing.tex?.displayMath || [["$$", "$$"], ["\\[", "\\]"]],
-      processEscapes: true,
-    },
-    options: {
-      ...(existing.options || {}),
-      skipHtmlTags: existing.options?.skipHtmlTags || ["script", "noscript", "style", "textarea", "pre", "code"],
-    },
-    startup: {
-      ...(existing.startup || {}),
-      typeset: false,
-      pageReady:
-        existing.startup?.pageReady ||
-        (() =>
-          window.MathJax.startup.defaultPageReady().then(() => {
-            window.dispatchEvent(new Event("mathjax-ready"));
-          })),
-    },
-  };
 }
 
 async function loadMathJaxScriptFromFallbacks() {
@@ -10601,17 +10004,9 @@ function loadMathJaxScript(url) {
     script.addEventListener("load", () => {
       const startup = window.MathJax?.startup?.promise;
       if (startup?.then) {
-        startup
-          .then(() => {
-            if (window.MathJax?.typesetPromise) {
-              finish(resolve, window.MathJax);
-            } else {
-              finish(reject, new Error(`MathJax loaded without typesetPromise: ${url}`));
-            }
-          })
-          .catch((error) => finish(reject, error));
+        startup.then(() => finish(resolve, window.MathJax)).catch((error) => finish(reject, error));
       } else {
-        finish(reject, new Error(`MathJax startup promise missing: ${url}`));
+        finish(resolve, window.MathJax);
       }
     });
     script.addEventListener("error", () => finish(reject, new Error(`MathJax failed to load: ${url}`)));

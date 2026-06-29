@@ -126,19 +126,6 @@ label[role="button"] {
   clip-path: inset(50%);
 }
 
-.file-input-overlay {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  cursor: pointer;
-  font-size: 0;
-}
-
 .primary-button,
 .secondary-button,
 .text-button {
@@ -187,7 +174,6 @@ label[role="button"] {
 }
 
 .upload-button {
-  position: relative;
   min-height: 38px;
   display: inline-flex;
   align-items: center;
@@ -197,11 +183,6 @@ label[role="button"] {
   border-radius: 8px;
   font-weight: 800;
   white-space: nowrap;
-  overflow: hidden;
-}
-
-.upload-button > span {
-  pointer-events: none;
 }
 
 .upload-button:focus-visible {
@@ -1993,26 +1974,6 @@ label[role="button"] {
 
 .markdown-body p:last-child {
   margin-bottom: 0;
-}
-
-.science-inline-symbol,
-.science-power {
-  font: inherit;
-  white-space: nowrap;
-}
-
-.science-inline-symbol sub,
-.science-power sup {
-  font-size: 0.68em;
-  line-height: 0;
-}
-
-.science-inline-symbol sub {
-  vertical-align: -0.28em;
-}
-
-.science-power sup {
-  vertical-align: 0.48em;
 }
 
 .markdown-body ul,
