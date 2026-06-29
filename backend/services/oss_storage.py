@@ -27,6 +27,7 @@ def _join_key(*parts: str) -> str:
 @dataclass(slots=True)
 class OssStorageService:
     enabled: bool
+    _bucket: Any | None = None
     error: str = ""
 
     def __post_init__(self) -> None:

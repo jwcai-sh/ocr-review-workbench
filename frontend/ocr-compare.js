@@ -4426,7 +4426,7 @@ function cleanMathpixEditableMarkdown(markdown) {
 }
 
 function normalizeMathpixOcrArtifacts(markdown) {
-  return normalizeMathpixCollapsedProse(normalizeMathpixBrokenDiacritics(markdown));
+  return normalizeMathpixScientificNotationArtifacts(normalizeMathpixCollapsedProse(normalizeMathpixBrokenDiacritics(markdown)));
 }
 
 function normalizeMathpixCollapsedProse(markdown) {
@@ -4438,6 +4438,21 @@ function normalizeMathpixCollapsedProse(markdown) {
     .replace(/\brequiredorders\b/gi, "required orders")
     .replace(/\s+([,.;:])/g, "$1")
     .replace(/[ \t]{2,}/g, " ");
+}
+
+function normalizeMathpixScientificNotationArtifacts(markdown) {
+  return String(markdown || "")
+    .replace(/([×x])\s*1\s*0\s*\^\s*\{\s*-\s*(\d+)\s*\}/g, "$1 10^{-$2}")
+    .replace(/([×x])\s*1\s*0\s*\^\s*-\s*(\d+)/g, "$1 10^{-$2}")
+    .replace(/([×x])\s*1\s*0\s*-\s*(\d+)/g, "$1 10^{-$2}")
+    .replace(/([×x])\s*10\s*\^\s*-\s*(\d+)/g, "$1 10^{-$2}")
+    .replace(/([×x])\s*10\s*-\s*(\d+)/g, "$1 10^{-$2}")
+    .replace(/10\s*\^\s*\{\s*-\s*(\d+)\s*\}/g, "10^{-$1}")
+    .replace(/10\s*\^\s*-\s*(\d+)/g, "10^{-$1}")
+    .replace(/\byr\s*\^\s*\{\s*-\s*(\d+)\s*\}/gi, "yr^{-$1}")
+    .replace(/\byr\s*\^\s*-\s*(\d+)/gi, "yr^{-$1}")
+    .replace(/\\mathrm\s*\{\s*y\s*r\s*\}\s*\^\s*\{\s*-\s*(\d+)\s*\}/gi, "\\mathrm{yr}^{-$1}")
+    .replace(/\\mathrm\s*\{\s*y\s*r\s*\}\s*\^\s*-\s*(\d+)/gi, "\\mathrm{yr}^{-$1}");
 }
 
 function normalizeEditableProseLineBreaksOutsideStructuredBlocks(markdown) {
@@ -5915,6 +5930,12 @@ function sortEntriesByVisualReadingOrder(entries) {
       if (!left.geometry || !right.geometry) {
         return left.geometry ? -1 : right.geometry ? 1 : left.index - right.index;
       }
+      if (shouldKeepTopTableBeforeReferencingProse(left, right)) {
+        return -1;
+      }
+      if (shouldKeepTopTableBeforeReferencingProse(right, left)) {
+        return 1;
+      }
       const rowGap = left.geometry.top - right.geometry.top;
       const rowTolerance = Math.max(left.geometry.height, right.geometry.height, left.geometry.pageHeight * 0.018, 18);
       if (Math.abs(rowGap) > rowTolerance) {
@@ -5923,6 +5944,32 @@ function sortEntriesByVisualReadingOrder(entries) {
       return left.geometry.left - right.geometry.left || left.index - right.index;
     })
     .map((item) => item.entry);
+}
+
+function shouldKeepTopTableBeforeReferencingProse(tableItem, proseItem) {
+  const tableEntry = tableItem?.entry;
+  const proseEntry = proseItem?.entry;
+  if (!tableEntry || !proseEntry || !tableItem.geometry || !proseItem.geometry) {
+    return false;
+  }
+  if (String(tableEntry?.block?.type || "").toLowerCase() !== "table") {
+    return false;
+  }
+  if (String(proseEntry?.block?.type || "").toLowerCase() === "table") {
+    return false;
+  }
+  const label = tableLabelFromText(tableEntry.markdown);
+  const proseLabel = tableLabelFromText(proseEntry.markdown);
+  if (label && proseLabel !== label) {
+    return false;
+  }
+  const pageHeight = Math.max(tableItem.geometry.pageHeight, proseItem.geometry.pageHeight, 1);
+  const tableTopRatio = tableItem.geometry.top / pageHeight;
+  const proseTopRatio = proseItem.geometry.top / pageHeight;
+  if (tableTopRatio > 0.28 || proseTopRatio > 0.62 || (!label && !proseLabel)) {
+    return false;
+  }
+  return proseItem.geometry.top < tableItem.geometry.top || proseItem.geometry.top <= tableItem.geometry.bottom + pageHeight * 0.18;
 }
 
 function bboxReadingGeometry(bbox, pageSize) {
@@ -7602,7 +7649,7 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
   }
   const bbox = normalizedBBox(item.bbox);
   const geometry = bbox ? bboxGeometryForPageSize(bbox, pageSize) : null;
-  if (isLikelyPageHeaderText(text, bbox, pageSize)) {
+  if (isLikelyPageHeaderText(text, bbox, pageSize) || isLikelyContentListHeaderFooterNoise(text, bbox, pageSize, sourceSegments)) {
     return null;
   }
   const scored = scoreRiskBlock(text);
@@ -7651,12 +7698,15 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
   if (score < 0.25) {
     return null;
   }
+  const outputText = isTopCandidate && !/^#{1,6}\s+/.test(text.trim()) && looksLikeSectionHeaderNoise(text)
+    ? `### ${text.trim()}`
+    : text;
   return {
     pageNumber,
     blockIndex: `content-list-discarded-${pageNumber}-${pageItemIndex}`,
     bbox,
     pageSize,
-    text,
+    text: outputText,
     score: Math.min(score, 1),
     reasons: Array.from(new Set(reasons)),
     syntheticPlacement: isAnchoredContinuation ? "after_anchor" : isTopCandidate ? "page_top" : isBottomCandidate ? "page_bottom" : "content_list",
@@ -7665,6 +7715,74 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
     contentListIndex: item.__contentListIndex,
     anchorBlockIndex: continuation?.anchorBlockIndex,
   };
+}
+
+function isLikelyContentListHeaderFooterNoise(text, bbox, pageSize, sourceSegments = []) {
+  const value = String(text || "")
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!value || value.length > 120 || isPageNumberOnlyText(value)) {
+    return false;
+  }
+  const geometry = bboxGeometryForPageSize(bbox, pageSize);
+  if (!geometry || (geometry.topRatio > 0.14 && geometry.bottomRatio < 0.86)) {
+    return false;
+  }
+  if (!looksLikeSectionHeaderNoise(value)) {
+    return false;
+  }
+  return pageAlreadyContainsSimilarHeading(value, sourceSegments);
+}
+
+function looksLikeSectionHeaderNoise(text) {
+  const value = String(text || "").trim();
+  if (/[\n]|[.!?。！？]$/.test(value)) {
+    return false;
+  }
+  return (
+    /^\d+(?:\.\d+)+\s+\S/.test(value) ||
+    /^\d+\s*[.$#]?\s+[A-ZÀ-Þ][\p{L}\p{N}\s.,:;'"’()/#\\-]{2,}$/u
+  );
+}
+
+function pageAlreadyContainsSimilarHeading(text, sourceSegments = []) {
+  const target = canonicalHeadingText(text);
+  if (!target || target.length < 8) {
+    return false;
+  }
+  return (Array.isArray(sourceSegments) ? sourceSegments : []).some((segment) => {
+    const source = canonicalHeadingText(segment?.markdown || "");
+    if (!source || source.length < 8) {
+      return false;
+    }
+    if (source.includes(target) || target.includes(source)) {
+      return true;
+    }
+    const targetTokens = new Set(target.split(/\s+/).filter((token) => token.length > 1));
+    const sourceTokens = new Set(source.split(/\s+/).filter((token) => token.length > 1));
+    if (targetTokens.size < 3 || sourceTokens.size < 3) {
+      return false;
+    }
+    const shared = Array.from(targetTokens).filter((token) => sourceTokens.has(token)).length;
+    return headingNumbersAreRelated(text, segment?.markdown || "") && shared / Math.min(targetTokens.size, sourceTokens.size) >= 0.5;
+  });
+}
+
+function headingNumbersAreRelated(left, right) {
+  const leftNumber = String(left || "").match(/\b(\d+)(?:\.(\d+))?/);
+  const rightNumber = String(right || "").match(/\b(\d+)(?:\.(\d+))?/);
+  return Boolean(leftNumber && rightNumber && leftNumber[1] === rightNumber[1]);
+}
+
+function canonicalHeadingText(text) {
+  return String(text || "")
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/[$#\\]+/g, " ")
+    .replace(/[^\p{L}\p{N}.]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 function figureOrTableNarrativeContinuation(text, sourceSegments = []) {
@@ -10014,7 +10132,7 @@ function mathTypesetTargetsForRoot(root) {
     return [root];
   }
   const candidates = Array.from(
-    root.querySelectorAll(".math-display-formula, p, li, td, th, figcaption"),
+    root.querySelectorAll(".math-display-formula, h1, h2, h3, h4, h5, h6, p, li, td, th, figcaption"),
   ).filter((node) => rootHasMathContent(node));
   return candidates.length ? candidates : [root];
 }

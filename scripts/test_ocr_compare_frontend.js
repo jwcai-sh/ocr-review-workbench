@@ -549,6 +549,17 @@ assert.strictEqual(
 );
 assert(preparedTable.split("\n").every((line) => line.split("|").length === 4));
 
+const mathpixScientificTable = prepareMathpix([
+  "| Constant | Limit |",
+  "| --- | --- |",
+  "| Weak interaction constant | <1 × 10-11 |",
+  "| Re decay | <3.4 × 10^ -16 yr^ -1 |",
+  "| Fine structure | <1.2 × 10 -16 |",
+].join("\n"));
+assert(mathpixScientificTable.includes("× 10^{-11}"), "Mathpix table cleanup should normalize compact negative powers");
+assert(mathpixScientificTable.includes("× 10^{-16}"), "Mathpix table cleanup should normalize spaced caret powers");
+assert(mathpixScientificTable.includes("yr^{-1}"), "Mathpix table cleanup should normalize inverse year units");
+
 assert.strictEqual(prepareMathpix("   "), "", "prepareMathpixMarkdown should tolerate empty Mathpix output");
 
 const latexTable = "\\begin{tabular}{cc}\na & b \\\\ c & d\n\\end{tabular}";
@@ -653,6 +664,120 @@ assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX tab
   assert(result[0].includes("Table 12.3 Orbital parameters"), "review table blocks should recover long same-label captions from content_list");
   assert(result[1].startsWith("rather to provide the first test"), "review blocks should follow visual bbox order instead of raw MinerU block order");
   assert(result[2].startsWith("To see how such a test"), "lower text should stay after the visually higher table-following paragraph");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.contentListItems = [];
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [900, 1200],
+            para_blocks: [
+              {
+                type: "text",
+                bbox: [70, 18, 830, 175],
+                lines: [{ bbox: [70, 18, 830, 175], spans: [{ content: "In a similar manner, reanalyses gave the bound. The current best bounds are summarized in Table 2.2." }] }]
+              },
+              {
+                type: "table",
+                bbox: [45, 42, 850, 255],
+                lines: [
+                  { bbox: [45, 42, 850, 60], spans: [{ content: "Table 2.2 Bounds on variation of constants" }] },
+                  { bbox: [45, 80, 850, 255], spans: [{ html: "<table><tr><th>Constant</th><th>Limit</th></tr><tr><td>Weak interaction</td><td>&lt;1 × 10-11</td></tr></table>" }] }
+                ]
+              }
+            ]
+          }
+        ]
+      };
+      return JSON.stringify(reviewBlockMarkdownsForPage(1).map((entry) => entry.markdown));
+    })()`),
+  );
+  assert(result[0].includes("Table 2.2"), "a page-top table should stay before a prose block that references the same table when OCR bbox is wrong");
+  assert(result[1].startsWith("In a similar manner"), "table-following prose should not be promoted ahead of the page-top table");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.contentListItems = [];
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [900, 1200],
+            para_blocks: [
+              {
+                type: "text",
+                bbox: [70, 12, 830, 175],
+                lines: [{ bbox: [70, 12, 830, 175], spans: [{ content: "In a similar manner, reanalyses gave the bound. The current best bounds are summarized in Table 2.2." }] }]
+              },
+              {
+                type: "table",
+                bbox: [45, 42, 850, 255],
+                lines: [
+                  { bbox: [45, 80, 850, 255], spans: [{ html: "<table><tr><th>Constant</th><th>Limit</th></tr><tr><td>Weak interaction</td><td>&lt;1 × 10-11</td></tr></table>" }] }
+                ]
+              }
+            ]
+          }
+        ]
+      };
+      return JSON.stringify(reviewBlockMarkdownsForPage(1).map((entry) => entry.markdown));
+    })()`),
+  );
+  assert(result[0].includes("| Constant | Limit |"), "a page-top table without recovered caption should still stay before prose that references a table");
+  assert(result[1].startsWith("In a similar manner"), "captionless page-top table should not be displaced by table-referencing prose");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.contentListItems = [
+        {
+          page_idx: 0,
+          type: "discarded",
+          bbox: [110, 28, 290, 52],
+          text: "2.$ The TH#μ Formalism"
+        },
+        {
+          page_idx: 0,
+          type: "discarded",
+          bbox: [70, 820, 830, 910],
+          text: "Table 2.2 In a similar manner, reanalyses of decay rates gave the bound on variation of constants."
+        }
+      ];
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [900, 1200],
+            para_blocks: [
+              {
+                type: "title",
+                bbox: [70, 260, 650, 310],
+                lines: [{ bbox: [70, 260, 650, 310], spans: [{ content: "2.5 The THεμ Formalism" }] }]
+              },
+              {
+                type: "table",
+                bbox: [45, 100, 850, 250],
+                lines: [
+                  { bbox: [45, 100, 850, 120], spans: [{ content: "Table 2.2 Bounds on variation of constants" }] },
+                  { bbox: [45, 130, 850, 250], spans: [{ html: "<table><tr><th>Constant</th><th>Limit</th></tr><tr><td>alpha</td><td>10</td></tr></table>" }] }
+                ]
+              }
+            ]
+          }
+        ]
+      };
+      return JSON.stringify(detectContentListRiskCandidatesForPage(1).map((risk) => risk.text));
+    })()`),
+  );
+  assert(!result.some((text) => text.includes("TH#μ Formalism")), "content_list page header/footer noise should not enter review blocks");
+  assert(result.some((text) => text.includes("reanalyses of decay rates")), "content_list useful supplemental prose should remain available");
 }
 
 const latexArray = "\\begin{array}{cc}\na & b \\\\ c & d\n\\end{array}";
@@ -3397,6 +3522,19 @@ function setupPreviewBookExpression(pages) {
 }
 
 {
+  const headingHtml = call(`renderMarkdownHtml(${JSON.stringify("### 2.5 The TH $\\epsilon \\mu$ Formalism")})`);
+  assert(headingHtml.includes("<h3>"), "markdown title blocks should render as heading tags");
+  assert(headingHtml.includes("$\\epsilon \\mu$"), "heading inline math source should remain available for MathJax");
+  const targetCount = call(`mathTypesetTargetsForRoot({
+    textContent: "2.5 The TH $\\\\epsilon \\\\mu$ Formalism",
+    querySelectorAll() {
+      return [{ textContent: "$\\\\epsilon \\\\mu$" }];
+    }
+  }).length`);
+  assert.strictEqual(targetCount, 1, "heading nodes with inline math should be included in MathJax typeset targets");
+}
+
+{
   const result = JSON.parse(
     call(`(() => {
       ${setupPreviewPageExpression([
@@ -3549,6 +3687,7 @@ function setupPreviewBookExpression(pages) {
   assert(titleCandidate, "content_list top discarded title should become a title candidate");
   assert.strictEqual(titleCandidate.syntheticLabel, "content_list 标题候选");
   assert(titleCandidate.reasons.includes("background_heading_missing"));
+  assert(titleCandidate.text.startsWith("### "), "content_list top title candidates should render at the same heading level as MinerU title blocks");
   assert(!titleCandidate.reasons.includes("footnote_marker_or_note"), "content_list top title should not be mislabeled as a footnote");
   assert(!result.risks.some((risk) => risk.text.trim() === "11"), "content_list page-number-only discarded items should be skipped");
   assert.strictEqual(call('riskReasonLabel("content_list_discarded")'), "content_list 补充");
