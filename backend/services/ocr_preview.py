@@ -184,6 +184,33 @@ class OcrPreviewService:
             "pageCount": self._document_page_count(document),
         }
 
+    def load_document_bytes(
+        self,
+        *,
+        content: bytes,
+        mime_type: str,
+        name: str,
+        oss_key: str = "",
+        persist_to_oss: bool = False,
+    ) -> dict[str, Any]:
+        if not content:
+            return {"ok": False, "error": "Missing document body"}
+        document = self._store_document(
+            mime_type=mime_type or "application/octet-stream",
+            content=content,
+            name=name or "upload",
+            oss_key=oss_key,
+            persist_to_oss=persist_to_oss,
+        )
+        return {
+            "ok": True,
+            "documentId": document["id"],
+            "name": document["name"],
+            "mimeType": document["mimeType"],
+            "pageCount": self._document_page_count(document),
+            "ossKey": document.get("ossKey") or "",
+        }
+
     def upload_document_chunk(
         self,
         *,
@@ -259,11 +286,18 @@ class OcrPreviewService:
                 document["lastAccessedAt"] = time.monotonic()
             return document
 
-    def _store_document(self, *, mime_type: str, content: bytes, name: str) -> dict[str, Any]:
+    def _store_document(
+        self,
+        *,
+        mime_type: str,
+        content: bytes,
+        name: str,
+        oss_key: str = "",
+        persist_to_oss: bool = True,
+    ) -> dict[str, Any]:
         self._prune_documents()
         document_id = uuid.uuid4().hex
-        oss_key = ""
-        if OSS_STORAGE_SERVICE.enabled:
+        if not oss_key and persist_to_oss and OSS_STORAGE_SERVICE.enabled:
             oss_key = OSS_STORAGE_SERVICE.document_key(document_id, name)
             OSS_STORAGE_SERVICE.put_bytes(oss_key, content, content_type=mime_type or "application/octet-stream")
         document = {

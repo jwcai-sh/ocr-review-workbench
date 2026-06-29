@@ -82,6 +82,20 @@ class OssStorageService:
             self.error = str(error)
             return None
 
+    def list_keys(self, prefix: str = "", *, limit: int = 5000) -> list[str]:
+        if not self.enabled or not self._bucket:
+            return []
+        keys: list[str] = []
+        try:
+            scan_prefix = str(prefix or "").strip().lstrip("/")
+            for item in oss2.ObjectIterator(self._bucket, prefix=scan_prefix):
+                keys.append(str(item.key))
+                if len(keys) >= limit:
+                    break
+        except Exception as error:  # noqa: BLE001
+            self.error = str(error)
+        return keys
+
     def document_key(self, document_id: str, name: str) -> str:
         return _join_key("uploads", document_id, name or "upload")
 

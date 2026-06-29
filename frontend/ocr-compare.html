@@ -62,6 +62,13 @@
           </span>
           <span>一键上传所需文件</span>
         </label>
+        <div class="oss-book-picker" aria-label="从 OSS 选择已有书籍">
+          <button id="refreshOssBooksButton" class="secondary-button oss-book-button" type="button">刷新 OSS 书籍</button>
+          <select id="ossBookSelect" class="oss-book-select" aria-label="选择 OSS 书籍">
+            <option value="">未加载 OSS 书籍</option>
+          </select>
+          <button id="loadOssBookButton" class="primary-button oss-book-button" type="button" disabled>加载 OSS 书籍</button>
+        </div>
         <div class="accepted-top-actions" aria-label="accepted 校正稿操作">
           <button id="previewAcceptedBookButton" class="secondary-button accepted-action-button" type="button" data-preview-accepted-book-patches disabled hidden>
             预览整书 accepted 校正稿

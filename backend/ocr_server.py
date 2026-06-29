@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import posixpath
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -91,6 +92,12 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/ocr/workspace/save":
             self._send_json(self._save_workspace(payload))
             return
+        if parsed.path == "/api/oss/books":
+            self._send_json(self._oss_books(payload))
+            return
+        if parsed.path == "/api/oss/load-book":
+            self._send_json(self._load_oss_book(payload))
+            return
         if parsed.path == "/api/ocr/correct":
             self._send_json(OCR_CORRECTION_SERVICE.correct_markdown(payload))
             return
@@ -130,6 +137,60 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             "saved": ok,
             "storage": "oss",
             "error": None if ok else OSS_STORAGE_SERVICE.error or "OSS workspace save failed",
+        }
+
+    def _oss_books(self, payload: dict) -> dict:
+        if not OSS_STORAGE_SERVICE.enabled:
+            return {"ok": False, "error": OSS_STORAGE_SERVICE.error or "OSS storage is not configured", "books": []}
+        prefix = str(payload.get("prefix") or "").strip()
+        keys = OSS_STORAGE_SERVICE.list_keys(prefix=prefix, limit=int(payload.get("limit") or 10000))
+        return {"ok": True, "books": _build_oss_book_index(keys), "keyCount": len(keys)}
+
+    def _load_oss_book(self, payload: dict) -> dict:
+        if not OSS_STORAGE_SERVICE.enabled:
+            return {"ok": False, "error": OSS_STORAGE_SERVICE.error or "OSS storage is not configured"}
+        pdf_key = str(payload.get("pdfKey") or "").strip()
+        middle_key = str(payload.get("middleKey") or "").strip()
+        content_list_key = str(payload.get("contentListKey") or "").strip()
+        if not pdf_key or not middle_key:
+            return {"ok": False, "error": "Missing pdfKey or middleKey"}
+
+        pdf_bytes = OSS_STORAGE_SERVICE.get_bytes(pdf_key)
+        middle_bytes = OSS_STORAGE_SERVICE.get_bytes(middle_key)
+        content_list_bytes = OSS_STORAGE_SERVICE.get_bytes(content_list_key) if content_list_key else None
+        if not pdf_bytes:
+            return {"ok": False, "error": f"Cannot read PDF from OSS: {pdf_key}"}
+        if not middle_bytes:
+            return {"ok": False, "error": f"Cannot read middle.json from OSS: {middle_key}"}
+
+        try:
+            middle_json = json.loads(middle_bytes.decode("utf-8"))
+            content_list_json = json.loads(content_list_bytes.decode("utf-8")) if content_list_bytes else None
+        except Exception as error:  # noqa: BLE001
+            return {"ok": False, "error": f"Invalid JSON from OSS: {error}"}
+
+        document = OCR_PREVIEW_SERVICE.load_document_bytes(
+            content=pdf_bytes,
+            mime_type="application/pdf",
+            name=posixpath.basename(pdf_key) or "origin.pdf",
+            oss_key=pdf_key,
+            persist_to_oss=False,
+        )
+        if not document.get("ok"):
+            return document
+        return {
+            "ok": True,
+            "document": document,
+            "middleJson": middle_json,
+            "middleName": posixpath.basename(middle_key) or "middle.json",
+            "contentListJson": content_list_json,
+            "contentListName": posixpath.basename(content_list_key) if content_list_key else "",
+            "workspaceId": str(payload.get("workspaceId") or _workspace_id_for_oss_entry(middle_key, document.get("pageCount"))),
+            "ossKeys": {
+                "pdf": pdf_key,
+                "middle": middle_key,
+                "contentList": content_list_key,
+            },
         }
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A003
@@ -205,6 +266,82 @@ def run() -> None:
         pass
     finally:
         server.server_close()
+
+
+def _build_oss_book_index(keys: list[str]) -> list[dict]:
+    files_by_dir: dict[str, list[str]] = {}
+    for key in keys:
+        files_by_dir.setdefault(posixpath.dirname(key), []).append(key)
+    by_dir: dict[str, dict[str, str]] = {}
+    key_set = set(keys)
+    for key in keys:
+        lower = key.lower()
+        if not lower.endswith(".json") or "middle" not in posixpath.basename(lower):
+            continue
+        directory = posixpath.dirname(key)
+        files = by_dir.setdefault(directory, {"middleKey": key})
+        files["middleKey"] = key
+        for candidate in files_by_dir.get(directory, []):
+            name = posixpath.basename(candidate).lower()
+            if name.endswith(".pdf") and ("origin" in name or "layout" not in name):
+                files.setdefault("pdfKey", candidate)
+            if name.endswith(".json") and "content" in name and "list" in name:
+                files.setdefault("contentListKey", candidate)
+        if "pdfKey" not in files:
+            stem = posixpath.basename(key).replace("_middle.json", "")
+            for suffix in ("_origin.pdf", "_layout.pdf"):
+                candidate = posixpath.join(directory, f"{stem}{suffix}")
+                if candidate in key_set:
+                    files["pdfKey"] = candidate
+                    break
+
+    entries = []
+    for directory, files in by_dir.items():
+        if not files.get("pdfKey") or not files.get("middleKey"):
+            continue
+        book_root, mode, chunk_label = _classify_oss_book_dir(directory)
+        title = _readable_title(book_root)
+        label = title if mode == "whole-book" else f"{title} · {chunk_label}"
+        middle_key = files["middleKey"]
+        entries.append(
+            {
+                "id": _workspace_id_for_oss_entry(middle_key, ""),
+                "label": label,
+                "title": title,
+                "mode": mode,
+                "chunkLabel": chunk_label,
+                "directory": directory,
+                "pdfKey": files.get("pdfKey", ""),
+                "middleKey": middle_key,
+                "contentListKey": files.get("contentListKey", ""),
+                "imagesPrefix": posixpath.join(directory, "images") + "/",
+                "workspaceId": _workspace_id_for_oss_entry(middle_key, ""),
+            }
+        )
+    return sorted(entries, key=lambda item: (item["title"], item["mode"], item["chunkLabel"], item["directory"]))
+
+
+def _classify_oss_book_dir(directory: str) -> tuple[str, str, str]:
+    parts = [part for part in directory.split("/") if part]
+    if "chunks" in parts:
+        index = parts.index("chunks")
+        book_root = "/".join(parts[:index]) or directory
+        chunk_label = parts[index + 1] if len(parts) > index + 1 else posixpath.basename(directory)
+        return book_root, "chunked", chunk_label
+    if parts and parts[-1] in {"auto", "hybrid_auto"}:
+        return "/".join(parts[:-1]) or directory, "whole-book", ""
+    return directory, "whole-book", ""
+
+
+def _readable_title(path: str) -> str:
+    title = posixpath.basename(path.rstrip("/")) or path
+    return title.replace("_解析结果", "").replace("_", " ").strip() or title
+
+
+def _workspace_id_for_oss_entry(middle_key: str, page_count: object) -> str:
+    count = str(page_count or "").strip()
+    suffix = f":{count}" if count else ""
+    return f"oss:{middle_key}{suffix}"
 
 
 if __name__ == "__main__":

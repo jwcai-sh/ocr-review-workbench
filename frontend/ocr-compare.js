@@ -42,6 +42,8 @@ const state = {
   mathpixConfigured: null,
   mathpixConfigError: "",
   ossConfigured: false,
+  ossBooks: [],
+  ossWorkspaceId: "",
   workspaceRemoteSaveTimer: null,
   busy: false,
 };
@@ -368,6 +370,9 @@ function bindElements() {
     "pickMineruButton",
     "pickContentListButton",
     "pickRequiredFilesButton",
+    "refreshOssBooksButton",
+    "ossBookSelect",
+    "loadOssBookButton",
     "previewAcceptedBookButton",
     "downloadAcceptedCorrectedButton",
     "pageList",
@@ -388,6 +393,9 @@ function initialize() {
   bindNativeFilePickerLabel(els.pickRequiredFilesButton, els.requiredFilesInput, "等待选择所需文件");
   els.previewAcceptedBookButton?.addEventListener("click", toggleAcceptedBookPreview);
   els.downloadAcceptedCorrectedButton?.addEventListener("click", downloadAcceptedCorrectedFromTop);
+  els.refreshOssBooksButton?.addEventListener("click", refreshOssBooks);
+  els.loadOssBookButton?.addEventListener("click", loadSelectedOssBook);
+  els.ossBookSelect?.addEventListener("change", updateOssBookControls);
   bindFileInputEvents(els.pdfInput, handlePdfChange, "pdfInput");
   bindFileInputEvents(els.mineruInput, handleMineruChange, "mineruInput");
   bindFileInputEvents(els.contentListInput, handleContentListChange, "contentListInput");
@@ -576,6 +584,132 @@ async function handleRequiredFilesChange() {
   }
 }
 
+async function refreshOssBooks() {
+  setStatus("扫描 OSS 书籍", "busy");
+  if (els.refreshOssBooksButton) {
+    els.refreshOssBooksButton.disabled = true;
+  }
+  try {
+    const response = await postJson("/api/oss/books", {});
+    if (!response?.ok) {
+      throw new Error(response?.error || "OSS 书籍扫描失败");
+    }
+    state.ossBooks = Array.isArray(response.books) ? response.books : [];
+    renderOssBookOptions();
+    setStatus("OSS 书籍已刷新", "ok", `${state.ossBooks.length} 个条目`);
+  } catch (error) {
+    state.ossBooks = [];
+    renderOssBookOptions();
+    setStatus("OSS 书籍扫描失败", "error", error?.message || String(error || ""));
+  } finally {
+    if (els.refreshOssBooksButton) {
+      els.refreshOssBooksButton.disabled = false;
+    }
+    updateOssBookControls();
+  }
+}
+
+function renderOssBookOptions() {
+  if (!els.ossBookSelect) {
+    return;
+  }
+  const books = Array.isArray(state.ossBooks) ? state.ossBooks : [];
+  if (!books.length) {
+    els.ossBookSelect.innerHTML = '<option value="">未找到 OSS 书籍</option>';
+    return;
+  }
+  els.ossBookSelect.innerHTML = [
+    '<option value="">选择 OSS 书籍或分块</option>',
+    ...books.map((book, index) => {
+      const mode = book.mode === "chunked" ? "分块" : "整本";
+      const label = `${mode} · ${book.label || book.title || book.middleKey || `Book ${index + 1}`}`;
+      return `<option value="${index}">${escapeHtml(label)}</option>`;
+    }),
+  ].join("");
+}
+
+function selectedOssBook() {
+  const index = Number(els.ossBookSelect?.value);
+  if (!Number.isInteger(index) || index < 0) {
+    return null;
+  }
+  return state.ossBooks[index] || null;
+}
+
+function updateOssBookControls() {
+  if (els.loadOssBookButton) {
+    els.loadOssBookButton.disabled = !selectedOssBook();
+  }
+}
+
+async function loadSelectedOssBook() {
+  const book = selectedOssBook();
+  if (!book) {
+    setStatus("请选择 OSS 书籍", "error");
+    return;
+  }
+  setStatus("加载 OSS 书籍", "busy", book.label || book.title || "");
+  if (els.loadOssBookButton) {
+    els.loadOssBookButton.disabled = true;
+  }
+  try {
+    const response = await postJson("/api/oss/load-book", {
+      pdfKey: book.pdfKey,
+      middleKey: book.middleKey,
+      contentListKey: book.contentListKey || "",
+      workspaceId: book.workspaceId || book.id || "",
+    });
+    if (!response?.ok) {
+      throw new Error(response?.error || "OSS 书籍加载失败");
+    }
+    await loadOssBookPayload(response, book);
+    setStatus("Ready", "ok", book.label || book.title || "");
+  } catch (error) {
+    setStatus("OSS 书籍加载失败", "error", error?.message || String(error || ""));
+  } finally {
+    updateOssBookControls();
+  }
+}
+
+async function loadOssBookPayload(response, book) {
+  const middleJson = response.middleJson;
+  const pdfInfo = Array.isArray(middleJson?.pdf_info) ? middleJson.pdf_info : [];
+  if (!pdfInfo.length) {
+    throw new Error("OSS middle.json 没有找到 pdf_info。");
+  }
+  state.pdfFile = null;
+  state.pdfDataUrl = "";
+  state.pdfDocumentId = response.document?.documentId || "";
+  state.pdfPageCount = response.document?.pageCount || pdfInfo.length || 1;
+  state.currentPage = 1;
+  state.pageCache.clear();
+  state.pdfTextPageCache.clear();
+  state.mathpixCache.clear();
+  state.mineruInfo = middleJson;
+  state.mineruFileName = response.middleName || "middle.json";
+  state.contentListItems = response.contentListJson ? normalizeContentListItems(response.contentListJson) : [];
+  state.contentListFileName = response.contentListName || "";
+  state.mineruOverrides.clear();
+  state.mineruBlockOverrides.clear();
+  state.mathpixBlockDrafts.clear();
+  state.liveReviewDrafts.clear();
+  state.ocrPatches = [];
+  state.acceptedPatchPreview = null;
+  state.acceptedPatchBookPreview = null;
+  state.riskByPage.clear();
+  cancelScheduledRiskAnalysis();
+  state.reviewExpanded.clear();
+  state.reviewInitializedPages.clear();
+  state.ossWorkspaceId = response.workspaceId || book.workspaceId || book.id || "";
+  analyzeCurrentMineruRiskPage();
+  await restoreOcrWorkspaceStateRemoteFirst();
+  updatePager();
+  const preview = await loadPagePreview(1);
+  cachePreviewPage(1, preview);
+  await renderCurrentPage();
+  scheduleMineruRiskAnalysis();
+}
+
 function identifyRequiredUploadFiles(files) {
   const picked = { pdf: null, mineru: null, contentList: null };
   (Array.isArray(files) ? files : []).forEach((file) => {
@@ -602,6 +736,7 @@ async function loadPdfFile(file) {
   setStatus("上传 PDF", "busy", `${file.name} (${formatBytes(file.size || 0)})`);
   await waitForNextPaint();
   const upload = await uploadPreviewDocument(file);
+  state.ossWorkspaceId = "";
   state.pdfFile = file;
   state.pdfDataUrl = "";
   state.pdfDocumentId = upload.documentId || "";
@@ -647,6 +782,7 @@ async function loadMineruFile(file) {
   }
   state.mineruInfo = data;
   state.mineruFileName = file.name;
+  state.ossWorkspaceId = "";
   state.mineruOverrides.clear();
   state.mineruBlockOverrides.clear();
   state.mathpixBlockDrafts.clear();
@@ -704,6 +840,7 @@ function resetPage() {
   state.mineruFileName = "";
   state.contentListItems = [];
   state.contentListFileName = "";
+  state.ossWorkspaceId = "";
   state.mineruOverrides.clear();
   state.mineruBlockOverrides.clear();
   state.mathpixBlockDrafts.clear();
@@ -738,6 +875,9 @@ function ocrWorkspaceStorageKey() {
 }
 
 function ocrWorkspaceRemoteId() {
+  if (state.ossWorkspaceId) {
+    return state.ossWorkspaceId;
+  }
   const key = ocrWorkspaceStorageKey();
   return key ? key.replace(/^uma-ocr-compare-workspace-v1:/, "") : "";
 }
@@ -2329,10 +2469,11 @@ function buildReviewEntriesForPage(risks, segments, pageNumber) {
         return null;
       }
       seen.add(key);
+      const cleanedMarkdown = cleanReviewEntryNarrativePrefix(segment.markdown, segment);
       return {
         key,
-        segment,
-        risk: risk || reviewRiskFromSegment(segment, pageNumber),
+        segment: cleanedMarkdown === segment.markdown ? segment : { ...segment, markdown: cleanedMarkdown },
+        risk: risk || reviewRiskFromSegment({ ...segment, markdown: cleanedMarkdown }, pageNumber),
       };
     })
     .filter(Boolean);
@@ -2348,7 +2489,7 @@ function buildReviewEntriesForPage(risks, segments, pageNumber) {
       key,
       segment: {
         blockIndex: key,
-        markdown: risk.text,
+        markdown: cleanReviewEntryNarrativePrefix(risk.text, risk),
         kind: "block",
         bbox: risk.bbox,
         pageSize: risk.pageSize,
@@ -2379,8 +2520,8 @@ function reviewRiskFromSegment(segment, pageNumber = state.currentPage) {
 }
 
 function riskVisualOrder(risk, orderByKey) {
-  const bboxOrder = visualOrderForPageEntry(risk, Number.MAX_SAFE_INTEGER / 4);
   const hasVisualBBox = Boolean(normalizedBBox(risk?.bbox));
+  const bboxOrder = visualOrderForPageEntry(risk, hasVisualBBox ? 0 : Number.MAX_SAFE_INTEGER / 4);
   if (risk?.syntheticPlacement === "after_anchor") {
     if (hasVisualBBox && Number.isFinite(bboxOrder)) {
       return bboxOrder;
@@ -2401,6 +2542,9 @@ function riskVisualOrder(risk, orderByKey) {
     return -2000;
   }
   if (risk?.syntheticPlacement === "page_bottom") {
+    if (hasVisualBBox && Number.isFinite(bboxOrder)) {
+      return bboxOrder;
+    }
     return Number.MAX_SAFE_INTEGER - 500;
   }
   if (risk?.crossPageHint === "previous_tail") {
@@ -2416,7 +2560,7 @@ function visualOrderForPageEntry(entry, fallbackIndex = 0) {
   const bbox = normalizedBBox(entry?.bbox);
   const pageSize = entry?.pageSize || null;
   if (!bbox) {
-    return Number.MAX_SAFE_INTEGER / 2 + (Number(fallbackIndex) || 0);
+    return Math.max(0, Number(fallbackIndex) || 0) * 1000 + 500;
   }
   const width = pageSizeWidth(pageSize) || Math.max(bbox[2], 1);
   const height = pageSizeHeight(pageSize) || Math.max(bbox[3], 1);
@@ -2428,6 +2572,19 @@ function visualOrderForPageEntry(entry, fallbackIndex = 0) {
 function isPageTopBBox(bbox, pageSize) {
   const geometry = bboxGeometryForPageSize(bbox, pageSize);
   return Boolean(geometry && geometry.topRatio <= 0.14);
+}
+
+function cleanReviewEntryNarrativePrefix(markdown, entry = null) {
+  const source = String(markdown || "").replace(/\r\n?/g, "\n");
+  const cleaned = stripLeadingFigureOrTableNarrativeLabel(source);
+  if (!cleaned) {
+    return markdown;
+  }
+  const type = String(entry?.block?.type || entry?.kind || "").toLowerCase();
+  if (["image", "table"].includes(type)) {
+    return markdown;
+  }
+  return cleaned;
 }
 
 function reviewPatchMarkdown(patch) {
@@ -5572,7 +5729,7 @@ function originalBlockMarkdownsForPage(pageNumber) {
       block,
       blockIndex,
       bbox: getBlockBBox(block),
-      markdown: blockToMarkdown(block),
+      markdown: cleanNarrativeFigureTablePrefixForTextBlock(blockToMarkdown(block), block),
       pageSize: page.page_size,
     }))
     .filter((entry) => !isLikelyPageHeaderEntry(entry));
@@ -5596,7 +5753,7 @@ function reviewBlockMarkdownsForPage(pageNumber) {
         block,
         blockIndex,
         bbox: getBlockBBox(scopedBlock) || getBlockBBox(block),
-        markdown: blockToMarkdown(scopedBlock),
+        markdown: cleanNarrativeFigureTablePrefixForTextBlock(blockToMarkdown(scopedBlock), scopedBlock),
         pageSize: page.page_size,
       };
     })
@@ -5961,7 +6118,7 @@ function sortEntriesByVisualReadingOrder(entries) {
     .map((entry, index) => ({ entry, index, geometry: bboxReadingGeometry(entry?.bbox, entry?.pageSize) }))
     .sort((left, right) => {
       if (!left.geometry || !right.geometry) {
-        return left.geometry ? -1 : right.geometry ? 1 : left.index - right.index;
+        return visualOrderForPageEntry(left.entry, left.index) - visualOrderForPageEntry(right.entry, right.index);
       }
       if (shouldKeepTopMediaBeforeFollowingText(left, right)) {
         return -1;
@@ -6704,15 +6861,22 @@ function ocrPatchBlockIndex(patch) {
 }
 
 function acceptedPreviewSegmentOrder(segment, orderByKey) {
+  const hasVisualBBox = Boolean(normalizedBBox(segment?.bbox));
+  const bboxOrder = visualOrderForPageEntry(segment, hasVisualBBox ? 0 : Number.MAX_SAFE_INTEGER / 4);
   if (segment?.syntheticPlacement === "page_top") {
+    if (hasVisualBBox && Number.isFinite(bboxOrder) && !isPageTopBBox(segment?.bbox, segment?.pageSize)) {
+      return bboxOrder;
+    }
     return -2000;
   }
   if (segment?.syntheticPlacement === "page_bottom") {
+    if (hasVisualBBox && Number.isFinite(bboxOrder)) {
+      return bboxOrder;
+    }
     return Number.MAX_SAFE_INTEGER - 500;
   }
-  const bboxOrder = visualOrderForPageEntry(segment, Number.MAX_SAFE_INTEGER / 4);
   if (segment?.syntheticPlacement === "after_anchor") {
-    if (normalizedBBox(segment?.bbox) && Number.isFinite(bboxOrder)) {
+    if (hasVisualBBox && Number.isFinite(bboxOrder)) {
       return bboxOrder;
     }
     const anchorOrder = orderByKey.get(String(segment?.anchorBlockIndex));
@@ -7979,6 +8143,20 @@ function stripLeadingFigureOrTableNarrativeLabel(text) {
   }
   const body = raw.slice(leading.raw.length).replace(/^[:.．、\s-]+/, "").trim();
   return startsLikeNarrativeProse(body) && !looksLikeFigureCaptionText(body) ? body : "";
+}
+
+function cleanNarrativeFigureTablePrefixForTextBlock(markdown, block) {
+  const type = String(block?.type || "").toLowerCase();
+  if (type && !["text", "title"].includes(type)) {
+    return markdown;
+  }
+  const source = String(markdown || "").replace(/\r\n?/g, "\n");
+  const lines = source.split("\n");
+  if (lines.length !== 1) {
+    return markdown;
+  }
+  const cleaned = stripLeadingFigureOrTableNarrativeLabel(lines[0]);
+  return cleaned || markdown;
 }
 
 function startsLikeNarrativeProse(text) {

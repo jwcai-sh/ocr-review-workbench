@@ -4439,6 +4439,139 @@ function setupPreviewBookExpression(pages) {
 {
   const result = JSON.parse(
     call(`(() => {
+      state.currentPage = 23;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.riskByPage.clear();
+      state.contentListItems = [];
+      state.mineruInfo = {
+        pdf_info: Array.from({ length: 23 }, (_unused, index) => index === 22
+          ? {
+              page_size: [919, 1256],
+              para_blocks: [
+                {
+                  type: "image",
+                  bbox: [190, 80, 850, 430],
+                  lines: [{ spans: [{ image_path: "fig-12-2.jpg" }] }]
+                },
+                {
+                  type: "text",
+                  lines: [{ spans: [{ content: "two constraints, we obtain the values for the individual masses." }] }]
+                },
+                {
+                  type: "text",
+                  bbox: [190, 760, 850, 930],
+                  lines: [{ bbox: [190, 760, 850, 930], spans: [{ content: "Although the uncertainties continue to decrease, later observations improve the test." }] }]
+                }
+              ]
+            }
+          : { page_size: [919, 1256], para_blocks: [] })
+      };
+      return JSON.stringify(reviewSegmentsForPage(23).map((entry) => ({ key: String(entry.blockIndex), text: entry.markdown })));
+    })()`),
+  );
+  assert.strictEqual(result[0].key, "0", "top media should remain first");
+  assert.strictEqual(result[1].key, "1", "a following body block without bbox should keep source order instead of falling to the bottom");
+  assert.strictEqual(result[2].key, "2", "later positioned text should stay after the no-bbox continuation");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 24;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.riskByPage.clear();
+      state.contentListItems = [];
+      state.mineruInfo = {
+        pdf_info: Array.from({ length: 24 }, (_unused, index) => index === 23
+          ? {
+              page_size: [919, 1256],
+              para_blocks: [
+                {
+                  type: "text",
+                  bbox: [190, 760, 850, 930],
+                  lines: [{ bbox: [190, 760, 850, 930], spans: [{ content: "Fig. 12.2 Although the uncertainties continue to decrease, the binary pulsar provides improved data." }] }]
+                }
+              ]
+            }
+          : { page_size: [919, 1256], para_blocks: [] })
+      };
+      return JSON.stringify(reviewSegmentsForPage(24).map((entry) => ({ key: String(entry.blockIndex), text: entry.markdown })));
+    })()`),
+  );
+  assert.strictEqual(result[0].key, "0");
+  assert(result[0].text.startsWith("Although the uncertainties"), "MinerU text blocks should also drop false leading figure/table narrative labels");
+  assert(!result[0].text.startsWith("Fig. 12.2"), "false figure labels should not remain in body prose");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 25;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.riskByPage.clear();
+      state.contentListItems = [
+        {
+          type: "discarded",
+          page_idx: 24,
+          page_size: [919, 1500],
+          bbox: [190, 1235, 850, 1360],
+          text: "Fig. 12.2 Although the uncertainties continue to decrease, the binary pulsar provides improved data on the galactic rotation curve."
+        }
+      ];
+      state.mineruInfo = {
+        pdf_info: Array.from({ length: 25 }, (_unused, index) => index === 24
+          ? {
+              page_size: [919, 1500],
+              para_blocks: [
+                {
+                  type: "image",
+                  bbox: [190, 80, 850, 350],
+                  lines: [{ spans: [{ image_path: "fig-12-2.jpg" }] }]
+                },
+                {
+                  type: "text",
+                  bbox: [190, 380, 850, 700],
+                  lines: [{ spans: [{ content: "The first paragraph after the figure should remain before the lower content-list paragraph." }] }]
+                },
+                {
+                  type: "text",
+                  bbox: [190, 1390, 850, 1460],
+                  lines: [{ spans: [{ content: "A later paragraph should remain after the content-list paragraph by bbox." }] }]
+                }
+              ]
+            }
+          : { page_size: [919, 1256], para_blocks: [] })
+      };
+      const risks = detectRiskCandidatesForPage(25);
+      const entries = buildReviewEntriesForPage(risks, reviewSegmentsForPage(25), 25);
+      return JSON.stringify(entries.map((entry) => ({ key: entry.key, text: entry.segment.markdown })));
+    })()`),
+  );
+  assert.strictEqual(result[0].key, "0", "top media block should remain first");
+  assert.strictEqual(result[1].key, "1", "prose above a page-bottom content_list candidate should remain before it");
+  assert.strictEqual(result[2].key, "content-list-discarded-25-0", "page-bottom content_list with bbox should sort by bbox instead of always last");
+  assert(result[2].text.startsWith("Although the uncertainties"), "right-column render should remove narrative Fig/Table prefixes from supplemental prose");
+  assert.strictEqual(result[3].key, "2", "later prose below the supplemental bbox should remain after it");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
       state.currentPage = 12;
       state.mineruInfo = {
         pdf_info: Array.from({ length: 12 }, (_unused, index) => index === 11

@@ -212,6 +212,37 @@ label[role="button"] {
   background: #eff6ff;
 }
 
+.oss-book-picker {
+  min-width: min(520px, 100%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.oss-book-button {
+  min-height: 34px;
+  padding: 0 11px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.oss-book-select {
+  min-width: 220px;
+  max-width: 420px;
+  height: 34px;
+  flex: 1 1 280px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--ink);
+  background: #fff;
+  font-weight: 700;
+}
+
 .accepted-top-actions {
   min-width: 0;
   display: flex;
