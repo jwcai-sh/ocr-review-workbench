@@ -804,6 +804,24 @@ label[role="button"] {
   text-align: center;
 }
 
+.empty-state strong {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--ink);
+}
+
+.empty-state-detail {
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.empty-state.is-error {
+  border-color: #fecaca;
+  color: #991b1b;
+  background: #fff7f7;
+}
+
 .page-row {
   align-items: start;
   overflow: visible;

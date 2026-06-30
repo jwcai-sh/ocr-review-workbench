@@ -985,14 +985,24 @@ async function loadInitialBookFromUrl() {
   if (!bookId) {
     return false;
   }
-  setStatus("加载书籍", "busy", bookId);
-  const response = await postJson("/api/oss/load-book", { bookId });
-  if (!response?.ok) {
-    throw new Error(response?.error || "书籍加载失败");
+  state.ossWorkspaceId = bookId;
+  updatePager();
+  renderOssBookLoadingState(bookId);
+  setStatus("加载 OSS 书籍", "busy", bookId);
+  try {
+    const response = await postJson("/api/oss/load-book", { bookId });
+    if (!response?.ok) {
+      throw new Error(response?.error || "书籍加载失败");
+    }
+    await loadOssBookPayload(response, response.book || { id: bookId, label: bookId, title: bookId });
+    setStatus("Ready", "ok", response.book?.title || bookId);
+    return true;
+  } catch (error) {
+    const message = error?.message || String(error || "书籍加载失败");
+    setStatus("书籍自动加载失败", "error", message);
+    renderOssBookLoadError(bookId, message);
+    throw error;
   }
-  await loadOssBookPayload(response, response.book || { id: bookId, label: bookId, title: bookId });
-  setStatus("Ready", "ok", response.book?.title || bookId);
-  return true;
 }
 
 function urlBookId() {
@@ -1001,6 +1011,44 @@ function urlBookId() {
     return String(params.get("book_id") || params.get("bookId") || "").trim();
   } catch {
     return "";
+  }
+}
+
+function renderOssBookLoadingState(bookId) {
+  if (!els.pageList) {
+    return false;
+  }
+  const shortId = truncateText(decodeURIComponentSafe(bookId), 180);
+  els.pageList.innerHTML = `
+    <div class="empty-state">
+      <strong>正在从 OSS 加载书籍...</strong>
+      <div class="empty-state-detail">${escapeHtml(shortId)}</div>
+      <div class="empty-state-detail">大书首次加载可能需要 20-60 秒，请不要重复点击。</div>
+    </div>
+  `;
+  return true;
+}
+
+function renderOssBookLoadError(bookId, message) {
+  if (!els.pageList) {
+    return false;
+  }
+  const shortId = truncateText(decodeURIComponentSafe(bookId), 180);
+  els.pageList.innerHTML = `
+    <div class="empty-state is-error">
+      <strong>OSS 书籍加载失败</strong>
+      <div class="empty-state-detail">${escapeHtml(message)}</div>
+      <div class="empty-state-detail">${escapeHtml(shortId)}</div>
+    </div>
+  `;
+  return true;
+}
+
+function decodeURIComponentSafe(value) {
+  try {
+    return decodeURIComponent(String(value || ""));
+  } catch {
+    return String(value || "");
   }
 }
 
