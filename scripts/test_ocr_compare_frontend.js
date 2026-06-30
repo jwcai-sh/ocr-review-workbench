@@ -133,10 +133,12 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('class="control-column control-column-pdf"'));
   assert(ocrCompareHtml.includes("<div>原文</div>"));
   assert(!ocrCompareHtml.includes("每页 OCR 截图"));
-  assert(ocrCompareHtml.includes("上传 PDF"));
-  assert(ocrCompareHtml.includes("上传 middle.json"));
-  assert(ocrCompareHtml.includes("上传 content_list"));
-  assert(ocrCompareHtml.includes("一键上传所需文件"));
+  assert(ocrCompareHtml.includes("上传本地文件夹"));
+  assert(ocrCompareHtml.includes("手动选择"));
+  assert(ocrCompareHtml.includes(">PDF</span>"));
+  assert(ocrCompareHtml.includes(">middle.json</span>"));
+  assert(ocrCompareHtml.includes(">content_list</span>"));
+  assert(!ocrCompareHtml.includes("webkitdirectory"), "folder upload should not use webkitdirectory because it makes the browser prompt for every file in the folder");
   assert(!ocrCompareHtml.includes("上传 content_list (可选)"));
   assert(!ocrCompareHtml.includes("OCR Preview Lab"));
   assert(ocrCompareHtml.includes('id="previewAcceptedBookButton"'));
@@ -149,9 +151,20 @@ function runOcrCompareInContext(testContext) {
   assert(!ocrCompareHtml.includes("cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"), "MathJax CDN should be lazy-loaded by ocr-compare.js");
   assert(ocrCompareHtml.includes('load: ["[tex]/boldsymbol"]'), "MathJax should load boldsymbol for vector formulas converted from pmb");
   assert(ocrCompareHtml.includes('packages: { "[+]": ["boldsymbol"] }'), "MathJax should enable the boldsymbol TeX package");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260628-upload-label-mathjax"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260628-upload-label-mathjax"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260628-upload-label-mathjax"'));
+  assert(ocrCompareHtml.includes('id="ossBookBrowser"'));
+  assert(ocrCompareHtml.includes('id="ossBookGroupList"'));
+  assert(ocrCompareHtml.includes('id="ossBookEntryList"'));
+  assert(ocrCompareHtml.includes('id="ossBookSelectedSummary"'));
+  assert(ocrCompareHtml.includes('id="currentUserSelect"'));
+  assert(ocrCompareHtml.includes('id="reviewerAccessBadge"'));
+  assert(ocrCompareHtml.includes('<details class="oss-book-panel"'), "OSS book browser should be collapsed by default");
+  assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
+  assert(ocrCompareHtml.includes("从 OSS 加载"));
+  assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260629-folder-upload"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260629-folder-upload"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260629-folder-upload"'));
+  assert(source.includes('CURRENT_USER_KEY = "ocr-workbench-dashboard-current-user-v1"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
@@ -163,6 +176,120 @@ function runOcrCompareInContext(testContext) {
   assert(!ocrCompareHtml.includes("导出原始 MinerU"));
   assert(!ocrCompareHtml.includes("中栏读取已有 MinerU"));
   assert(!source.includes('document.querySelector(".control-band")'), "upload controls should stay visible when the MinerU preview column is collapsed");
+}
+
+{
+  const accessResult = JSON.parse(
+    call(`(() => {
+      state.currentUser = "白";
+      state.currentBookId = "book-1";
+      state.currentBookOwnerId = "门";
+      return JSON.stringify({
+        reason: bookReadOnlyReason(),
+        editable: canEditCurrentBook()
+      });
+    })()`),
+  );
+  assert(accessResult.reason.includes("owner 为“门”"));
+  assert.strictEqual(accessResult.editable, false);
+
+  const ownerResult = JSON.parse(
+    call(`(() => {
+      state.currentUser = "门";
+      state.currentBookId = "book-1";
+      state.currentBookOwnerId = "门";
+      return JSON.stringify({
+        reason: bookReadOnlyReason(),
+        editable: canEditCurrentBook()
+      });
+    })()`),
+  );
+  assert.strictEqual(ownerResult.reason, "");
+  assert.strictEqual(ownerResult.editable, true);
+}
+
+{
+  const ossContext = runOcrCompareInContext(createOcrCompareContext());
+  const ossBrowserResult = JSON.parse(
+    vm.runInContext(
+      `(() => {
+      state.ossBooks = [
+        { title: "Whole Book A", label: "Whole Book A", mode: "whole-book", middleKey: "books/a/auto/a_middle.json" },
+        { title: "Chunked Book", label: "Chunked Book · part_0001_pages_0001-0070", mode: "chunked", chunkLabel: "part_0001_pages_0001-0070", middleKey: "books/c/chunks/1/middle.json" },
+        { title: "Chunked Book", label: "Chunked Book · part_0002_pages_0071-0140", mode: "chunked", chunkLabel: "part_0002_pages_0071-0140", middleKey: "books/c/chunks/2/middle.json" }
+      ];
+      const groupList = { innerHTML: "" };
+      const entryList = { innerHTML: "" };
+      const summary = { textContent: "" };
+      const loadButton = { disabled: true };
+      els.ossBookGroupList = groupList;
+      els.ossBookEntryList = entryList;
+      els.ossBookSelectedSummary = summary;
+      els.loadOssBookButton = loadButton;
+      renderOssBookOptions();
+      state.selectedOssGroupKey = "Chunked Book";
+      renderOssBookOptions();
+      state.selectedOssBookIndex = 2;
+      renderOssBookEntries();
+      updateOssBookControls();
+      return JSON.stringify({
+        groups: ossBookGroups().map((group) => ({ title: group.title, count: group.items.length })),
+        groupHtml: groupList.innerHTML,
+        entryHtml: entryList.innerHTML,
+        selectedMiddleKey: selectedOssBook()?.middleKey || "",
+        loadDisabled: loadButton.disabled,
+        summary: summary.textContent
+      });
+    })()`,
+      ossContext,
+    ),
+  );
+  assert.deepStrictEqual(ossBrowserResult.groups, [
+    { title: "Chunked Book", count: 2 },
+    { title: "Whole Book A", count: 1 },
+  ]);
+  assert(ossBrowserResult.groupHtml.includes("oss-book-folder-icon"), "OSS browser should render book folders");
+  assert(ossBrowserResult.entryHtml.includes("part_0002_pages_0071-0140"), "OSS browser should render chunk labels separately");
+  assert.strictEqual(ossBrowserResult.selectedMiddleKey, "books/c/chunks/2/middle.json");
+  assert.strictEqual(ossBrowserResult.loadDisabled, false);
+  assert(ossBrowserResult.summary.includes("分块 · Chunked Book"));
+}
+
+{
+  const dropdownContext = runOcrCompareInContext(createOcrCompareContext());
+  const dropdownResult = JSON.parse(
+    vm.runInContext(
+      `(() => {
+      const manual = {
+        open: true,
+        matches(selector) {
+          return selector.includes(".manual-upload-panel");
+        }
+      };
+      const oss = {
+        open: true,
+        matches(selector) {
+          return selector.includes(".oss-book-panel");
+        }
+      };
+      document.querySelectorAll = () => [manual, oss];
+      handleTopDropdownToggle({ target: oss });
+      const afterMutualExclusion = { manual: manual.open, oss: oss.open };
+      handleTopDropdownOutsidePointerDown({ target: { closest: () => manual } });
+      const afterInsideClick = { manual: manual.open, oss: oss.open };
+      handleTopDropdownOutsidePointerDown({ target: { closest: () => null } });
+      return JSON.stringify({
+        afterMutualExclusion,
+        afterInsideClick,
+        afterOutsideClick: { manual: manual.open, oss: oss.open }
+      });
+    })()`,
+      dropdownContext,
+    ),
+  );
+  assert.deepStrictEqual(dropdownResult.afterMutualExclusion, { manual: false, oss: true }, "opening one top dropdown should close the other");
+  assert.deepStrictEqual(dropdownResult.afterInsideClick, { manual: false, oss: true }, "clicking inside a top dropdown should keep it open");
+  assert.deepStrictEqual(dropdownResult.afterOutsideClick, { manual: false, oss: false }, "clicking outside top dropdowns should close them");
 }
 
 {
@@ -283,8 +410,9 @@ function runOcrCompareInContext(testContext) {
   assert.strictEqual(pickerResult.opened, true);
   assert.strictEqual(pickerResult.value, "", "file input must reset so selecting the same file fires change again");
   assert.strictEqual(pickerResult.missing, false);
-  assert(ocrCompareHtml.includes('for="pdfInput"'), "PDF upload should use native label activation instead of JS-only click");
-  assert(ocrCompareHtml.includes('for="requiredFilesInput"'), "one-click upload should use native label activation instead of JS-only click");
+  assert(ocrCompareHtml.includes('for="pdfInput"'), "manual PDF upload should use native label activation instead of JS-only click");
+  assert(ocrCompareHtml.includes('id="pickRequiredFilesButton"'), "folder upload should expose one primary button");
+  assert(ocrCompareHtml.includes('id="requiredFilesInput"'), "folder upload fallback should keep a multi-file input");
   assert(source.includes("bindNativeFilePickerLabel"), "file picker labels should prepare state without relying on JS click for mouse users");
   assert(source.includes('setStatus("上传 PDF", "busy"'));
   assert(source.includes('setStatus("渲染 PDF", "busy", file.name);'));
@@ -296,9 +424,11 @@ function runOcrCompareInContext(testContext) {
   const batchUpload = JSON.parse(
     call(`(() => {
       const files = [
-        { name: "book_content_list.json", type: "application/json" },
-        { name: "origin.pdf", type: "application/pdf" },
-        { name: "book_middle.json", type: "application/json" },
+        { name: "other_middle.json", type: "application/json", webkitRelativePath: "Book/other/other_middle.json" },
+        { name: "layout.pdf", type: "application/pdf", webkitRelativePath: "Book/auto/layout.pdf" },
+        { name: "book_content_list.json", type: "application/json", webkitRelativePath: "Book/auto/book_content_list.json" },
+        { name: "origin.pdf", type: "application/pdf", webkitRelativePath: "Book/auto/origin.pdf" },
+        { name: "book_middle.json", type: "application/json", webkitRelativePath: "Book/auto/book_middle.json" },
       ];
       const picked = identifyRequiredUploadFiles(files);
       const missing = identifyRequiredUploadFiles([{ name: "origin.pdf", type: "application/pdf" }]);
@@ -442,8 +572,11 @@ $$`;
   assert(source.includes("hasPdfSource()"), "PDF-dependent controls should work with either documentId or legacy dataUrl");
   assert(source.includes('input.addEventListener("input", run);'), "file inputs should handle browsers that fire input instead of change");
   assert(source.includes("shouldSkipDuplicateFileInputEvent"), "input/change duplicate events should not double-upload files");
-  assert(source.includes("等待选择所需文件"), "one-click upload should show a visible waiting state before the picker returns");
-  assert(source.includes('setStatus("已选择文件", "busy"'), "one-click upload should show selected file names immediately after selection");
+  assert(source.includes("showDirectoryPicker"), "folder upload should prefer the directory picker and only read matched files");
+  assert(source.includes("collectRequiredUploadFilesFromDirectoryHandle"), "folder upload should collect only required candidate files from a directory");
+  assert(source.includes("等待选择本地文件夹"), "folder upload should show a visible waiting state before the picker returns");
+  assert(source.includes('setStatus("已选择本地文件夹", "busy"'), "folder upload should show selected folder immediately after selection");
+  assert(ocrCompareCss.includes(".ocr-shell:not(.has-workbench) .preview-panel"), "three-column workbench should be hidden until a book is loaded");
 }
 
 {
@@ -3592,6 +3725,13 @@ function setupPreviewBookExpression(pages) {
       state.currentPage = 1;
       state.ocrPatches = [];
       state.riskByPage.clear();
+      state.contentListItems = [];
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      state.mathpixBlockErrors.clear();
+      state.pdfTextPageCache.clear();
       state.mineruInfo = {
         pdf_info: [
           {
@@ -3943,7 +4083,7 @@ function setupPreviewBookExpression(pages) {
       return JSON.stringify(detectRiskCandidatesForPage(1).map((risk) => risk.blockIndex));
     })()`),
   );
-  assert(!result.includes("missing-heading-1"), "existing top title should suppress the synthetic missing-title candidate");
+  assert(!result.includes("missing-heading-1"), `existing top title should suppress the synthetic missing-title candidate: ${JSON.stringify(result)}`);
 }
 
 {
@@ -4619,6 +4759,90 @@ function setupPreviewBookExpression(pages) {
   assert(!result.review.some((text) => text.includes("Gravitational Radiation")), "short title running headers should be hidden");
   assert(!result.review.some((text) => text.includes("References")), "reference running headers should be hidden");
   assert(result.review.some((text) => text.includes("ever found for pulsed radiation")), "body text below the header should remain visible");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 2;
+      state.mineruInfo = {
+        pdf_info: [
+          {},
+          {
+            page_size: [1000, 1400],
+            para_blocks: [
+              {
+                type: "text",
+                bbox: [130, 42, 850, 82],
+                lines: [{ bbox: [130, 42, 850, 82], spans: [{ bbox: [130, 42, 850, 82], content: "888 Chapter 16. Classification and Inference" }] }]
+              },
+              {
+                type: "title",
+                bbox: [130, 145, 870, 178],
+                lines: [{ bbox: [130, 145, 870, 178], spans: [{ bbox: [130, 145, 870, 178], content: "16.5.4 The 1-Norm Soft-Margin SVM and Its Dual" }] }]
+              },
+              {
+                type: "text",
+                bbox: [130, 190, 870, 330],
+                lines: [{ bbox: [130, 190, 870, 330], spans: [{ bbox: [130, 190, 870, 330], content: "The next important generalization is to relax the unrealistic assumption that there exists a hyperplane." }] }]
+              }
+            ]
+          }
+        ]
+      };
+      return JSON.stringify({
+        original: originalBlockMarkdownsForPage(2).map((entry) => entry.markdown),
+        review: reviewSegmentsForPage(2).map((entry) => entry.markdown)
+      });
+    })()`),
+  );
+  assert(!result.review.some((text) => text.includes("Chapter 16. Classification and Inference")), "running Chapter headers should be hidden");
+  assert(result.original.some((text) => text.includes("16.5.4 The 1-Norm Soft-Margin SVM")), "body section heading should remain in base markdown");
+  assert(result.review.some((text) => text.includes("16.5.4 The 1-Norm Soft-Margin SVM")), "body section heading should remain in right-column review");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 2;
+      state.ocrPatches = [];
+      state.riskByPage.clear();
+      state.contentListItems = [];
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      state.mathpixBlockErrors.clear();
+      state.pdfTextPageCache.clear();
+      state.mineruInfo = {
+        pdf_info: [
+          {},
+          {
+            page_size: [1000, 1400],
+            para_blocks: [
+              {
+                type: "text",
+                bbox: [130, 42, 850, 82],
+                lines: [{ bbox: [130, 42, 850, 82], spans: [{ bbox: [130, 42, 850, 82], content: "888 Chapter 16. Classification and Inference" }] }]
+              },
+              {
+                type: "text",
+                bbox: [130, 190, 870, 330],
+                lines: [{ bbox: [130, 190, 870, 330], spans: [{ bbox: [130, 190, 870, 330], content: "The next important generalization is to relax the unrealistic assumption that there exists a hyperplane." }] }]
+              }
+            ]
+          }
+        ]
+      };
+      const risks = detectRiskCandidatesForPage(2);
+      return JSON.stringify({
+        review: reviewSegmentsForPage(2).map((entry) => entry.markdown),
+        risks: risks.map((risk) => ({ blockIndex: risk.blockIndex, reasons: risk.reasons, syntheticLabel: risk.syntheticLabel }))
+      });
+    })()`),
+  );
+  assert(!result.review.some((text) => text.includes("Chapter 16. Classification and Inference")), "top running header should not suppress missing-heading detection");
+  assert(result.risks.some((risk) => risk.blockIndex === "missing-heading-2" && risk.reasons.includes("background_heading_missing")), "missing body section heading should create a top-title crop candidate");
 }
 
 {

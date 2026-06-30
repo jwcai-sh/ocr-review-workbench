@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OCR 三栏对照</title>
-  <link rel="stylesheet" href="./ocr-compare.css?v=20260628-upload-label-mathjax">
+  <link rel="stylesheet" href="./ocr-compare.css?v=20260629-folder-upload">
 </head>
 <body>
   <div class="ocr-shell">
@@ -13,6 +13,11 @@
       <div>
         <h1>OCR 三栏对照</h1>
       </div>
+      <label class="reviewer-session-pill" for="currentUserSelect">
+        <span>当前用户</span>
+        <select id="currentUserSelect" aria-label="当前用户"></select>
+      </label>
+      <span id="reviewerAccessBadge" class="reviewer-access-badge">本地模式</span>
       <span id="statusBadge" class="status-badge">Ready</span>
     </header>
 
@@ -22,7 +27,7 @@
       <input id="contentListInput" class="hidden-input" type="file" accept=".json,application/json">
       <input id="requiredFilesInput" class="hidden-input" type="file" accept=".pdf,application/pdf,.json,application/json" multiple>
       <div class="control-column control-column-pdf" aria-label="上传 OCR 输入文件">
-        <label id="pickPdfButton" class="primary-button upload-button" for="pdfInput" role="button" tabindex="0">
+        <button id="pickRequiredFilesButton" class="primary-button upload-button upload-folder-button" type="button">
           <span class="upload-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
               <path d="M12 3v12"></path>
@@ -30,45 +35,65 @@
               <path d="M5 15v4h14v-4"></path>
             </svg>
           </span>
-          <span>上传 PDF</span>
-        </label>
-        <label id="pickMineruButton" class="secondary-button upload-button" for="mineruInput" role="button" tabindex="0">
-          <span class="upload-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path d="M12 3v12"></path>
-              <path d="m7 8 5-5 5 5"></path>
-              <path d="M5 15v4h14v-4"></path>
-            </svg>
-          </span>
-          <span>上传 middle.json</span>
-        </label>
-        <label id="pickContentListButton" class="secondary-button upload-button" for="contentListInput" role="button" tabindex="0">
-          <span class="upload-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path d="M12 3v12"></path>
-              <path d="m7 8 5-5 5 5"></path>
-              <path d="M5 15v4h14v-4"></path>
-            </svg>
-          </span>
-          <span>上传 content_list</span>
-        </label>
-        <label id="pickRequiredFilesButton" class="secondary-button upload-button upload-all-button" for="requiredFilesInput" role="button" tabindex="0">
-          <span class="upload-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path d="M12 3v12"></path>
-              <path d="m7 8 5-5 5 5"></path>
-              <path d="M5 15v4h14v-4"></path>
-            </svg>
-          </span>
-          <span>一键上传所需文件</span>
-        </label>
-        <div class="oss-book-picker" aria-label="从 OSS 选择已有书籍">
-          <button id="refreshOssBooksButton" class="secondary-button oss-book-button" type="button">刷新 OSS 书籍</button>
-          <select id="ossBookSelect" class="oss-book-select" aria-label="选择 OSS 书籍">
-            <option value="">未加载 OSS 书籍</option>
-          </select>
-          <button id="loadOssBookButton" class="primary-button oss-book-button" type="button" disabled>加载 OSS 书籍</button>
-        </div>
+          <span>上传本地文件夹</span>
+        </button>
+        <details class="manual-upload-panel">
+          <summary class="secondary-button manual-upload-summary">手动选择</summary>
+          <div class="manual-upload-actions" aria-label="手动上传 OCR 输入文件">
+            <label id="pickPdfButton" class="secondary-button upload-button" for="pdfInput" role="button" tabindex="0">
+              <span class="upload-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M12 3v12"></path>
+                  <path d="m7 8 5-5 5 5"></path>
+                  <path d="M5 15v4h14v-4"></path>
+                </svg>
+              </span>
+              <span>PDF</span>
+            </label>
+            <label id="pickMineruButton" class="secondary-button upload-button" for="mineruInput" role="button" tabindex="0">
+              <span class="upload-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M12 3v12"></path>
+                  <path d="m7 8 5-5 5 5"></path>
+                  <path d="M5 15v4h14v-4"></path>
+                </svg>
+              </span>
+              <span>middle.json</span>
+            </label>
+            <label id="pickContentListButton" class="secondary-button upload-button" for="contentListInput" role="button" tabindex="0">
+              <span class="upload-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M12 3v12"></path>
+                  <path d="m7 8 5-5 5 5"></path>
+                  <path d="M5 15v4h14v-4"></path>
+                </svg>
+              </span>
+              <span>content_list</span>
+            </label>
+          </div>
+        </details>
+        <details class="oss-book-panel" aria-label="从 OSS 选择已有书籍">
+          <summary class="secondary-button oss-book-summary">从 OSS 加载</summary>
+          <div class="oss-book-picker">
+            <button id="refreshOssBooksButton" class="secondary-button oss-book-button" type="button">刷新 OSS 书籍</button>
+            <div id="ossBookBrowser" class="oss-book-browser" aria-label="选择 OSS 书籍或分块">
+              <div class="oss-book-browser-column" aria-label="书籍目录">
+                <div class="oss-book-browser-title">书籍</div>
+                <div id="ossBookGroupList" class="oss-book-list" role="listbox" aria-label="OSS 书籍目录">
+                  <div class="oss-book-empty">未加载 OSS 书籍</div>
+                </div>
+              </div>
+              <div class="oss-book-browser-column" aria-label="分块列表">
+                <div class="oss-book-browser-title">分块</div>
+                <div id="ossBookEntryList" class="oss-book-list" role="listbox" aria-label="OSS 分块列表">
+                  <div class="oss-book-empty">先选择左侧书籍</div>
+                </div>
+              </div>
+            </div>
+            <div id="ossBookSelectedSummary" class="oss-book-selected-summary">未选择 OSS 书籍</div>
+            <button id="loadOssBookButton" class="primary-button oss-book-button" type="button" disabled>加载 OSS 书籍</button>
+          </div>
+        </details>
         <div class="accepted-top-actions" aria-label="accepted 校正稿操作">
           <button id="previewAcceptedBookButton" class="secondary-button accepted-action-button" type="button" data-preview-accepted-book-patches disabled hidden>
             预览整书 accepted 校正稿
@@ -118,6 +143,6 @@
       }
     };
   </script>
-  <script src="./ocr-compare.js?v=20260629-top-media-ordering"></script>
+  <script src="./ocr-compare.js?v=20260629-folder-upload"></script>
 </body>
 </html>

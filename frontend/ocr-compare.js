@@ -4,7 +4,9 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260629-top-media-ordering";
+const OCR_COMPARE_BUILD_ID = "20260629-folder-upload";
+const PARTICIPANTS = ["傲", "门", "白", "丹"];
+const CURRENT_USER_KEY = "ocr-workbench-dashboard-current-user-v1";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -43,8 +45,14 @@ const state = {
   mathpixConfigError: "",
   ossConfigured: false,
   ossBooks: [],
+  selectedOssBookIndex: -1,
+  selectedOssGroupKey: "",
   ossWorkspaceId: "",
+  currentBookId: "",
+  currentBookOwnerId: "",
+  currentUser: "门",
   workspaceRemoteSaveTimer: null,
+  currentBookProgressSaveTimer: null,
   busy: false,
 };
 state.ocrPatches = state.ocrPatches || [];
@@ -371,7 +379,12 @@ function bindElements() {
     "pickContentListButton",
     "pickRequiredFilesButton",
     "refreshOssBooksButton",
-    "ossBookSelect",
+    "currentUserSelect",
+    "reviewerAccessBadge",
+    "ossBookBrowser",
+    "ossBookGroupList",
+    "ossBookEntryList",
+    "ossBookSelectedSummary",
     "loadOssBookButton",
     "previewAcceptedBookButton",
     "downloadAcceptedCorrectedButton",
@@ -384,28 +397,55 @@ function bindElements() {
 
 function initialize() {
   bindElements();
+  initCurrentUser();
   restoreColumnWidths();
   restoreMiddleColumnCollapsed();
   applyMiddleColumnCollapsedState();
+  updateWorkbenchVisibility();
   bindNativeFilePickerLabel(els.pickPdfButton, els.pdfInput, "等待选择 PDF");
   bindNativeFilePickerLabel(els.pickMineruButton, els.mineruInput, "等待选择 middle.json");
   bindNativeFilePickerLabel(els.pickContentListButton, els.contentListInput, "等待选择 content_list");
-  bindNativeFilePickerLabel(els.pickRequiredFilesButton, els.requiredFilesInput, "等待选择所需文件");
+  els.pickRequiredFilesButton?.addEventListener("click", handleRequiredFilesButtonClick);
   els.previewAcceptedBookButton?.addEventListener("click", toggleAcceptedBookPreview);
   els.downloadAcceptedCorrectedButton?.addEventListener("click", downloadAcceptedCorrectedFromTop);
   els.refreshOssBooksButton?.addEventListener("click", refreshOssBooks);
   els.loadOssBookButton?.addEventListener("click", loadSelectedOssBook);
-  els.ossBookSelect?.addEventListener("change", updateOssBookControls);
+  els.currentUserSelect?.addEventListener("change", handleCurrentUserChange);
+  els.ossBookGroupList?.addEventListener("click", handleOssBookGroupClick);
+  els.ossBookEntryList?.addEventListener("click", handleOssBookEntryClick);
   bindFileInputEvents(els.pdfInput, handlePdfChange, "pdfInput");
   bindFileInputEvents(els.mineruInput, handleMineruChange, "mineruInput");
   bindFileInputEvents(els.contentListInput, handleContentListChange, "contentListInput");
   bindFileInputEvents(els.requiredFilesInput, handleRequiredFilesChange, "requiredFilesInput");
+  document.addEventListener("toggle", handleTopDropdownToggle, true);
+  document.addEventListener("pointerdown", handleTopDropdownOutsidePointerDown);
   document.addEventListener("pointerdown", handleColumnResizeStart);
   window.addEventListener("resize", schedulePdfFocusSync);
   window.addEventListener("mathjax-ready", () => typesetMath(els.pageList));
   updateAcceptedPatchTopControls();
   ensureMathJaxLoaded().catch((error) => reportMathJaxError(error));
   refreshRuntimeCapabilities();
+  loadInitialBookFromUrl().catch((error) => {
+    setStatus("书籍自动加载失败", "error", error?.message || String(error || ""));
+  });
+}
+
+function initCurrentUser() {
+  const storage = safeLocalStorage();
+  const stored = storage?.getItem?.(CURRENT_USER_KEY) || "";
+  state.currentUser = PARTICIPANTS.includes(stored) ? stored : "门";
+  if (els.currentUserSelect) {
+    els.currentUserSelect.innerHTML = PARTICIPANTS
+      .map((name) => `<option value="${escapeHtml(name)}" ${name === state.currentUser ? "selected" : ""}>${escapeHtml(name)}</option>`)
+      .join("");
+  }
+  updateReviewerSessionUi();
+}
+
+function handleCurrentUserChange() {
+  state.currentUser = String(els.currentUserSelect?.value || "门").trim() || "门";
+  safeLocalStorage()?.setItem?.(CURRENT_USER_KEY, state.currentUser);
+  updateReviewerSessionUi();
 }
 
 async function refreshRuntimeCapabilities() {
@@ -456,6 +496,35 @@ function prepareFilePickerInput(input, waitingLabel = "") {
   }
   input.value = "";
   return true;
+}
+
+function topDropdownPanels() {
+  return Array.from(document.querySelectorAll?.(".manual-upload-panel, .oss-book-panel") || []);
+}
+
+function handleTopDropdownToggle(event) {
+  const panel = event.target;
+  if (!panel?.matches?.(".manual-upload-panel, .oss-book-panel") || !panel.open) {
+    return;
+  }
+  topDropdownPanels().forEach((item) => {
+    if (item !== panel) {
+      item.open = false;
+    }
+  });
+}
+
+function handleTopDropdownOutsidePointerDown(event) {
+  if (event.target?.closest?.(".manual-upload-panel, .oss-book-panel")) {
+    return;
+  }
+  closeTopDropdownPanels();
+}
+
+function closeTopDropdownPanels() {
+  topDropdownPanels().forEach((panel) => {
+    panel.open = false;
+  });
 }
 
 function bindFileInputEvents(input, handler, key) {
@@ -547,13 +616,44 @@ async function handleContentListChange() {
   }
 }
 
+async function handleRequiredFilesButtonClick() {
+  if (typeof window !== "undefined" && typeof window.showDirectoryPicker === "function") {
+    try {
+      setStatus("等待选择本地文件夹", "busy", "请选择包含 origin.pdf / middle.json / content_list 的文件夹");
+      const directoryHandle = await window.showDirectoryPicker({ mode: "read" });
+      const files = await collectRequiredUploadFilesFromDirectoryHandle(directoryHandle);
+      if (!files.length) {
+        throw new Error("未在文件夹中找到 PDF / middle.json / content_list 候选文件");
+      }
+      await handleRequiredFiles(files, directoryHandle.name || "本地文件夹");
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        setStatus("Ready", "ok");
+        return;
+      }
+      setStatus("本地文件夹读取失败", "error", error?.message || String(error || ""));
+      return;
+    }
+  }
+  prepareFilePickerInput(els.requiredFilesInput, "等待选择三件套文件");
+  els.requiredFilesInput?.click();
+}
+
 async function handleRequiredFilesChange() {
   const files = Array.from(els.requiredFilesInput?.files || []);
   if (!files.length) {
     return;
   }
+  await handleRequiredFiles(files, describePickedUploadFolder(files));
+  if (els.requiredFilesInput) {
+    els.requiredFilesInput.value = "";
+  }
+}
+
+async function handleRequiredFiles(files, label = "") {
   try {
-    setStatus("已选择文件", "busy", files.map((file) => file.name).join(" / "));
+    setStatus("已选择本地文件夹", "busy", label || describePickedUploadFolder(files));
     await waitForNextPaint();
     const picked = identifyRequiredUploadFiles(files);
     const missing = [];
@@ -569,18 +669,14 @@ async function handleRequiredFilesChange() {
     if (missing.length) {
       throw new Error(`缺少文件：${missing.join("、")}`);
     }
-    setStatus("一键上传", "busy", "正在读取 PDF / middle.json / content_list");
+    setStatus("上传本地文件夹", "busy", uploadFolderSummary(picked));
     await waitForNextPaint();
     await loadPdfFile(picked.pdf);
     await loadMineruFile(picked.mineru);
     await loadContentListFile(picked.contentList);
-    setStatus("Ready", "ok", "所需文件已全部上传");
+    setStatus("Ready", "ok", "本地文件夹已加载");
   } catch (error) {
-    setStatus("一键上传失败", "error", error?.message || String(error || ""));
-  } finally {
-    if (els.requiredFilesInput) {
-      els.requiredFilesInput.value = "";
-    }
+    setStatus("本地文件夹上传失败", "error", error?.message || String(error || ""));
   }
 }
 
@@ -590,11 +686,12 @@ async function refreshOssBooks() {
     els.refreshOssBooksButton.disabled = true;
   }
   try {
-    const response = await postJson("/api/oss/books", {});
-    if (!response?.ok) {
-      throw new Error(response?.error || "OSS 书籍扫描失败");
+    const response = await fetchApi("/api/books?limit=5000", { cache: "no-store" });
+    const data = await response.json();
+    if (!data?.ok) {
+      throw new Error(data?.error || "书籍列表读取失败");
     }
-    state.ossBooks = Array.isArray(response.books) ? response.books : [];
+    state.ossBooks = (Array.isArray(data.books) ? data.books : []).map(normalizeDbBookToOssBrowserEntry);
     renderOssBookOptions();
     setStatus("OSS 书籍已刷新", "ok", `${state.ossBooks.length} 个条目`);
   } catch (error) {
@@ -609,27 +706,141 @@ async function refreshOssBooks() {
   }
 }
 
+function normalizeDbBookToOssBrowserEntry(book) {
+  return {
+    id: String(book?.id || ""),
+    title: String(book?.title || ""),
+    label: String(book?.title || ""),
+    mode: String(book?.mode || ""),
+    chunkLabel: String(book?.chunk_label || ""),
+    directory: String(book?.oss_middle_key || ""),
+    pdfKey: String(book?.oss_pdf_key || ""),
+    middleKey: String(book?.oss_middle_key || ""),
+    contentListKey: String(book?.oss_content_list_key || ""),
+    workspaceId: String(book?.id || ""),
+    ownerUserId: String(book?.owner_user_id || ""),
+    status: String(book?.status || "unreviewed"),
+  };
+}
+
 function renderOssBookOptions() {
-  if (!els.ossBookSelect) {
+  if (!els.ossBookGroupList || !els.ossBookEntryList) {
     return;
   }
   const books = Array.isArray(state.ossBooks) ? state.ossBooks : [];
   if (!books.length) {
-    els.ossBookSelect.innerHTML = '<option value="">未找到 OSS 书籍</option>';
+    state.selectedOssBookIndex = -1;
+    state.selectedOssGroupKey = "";
+    els.ossBookGroupList.innerHTML = '<div class="oss-book-empty">未找到 OSS 书籍</div>';
+    els.ossBookEntryList.innerHTML = '<div class="oss-book-empty">先选择左侧书籍</div>';
+    updateOssBookControls();
     return;
   }
-  els.ossBookSelect.innerHTML = [
-    '<option value="">选择 OSS 书籍或分块</option>',
-    ...books.map((book, index) => {
-      const mode = book.mode === "chunked" ? "分块" : "整本";
-      const label = `${mode} · ${book.label || book.title || book.middleKey || `Book ${index + 1}`}`;
-      return `<option value="${index}">${escapeHtml(label)}</option>`;
-    }),
-  ].join("");
+  const groups = ossBookGroups();
+  if (!state.selectedOssGroupKey || !groups.some((group) => group.key === state.selectedOssGroupKey)) {
+    state.selectedOssGroupKey = groups[0]?.key || "";
+  }
+  if (!Number.isInteger(state.selectedOssBookIndex) || state.selectedOssBookIndex < 0 || !books[state.selectedOssBookIndex]) {
+    state.selectedOssBookIndex = -1;
+  }
+  els.ossBookGroupList.innerHTML = groups
+    .map((group) => {
+      const selected = group.key === state.selectedOssGroupKey;
+      return `
+        <button class="oss-book-list-item ${selected ? "is-selected" : ""}" type="button" role="option" aria-selected="${selected ? "true" : "false"}" data-oss-group-key="${escapeHtml(group.key)}">
+          <span class="oss-book-folder-icon" aria-hidden="true"></span>
+          <span class="oss-book-item-main">${escapeHtml(group.title)}</span>
+          <span class="oss-book-item-count">${escapeHtml(String(group.items.length))}</span>
+        </button>
+      `;
+    })
+    .join("");
+  renderOssBookEntries();
+  updateOssBookControls();
+}
+
+function renderOssBookEntries() {
+  if (!els.ossBookEntryList) {
+    return;
+  }
+  const group = ossBookGroups().find((item) => item.key === state.selectedOssGroupKey);
+  if (!group) {
+    els.ossBookEntryList.innerHTML = '<div class="oss-book-empty">先选择左侧书籍</div>';
+    return;
+  }
+  els.ossBookEntryList.innerHTML = group.items
+    .map(({ book, index }) => {
+      const selected = index === state.selectedOssBookIndex;
+      const label = ossBookEntryLabel(book, index);
+      const meta = isChunkBook(book) ? "分块" : "整本";
+      return `
+        <button class="oss-book-list-item ${selected ? "is-selected" : ""}" type="button" role="option" aria-selected="${selected ? "true" : "false"}" data-oss-book-index="${escapeHtml(String(index))}">
+          <span class="oss-book-file-icon" aria-hidden="true"></span>
+          <span class="oss-book-item-main">${escapeHtml(label)}</span>
+          <span class="oss-book-item-meta">${escapeHtml(meta)}</span>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function ossBookGroups() {
+  const groups = new Map();
+  (Array.isArray(state.ossBooks) ? state.ossBooks : []).forEach((book, index) => {
+    const title = ossBookGroupTitle(book, index);
+    const key = title || `book-${index}`;
+    if (!groups.has(key)) {
+      groups.set(key, { key, title, items: [] });
+    }
+    groups.get(key).items.push({ book, index });
+  });
+  return Array.from(groups.values()).sort((left, right) => left.title.localeCompare(right.title, "zh-Hans-CN"));
+}
+
+function ossBookGroupTitle(book, index) {
+  return String(book?.title || book?.label || book?.directory || `Book ${index + 1}`).trim();
+}
+
+function ossBookEntryLabel(book, index) {
+  const label = String(book?.chunkLabel || "").trim();
+  if (label) {
+    return label;
+  }
+  if (isChunkBook(book)) {
+    const fullLabel = String(book?.label || "").trim();
+    const title = ossBookGroupTitle(book, index);
+    return fullLabel.startsWith(`${title} · `) ? fullLabel.slice(title.length + 3) : fullLabel || `分块 ${index + 1}`;
+  }
+  return "整本";
+}
+
+function isChunkBook(book) {
+  return String(book?.mode || "").trim() === "chunked" || String(book?.mode || "").trim() === "chunk";
+}
+
+function handleOssBookGroupClick(event) {
+  const button = event.target?.closest?.("[data-oss-group-key]");
+  if (!button) {
+    return;
+  }
+  state.selectedOssGroupKey = String(button.dataset.ossGroupKey || "");
+  state.selectedOssBookIndex = -1;
+  renderOssBookOptions();
+}
+
+function handleOssBookEntryClick(event) {
+  const button = event.target?.closest?.("[data-oss-book-index]");
+  if (!button) {
+    return;
+  }
+  const index = Number(button.dataset.ossBookIndex);
+  state.selectedOssBookIndex = Number.isInteger(index) ? index : -1;
+  renderOssBookEntries();
+  updateOssBookControls();
 }
 
 function selectedOssBook() {
-  const index = Number(els.ossBookSelect?.value);
+  const index = Number(state.selectedOssBookIndex);
   if (!Number.isInteger(index) || index < 0) {
     return null;
   }
@@ -637,8 +848,14 @@ function selectedOssBook() {
 }
 
 function updateOssBookControls() {
+  const book = selectedOssBook();
+  if (els.ossBookSelectedSummary) {
+    els.ossBookSelectedSummary.textContent = book
+      ? `${isChunkBook(book) ? "分块" : "整本"} · ${book.label || book.title || ossBookEntryLabel(book, state.selectedOssBookIndex)}`
+      : "未选择 OSS 书籍";
+  }
   if (els.loadOssBookButton) {
-    els.loadOssBookButton.disabled = !selectedOssBook();
+    els.loadOssBookButton.disabled = !book;
   }
 }
 
@@ -654,6 +871,7 @@ async function loadSelectedOssBook() {
   }
   try {
     const response = await postJson("/api/oss/load-book", {
+      bookId: book.id || book.workspaceId || "",
       pdfKey: book.pdfKey,
       middleKey: book.middleKey,
       contentListKey: book.contentListKey || "",
@@ -671,17 +889,103 @@ async function loadSelectedOssBook() {
   }
 }
 
+async function loadInitialBookFromUrl() {
+  const bookId = urlBookId();
+  if (!bookId) {
+    return false;
+  }
+  setStatus("加载书籍", "busy", bookId);
+  const response = await postJson("/api/oss/load-book", { bookId });
+  if (!response?.ok) {
+    throw new Error(response?.error || "书籍加载失败");
+  }
+  await loadOssBookPayload(response, response.book || { id: bookId, label: bookId, title: bookId });
+  setStatus("Ready", "ok", response.book?.title || bookId);
+  return true;
+}
+
+function urlBookId() {
+  try {
+    const params = new URLSearchParams(window.location.search || "");
+    return String(params.get("book_id") || params.get("bookId") || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function safeLocalStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function currentReviewerId() {
+  return String(state.currentUser || "").trim();
+}
+
+function currentBookOwnerId() {
+  return String(state.currentBookOwnerId || "").trim();
+}
+
+function bookReadOnlyReason() {
+  const bookId = currentDbBookId();
+  if (!bookId) {
+    return "";
+  }
+  const owner = currentBookOwnerId();
+  const reviewer = currentReviewerId();
+  if (!owner) {
+    return "当前 OSS 书籍尚未分配 owner，请先在书库中完成分配。";
+  }
+  if (owner !== reviewer) {
+    return `当前书籍 owner 为“${owner}”，你现在是“${reviewer}”，仅可只读查看。`;
+  }
+  return "";
+}
+
+function canEditCurrentBook() {
+  return !bookReadOnlyReason();
+}
+
+function updateReviewerSessionUi() {
+  if (els.currentUserSelect) {
+    els.currentUserSelect.value = state.currentUser || "门";
+  }
+  if (!els.reviewerAccessBadge) {
+    return;
+  }
+  const reason = bookReadOnlyReason();
+  const label = currentDbBookId()
+    ? (reason ? `只读 · ${truncateText(reason, 40)}` : `可编辑 · owner「${currentBookOwnerId()}」`)
+    : "本地模式 · 可编辑";
+  els.reviewerAccessBadge.textContent = label;
+  els.reviewerAccessBadge.className = `reviewer-access-badge ${reason ? "is-readonly" : ""}`;
+  els.reviewerAccessBadge.title = reason || "当前书籍可编辑";
+}
+
+function ensureWritableBookAction(actionLabel = "当前操作") {
+  const reason = bookReadOnlyReason();
+  if (!reason) {
+    return true;
+  }
+  setStatus(actionLabel, "error", reason);
+  return false;
+}
+
 async function loadOssBookPayload(response, book) {
   const middleJson = response.middleJson;
   const pdfInfo = Array.isArray(middleJson?.pdf_info) ? middleJson.pdf_info : [];
   if (!pdfInfo.length) {
     throw new Error("OSS middle.json 没有找到 pdf_info。");
   }
+  const initialPage = Math.max(1, Math.min(Number(response.book?.current_page) || 1, response.document?.pageCount || pdfInfo.length || 1));
   state.pdfFile = null;
   state.pdfDataUrl = "";
   state.pdfDocumentId = response.document?.documentId || "";
   state.pdfPageCount = response.document?.pageCount || pdfInfo.length || 1;
-  state.currentPage = 1;
+  state.currentPage = initialPage;
   state.pageCache.clear();
   state.pdfTextPageCache.clear();
   state.mathpixCache.clear();
@@ -694,6 +998,7 @@ async function loadOssBookPayload(response, book) {
   state.mathpixBlockDrafts.clear();
   state.liveReviewDrafts.clear();
   state.ocrPatches = [];
+  state.reviewNeedsCorrection.clear();
   state.acceptedPatchPreview = null;
   state.acceptedPatchBookPreview = null;
   state.riskByPage.clear();
@@ -701,20 +1006,120 @@ async function loadOssBookPayload(response, book) {
   state.reviewExpanded.clear();
   state.reviewInitializedPages.clear();
   state.ossWorkspaceId = response.workspaceId || book.workspaceId || book.id || "";
+  state.currentBookId = response.book?.id || book.id || response.workspaceId || "";
+  state.currentBookOwnerId = String(response.book?.owner_user_id || "");
+  updateReviewerSessionUi();
   analyzeCurrentMineruRiskPage();
   await restoreOcrWorkspaceStateRemoteFirst();
+  applyDatabaseBookState(response);
   updatePager();
-  const preview = await loadPagePreview(1);
-  cachePreviewPage(1, preview);
+  const preview = await loadPagePreview(state.currentPage);
+  cachePreviewPage(state.currentPage, preview);
   await renderCurrentPage();
   scheduleMineruRiskAnalysis();
 }
 
+function applyDatabaseBookState(response) {
+  state.reviewNeedsCorrection = new Set();
+  state.currentBookOwnerId = String(response?.book?.owner_user_id || "");
+  if (Array.isArray(response?.ocrPatches)) {
+    state.ocrPatches = response.ocrPatches;
+    state.acceptedPatchPreview = null;
+    state.acceptedPatchBookPreview = null;
+  }
+  const marks = Array.isArray(response?.reviewMarks)
+    ? response.reviewMarks
+    : Array.isArray(response?.bookState?.reviewMarks)
+      ? response.bookState.reviewMarks
+      : [];
+  if (marks.length) {
+    state.reviewNeedsCorrection = new Set(
+      marks
+        .filter((mark) => mark?.markType === "needs_extra_correction" && mark?.status !== "resolved")
+        .map((mark) => String(mark.blockId || ""))
+        .filter(Boolean),
+    );
+  }
+  updateReviewerSessionUi();
+}
+
 function identifyRequiredUploadFiles(files) {
+  const list = Array.isArray(files) ? files : [];
+  const grouped = uploadFileGroupsByDirectory(list);
+  const bestGroup = grouped
+    .map((group) => ({ group, picked: pickRequiredUploadFilesFromList(group.files) }))
+    .sort((left, right) => requiredUploadPickScore(right.picked) - requiredUploadPickScore(left.picked))[0];
+  if (bestGroup && requiredUploadPickScore(bestGroup.picked) > 0) {
+    return bestGroup.picked;
+  }
+  return pickRequiredUploadFilesFromList(list);
+}
+
+async function collectRequiredUploadFilesFromDirectoryHandle(directoryHandle) {
+  const files = [];
+  await collectRequiredUploadFilesFromDirectoryEntry(directoryHandle, "", files);
+  return files;
+}
+
+async function collectRequiredUploadFilesFromDirectoryEntry(directoryHandle, parentPath, files) {
+  for await (const [name, handle] of directoryHandle.entries()) {
+    const path = parentPath ? `${parentPath}/${name}` : name;
+    if (handle.kind === "directory") {
+      if (!isIgnoredUploadDirectoryName(name)) {
+        await collectRequiredUploadFilesFromDirectoryEntry(handle, path, files);
+      }
+      continue;
+    }
+    if (handle.kind !== "file" || !isRequiredUploadCandidateFileName(name)) {
+      continue;
+    }
+    const file = await handle.getFile();
+    Object.defineProperty(file, "relativePath", {
+      value: path,
+      configurable: true,
+    });
+    files.push(file);
+  }
+}
+
+function isIgnoredUploadDirectoryName(name) {
+  return /^(?:images?|image|assets?|figures?|__macosx)$/i.test(String(name || "").trim());
+}
+
+function isRequiredUploadCandidateFileName(name) {
+  const value = String(name || "").toLowerCase();
+  if (isIgnoredUploadSupportFile(value)) {
+    return false;
+  }
+  return value.endsWith(".pdf") || value.endsWith(".json");
+}
+
+function uploadFileGroupsByDirectory(files) {
+  const groups = new Map();
+  (Array.isArray(files) ? files : []).forEach((file) => {
+    const key = uploadFileDirectoryKey(file);
+    if (!groups.has(key)) {
+      groups.set(key, { key, files: [] });
+    }
+    groups.get(key).files.push(file);
+  });
+  return Array.from(groups.values());
+}
+
+function uploadFileDirectoryKey(file) {
+  const path = String(file?.webkitRelativePath || file?.relativePath || file?.name || "");
+  const parts = path.split("/").filter(Boolean);
+  return parts.length > 1 ? parts.slice(0, -1).join("/") : "";
+}
+
+function pickRequiredUploadFilesFromList(files) {
   const picked = { pdf: null, mineru: null, contentList: null };
   (Array.isArray(files) ? files : []).forEach((file) => {
     const name = String(file?.name || "").toLowerCase();
-    if (!picked.pdf && (name.endsWith(".pdf") || file?.type === "application/pdf")) {
+    if (isIgnoredUploadSupportFile(name)) {
+      return;
+    }
+    if (!picked.pdf && isPreferredOriginPdfFile(file)) {
       picked.pdf = file;
       return;
     }
@@ -729,7 +1134,37 @@ function identifyRequiredUploadFiles(files) {
       picked.mineru = file;
     }
   });
+  if (!picked.pdf) {
+    picked.pdf = (Array.isArray(files) ? files : []).find((file) => {
+      const name = String(file?.name || "").toLowerCase();
+      return !isIgnoredUploadSupportFile(name) && (name.endsWith(".pdf") || file?.type === "application/pdf");
+    }) || null;
+  }
   return picked;
+}
+
+function isPreferredOriginPdfFile(file) {
+  const name = String(file?.name || "").toLowerCase();
+  return (name.endsWith(".pdf") || file?.type === "application/pdf") && /(?:^|[_\-\s])origin(?:[_\-\s.]|$)/.test(name);
+}
+
+function isIgnoredUploadSupportFile(name) {
+  return /(?:^|[_\-\s])(?:layout|span|model)(?:[_\-\s.]|$)/.test(String(name || "").toLowerCase());
+}
+
+function requiredUploadPickScore(picked) {
+  return (picked?.pdf ? 4 : 0) + (picked?.mineru ? 2 : 0) + (picked?.contentList ? 1 : 0);
+}
+
+function describePickedUploadFolder(files) {
+  const list = Array.isArray(files) ? files : [];
+  const firstPath = String(list[0]?.webkitRelativePath || list[0]?.relativePath || "");
+  const folder = firstPath ? firstPath.split("/").filter(Boolean)[0] : "";
+  return folder ? `${folder} · ${list.length} 个文件` : list.map((file) => file.name).join(" / ");
+}
+
+function uploadFolderSummary(picked) {
+  return [picked?.pdf?.name, picked?.mineru?.name, picked?.contentList?.name].filter(Boolean).join(" / ");
 }
 
 async function loadPdfFile(file) {
@@ -737,6 +1172,8 @@ async function loadPdfFile(file) {
   await waitForNextPaint();
   const upload = await uploadPreviewDocument(file);
   state.ossWorkspaceId = "";
+  state.currentBookId = "";
+  state.currentBookOwnerId = "";
   state.pdfFile = file;
   state.pdfDataUrl = "";
   state.pdfDocumentId = upload.documentId || "";
@@ -748,6 +1185,7 @@ async function loadPdfFile(file) {
   state.mineruOverrides.clear();
   state.mineruBlockOverrides.clear();
   state.ocrPatches = [];
+  state.reviewNeedsCorrection.clear();
   state.acceptedPatchPreview = null;
   state.acceptedPatchBookPreview = null;
   state.riskByPage.clear();
@@ -769,6 +1207,7 @@ async function loadPdfFile(file) {
   if (state.mineruInfo) {
     scheduleMineruRiskAnalysis();
   }
+  updateReviewerSessionUi();
   setStatus("Ready", "ok");
 }
 
@@ -783,11 +1222,14 @@ async function loadMineruFile(file) {
   state.mineruInfo = data;
   state.mineruFileName = file.name;
   state.ossWorkspaceId = "";
+  state.currentBookId = "";
+  state.currentBookOwnerId = "";
   state.mineruOverrides.clear();
   state.mineruBlockOverrides.clear();
   state.mathpixBlockDrafts.clear();
   state.liveReviewDrafts.clear();
   state.ocrPatches = [];
+  state.reviewNeedsCorrection.clear();
   state.acceptedPatchPreview = null;
   state.acceptedPatchBookPreview = null;
   state.riskByPage.clear();
@@ -802,6 +1244,7 @@ async function loadMineruFile(file) {
   updatePager();
   await renderCurrentPage();
   scheduleMineruRiskAnalysis();
+  updateReviewerSessionUi();
   setStatus("Ready", "ok");
 }
 
@@ -829,6 +1272,10 @@ async function loadContentListFile(file) {
 
 function resetPage() {
   clearPersistedOcrWorkspaceState();
+  if (state.currentBookProgressSaveTimer) {
+    clearTimeout(state.currentBookProgressSaveTimer);
+    state.currentBookProgressSaveTimer = null;
+  }
   state.pdfFile = null;
   state.pdfDataUrl = "";
   state.pdfDocumentId = "";
@@ -841,15 +1288,19 @@ function resetPage() {
   state.contentListItems = [];
   state.contentListFileName = "";
   state.ossWorkspaceId = "";
+  state.currentBookId = "";
+  state.currentBookOwnerId = "";
   state.mineruOverrides.clear();
   state.mineruBlockOverrides.clear();
   state.mathpixBlockDrafts.clear();
   state.liveReviewDrafts.clear();
   state.ocrPatches = [];
+  state.reviewNeedsCorrection.clear();
   state.acceptedPatchPreview = null;
   state.acceptedPatchBookPreview = null;
   state.riskByPage.clear();
   cancelScheduledRiskAnalysis();
+  updateReviewerSessionUi();
   state.mathpixCache.clear();
   state.reviewExpanded.clear();
   state.reviewInitializedPages.clear();
@@ -1033,6 +1484,90 @@ function applyOcrWorkspacePayload(payload) {
   return true;
 }
 
+function currentDbBookId() {
+  return String(state.currentBookId || "").trim();
+}
+
+function scheduleCurrentBookProgressSave() {
+  const bookId = currentDbBookId();
+  const reviewer = currentReviewerId();
+  if (!bookId || !reviewer || !canEditCurrentBook() || typeof setTimeout !== "function" || typeof fetch !== "function") {
+    return;
+  }
+  if (state.currentBookProgressSaveTimer) {
+    clearTimeout(state.currentBookProgressSaveTimer);
+  }
+  state.currentBookProgressSaveTimer = setTimeout(() => {
+    state.currentBookProgressSaveTimer = null;
+    postJson(`/api/books/${encodeURIComponent(bookId)}/update`, {
+      currentPage: Number(state.currentPage) || 1,
+      updatedBy: reviewer,
+    }).catch((error) => {
+      if (typeof console !== "undefined" && typeof console.warn === "function") {
+        console.warn("[OCR DB] 无法保存当前页进度。", error);
+      }
+    });
+  }, 300);
+}
+
+function persistDbOcrPatch(patch) {
+  const bookId = currentDbBookId();
+  const reviewer = currentReviewerId();
+  if (!bookId || !patch?.patchId || !reviewer || typeof fetch !== "function" || !ensureWritableBookAction("当前书籍只读")) {
+    return;
+  }
+  postJson(`/api/books/${encodeURIComponent(bookId)}/patches`, {
+    ...patch,
+    createdBy: patch?.createdBy || reviewer,
+    updatedBy: reviewer,
+  }).catch((error) => {
+    setStatus("数据库保存失败", "error", error?.message || String(error || ""));
+    if (typeof console !== "undefined" && typeof console.warn === "function") {
+      console.warn("[OCR DB] 无法保存 OCR patch。", error);
+    }
+  });
+}
+
+function persistDbOcrPatchStatus(patch, status) {
+  const bookId = currentDbBookId();
+  const reviewer = currentReviewerId();
+  if (!bookId || !patch?.patchId || !reviewer || typeof fetch !== "function" || !ensureWritableBookAction("当前书籍只读")) {
+    return;
+  }
+  postJson(`/api/books/${encodeURIComponent(bookId)}/patches/${encodeURIComponent(patch.patchId)}/status`, {
+    status,
+    updatedBy: reviewer,
+  }).catch((error) => {
+    setStatus("数据库状态保存失败", "error", error?.message || String(error || ""));
+    if (typeof console !== "undefined" && typeof console.warn === "function") {
+      console.warn("[OCR DB] 无法保存 OCR patch 状态。", error);
+    }
+  });
+}
+
+function persistDbReviewMark(blockId, status) {
+  const bookId = currentDbBookId();
+  const reviewer = currentReviewerId();
+  const fullKey = String(blockId || "");
+  if (!bookId || !fullKey || !reviewer || typeof fetch !== "function" || !ensureWritableBookAction("当前书籍只读")) {
+    return;
+  }
+  const pageNo = Number(fullKey.split(":")[0]) || Number(state.currentPage) || 0;
+  postJson(`/api/books/${encodeURIComponent(bookId)}/marks`, {
+    blockId: fullKey,
+    pageNo,
+    markType: "needs_extra_correction",
+    status,
+    updatedBy: reviewer,
+    createdBy: reviewer,
+  }).catch((error) => {
+    setStatus("数据库标记保存失败", "error", error?.message || String(error || ""));
+    if (typeof console !== "undefined" && typeof console.warn === "function") {
+      console.warn("[OCR DB] 无法保存需要额外校正标记。", error);
+    }
+  });
+}
+
 function exportOcrWorkspaceSnapshot() {
   if (!state.mineruInfo || !state.mineruFileName) {
     setStatus("先上传 middle.json", "error");
@@ -1189,6 +1724,7 @@ async function goToPage(pageNumber) {
   state.reviewActionsOpen.clear();
   state.reviewCorrectionOpen.clear();
   updatePager();
+  scheduleCurrentBookProgressSave();
   await renderCurrentPage();
 }
 
@@ -3281,12 +3817,18 @@ async function toggleReviewNeedsCorrection(blockIndex) {
   if (!fullKey) {
     return;
   }
+  if (!ensureWritableBookAction("需要额外校正标记为只读")) {
+    return;
+  }
+  let nextStatus = "open";
   if (state.reviewNeedsCorrection.has(fullKey)) {
     state.reviewNeedsCorrection.delete(fullKey);
+    nextStatus = "resolved";
   } else {
     state.reviewNeedsCorrection.add(fullKey);
   }
   saveOcrWorkspaceState();
+  persistDbReviewMark(fullKey, nextStatus);
   if (refreshRightWorkbenchOnly({ preserveReviewScroll: true, preserveReviewAnchorKey: fullKey })) {
     refreshReviewSelectionInPlace(fullKey);
     schedulePdfFocusSync();
@@ -3300,7 +3842,11 @@ function clearReviewNeedsCorrectionForBlock(pageNumber, blockIndex) {
   if (!fullKey || !state.reviewNeedsCorrection.has(fullKey)) {
     return false;
   }
+  if (!ensureWritableBookAction("需要额外校正标记为只读")) {
+    return false;
+  }
   state.reviewNeedsCorrection.delete(fullKey);
+  persistDbReviewMark(fullKey, "resolved");
   return true;
 }
 
@@ -3502,6 +4048,7 @@ async function goToReviewBlockTarget(pageNumber, blockIndex) {
   state.reviewExpanded.clear();
   expandOnlyReviewBlock(state.currentPage, String(blockIndex || ""));
   updatePager();
+  scheduleCurrentBookProgressSave();
   await renderCurrentPage();
   scrollSelectedReviewBlockIntoView();
   schedulePdfFocusSync();
@@ -4437,6 +4984,9 @@ function unwrapPlainTextParagraph(paragraph) {
 }
 
 async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
+  if (!ensureWritableBookAction("当前书籍只读")) {
+    return;
+  }
   const preparedMarkdown = cleanMathpixEditableMarkdown(String(newMarkdown || ""));
   if (!preparedMarkdown.trim()) {
     setStatus("Empty block", "error");
@@ -4451,6 +5001,9 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
     newText: preparedMarkdown,
     source: "human",
   });
+  if (!patchResult?.patch) {
+    return;
+  }
   const markdown = patchResult.normalizedText;
   if (patchResult.patch?.status === "draft") {
     rejectPriorOcrPatchesForBlock(patchResult.patch.blockId, patchResult.patch.patchId);
@@ -6263,6 +6816,12 @@ function isLikelyPageHeaderText(text, bbox, pageSize) {
   if (!geometry || geometry.bottomRatio > 0.13) {
     return false;
   }
+  if (isRunningChapterHeaderText(value)) {
+    return true;
+  }
+  if (isBodySectionHeadingText(value, geometry)) {
+    return false;
+  }
   if (isPageNumberOnlyText(value)) {
     return true;
   }
@@ -6289,6 +6848,33 @@ function isLikelyPageHeaderText(text, bbox, pageSize) {
   }
   const capitalized = words.filter((word) => /^[A-ZÀ-Þ0-9]/.test(word) || /^(and|of|the|in|for|to|with|on)$/i.test(word)).length;
   return capitalized / words.length >= 0.82;
+}
+
+function isBodySectionHeadingText(text, geometry) {
+  const value = String(text || "").trim();
+  if (!value || !geometry) {
+    return false;
+  }
+  if (/^\d+\s+[A-ZÀ-Þ]/u.test(value) && !/^\d{2,4}\s+\d+(?:\.\d+)*\s+\S/.test(value) && geometry.topRatio >= 0.06) {
+    return true;
+  }
+  if (!/^\d+(?:\.\d+){1,}\s+\S/.test(value)) {
+    return false;
+  }
+  const depth = (value.match(/\./g) || []).length + 1;
+  if (depth >= 3 && geometry.topRatio >= 0.075) {
+    return true;
+  }
+  return geometry.topRatio >= 0.115;
+}
+
+function isRunningChapterHeaderText(text) {
+  const value = String(text || "").trim();
+  return (
+    /^Chapter\s+\d+\b/i.test(value) ||
+    /^\d{1,4}\s+Chapter\s+\d+\b/i.test(value) ||
+    /^\d{2,4}\s+[A-ZÀ-Þ][\p{L}\p{N}\s.,:;'"’()/-]{2,}$/u.test(value)
+  );
 }
 
 function isAlgorithmStartEntry(entry) {
@@ -6379,6 +6965,13 @@ function createLegacyBlockPatchContext(pageNo, blockIndex, oldText) {
 }
 
 function createAndStoreDraftOcrPatch({ pageNo, blockIndex, oldText, newText, source, preserveText = "" }) {
+  if (!ensureWritableBookAction("当前书籍只读")) {
+    return {
+      patch: null,
+      normalizedText: String(newText || ""),
+      renderValidation: { severity: "error", reason: "readonly" },
+    };
+  }
   const context = createLegacyBlockPatchContext(pageNo, blockIndex, oldText);
   const createOcrPatch = getOcrCoreCreateOcrPatch();
   const preservationSource = [oldText, preserveText].filter(Boolean).join("\n\n");
@@ -6415,6 +7008,7 @@ function createAndStoreDraftOcrPatch({ pageNo, blockIndex, oldText, newText, sou
   state.ocrPatches = state.ocrPatches || [];
   state.ocrPatches.push(patch);
   saveOcrWorkspaceState();
+  persistDbOcrPatch(patch);
   return { patch, normalizedText, renderValidation };
 }
 
@@ -6728,6 +7322,9 @@ function isActiveReviewOcrPatch(patch) {
 }
 
 function updateOcrPatchStatus(patchId, nextStatus) {
+  if (!ensureWritableBookAction("当前书籍只读")) {
+    return { ok: false, reason: "readonly", patch: null };
+  }
   const targetStatus = String(nextStatus || "");
   if (!["accepted", "rejected"].includes(targetStatus)) {
     warnOcrPatchStatus(`不支持的 OCR patch 状态切换：${targetStatus || "(empty)"}`);
@@ -6750,6 +7347,8 @@ function updateOcrPatchStatus(patchId, nextStatus) {
   patch.status = targetStatus;
   patch.updatedAt = new Date().toISOString();
   saveOcrWorkspaceState();
+  persistDbOcrPatch(patch);
+  persistDbOcrPatchStatus(patch, targetStatus);
   return { ok: true, reason: "", patch };
 }
 
@@ -8239,7 +8838,7 @@ function detectMissingBackgroundTitleCandidatesForPage(pageNumber) {
     .filter((entry) => String(entry.markdown || "").trim().length >= 12)
     .find((entry) => segmentPageGeometry(entry));
   const geometry = segmentPageGeometry(firstContent);
-  if (!firstContent || !geometry || geometry.topRatio < 0.16 || geometry.topRatio > 0.42) {
+  if (!firstContent || !geometry || geometry.topRatio < 0.12 || geometry.topRatio > 0.42) {
     return [];
   }
   const cropBottom = Math.max(height * 0.12, Math.min(Number(firstContent.bbox?.[1]) - 4, height * 0.3));
@@ -9318,11 +9917,21 @@ function getMineruPageCount() {
 }
 
 function updatePager() {
+  updateWorkbenchVisibility();
   const total = state.pdfPageCount || getMineruPageCount();
   if (total && state.currentPage > total) {
     state.currentPage = total;
   }
   updateCorrectionSummary();
+}
+
+function updateWorkbenchVisibility() {
+  const shell = typeof document !== "undefined" ? document.querySelector(".ocr-shell") : null;
+  shell?.classList?.toggle?.("has-workbench", hasWorkbenchContent());
+}
+
+function hasWorkbenchContent() {
+  return Boolean(state.pdfFile || state.pdfDocumentId || state.mineruInfo || state.contentListItems?.length || state.ossWorkspaceId);
 }
 
 function updateCorrectionSummary() {
