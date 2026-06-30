@@ -1532,6 +1532,22 @@ function scheduleRemoteOcrWorkspaceSave(payload) {
   }, 500);
 }
 
+async function flushRemoteOcrWorkspaceSave(payload = buildOcrWorkspacePayload()) {
+  const workspaceId = ocrWorkspaceRemoteId();
+  if (!workspaceId || !payload || typeof postJson !== "function") {
+    return { ok: true, skipped: true };
+  }
+  if (state.workspaceRemoteSaveTimer) {
+    clearTimeout(state.workspaceRemoteSaveTimer);
+    state.workspaceRemoteSaveTimer = null;
+  }
+  const response = await postJson("/api/ocr/workspace/save", { workspaceId, workspace: payload });
+  if (!response?.ok) {
+    throw new Error(response?.error || "OCR workspace save failed");
+  }
+  return response;
+}
+
 function buildOcrWorkspacePayload() {
   return {
     version: 1,
@@ -1605,15 +1621,16 @@ function persistDbOcrPatch(patch) {
   const bookId = currentDbBookId();
   const reviewer = currentReviewerId();
   if (!bookId || !patch?.patchId || !reviewer || typeof fetch !== "function" || !ensureWritableBookAction("当前书籍只读")) {
-    return;
+    return Promise.resolve({ ok: false, skipped: true });
   }
-  postJson(`/api/books/${encodeURIComponent(bookId)}/patches`, {
+  return postJson(`/api/books/${encodeURIComponent(bookId)}/patches`, {
     ...patch,
   }).catch((error) => {
     setStatus("数据库保存失败", "error", error?.message || String(error || ""));
     if (typeof console !== "undefined" && typeof console.warn === "function") {
       console.warn("[OCR DB] 无法保存 OCR patch。", error);
     }
+    throw error;
   });
 }
 
@@ -1621,15 +1638,16 @@ function persistDbOcrPatchStatus(patch, status) {
   const bookId = currentDbBookId();
   const reviewer = currentReviewerId();
   if (!bookId || !patch?.patchId || !reviewer || typeof fetch !== "function" || !ensureWritableBookAction("当前书籍只读")) {
-    return;
+    return Promise.resolve({ ok: false, skipped: true });
   }
-  postJson(`/api/books/${encodeURIComponent(bookId)}/patches/${encodeURIComponent(patch.patchId)}/status`, {
+  return postJson(`/api/books/${encodeURIComponent(bookId)}/patches/${encodeURIComponent(patch.patchId)}/status`, {
     status,
   }).catch((error) => {
     setStatus("数据库状态保存失败", "error", error?.message || String(error || ""));
     if (typeof console !== "undefined" && typeof console.warn === "function") {
       console.warn("[OCR DB] 无法保存 OCR patch 状态。", error);
     }
+    throw error;
   });
 }
 
@@ -5101,6 +5119,15 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
   // TODO: next step will switch display/export to accepted patches.
   getBlockOverrides(state.currentPage).set(blockKey, markdown);
   saveOcrWorkspaceState();
+  try {
+    await Promise.all([
+      persistDbOcrPatch(patchResult.patch),
+      flushRemoteOcrWorkspaceSave(),
+    ]);
+  } catch (error) {
+    setStatus("保存失败", "error", error?.message || String(error || ""));
+    return;
+  }
   expandOnlyReviewBlock(state.currentPage, blockKey);
   updateCorrectionSummary();
   state.acceptedPatchPreview = null;
@@ -7094,7 +7121,7 @@ function createAndStoreDraftOcrPatch({ pageNo, blockIndex, oldText, newText, sou
   state.ocrPatches = state.ocrPatches || [];
   state.ocrPatches.push(patch);
   saveOcrWorkspaceState();
-  persistDbOcrPatch(patch);
+  persistDbOcrPatch(patch).catch(() => {});
   return { patch, normalizedText, renderValidation };
 }
 
@@ -7433,8 +7460,8 @@ function updateOcrPatchStatus(patchId, nextStatus) {
   patch.status = targetStatus;
   patch.updatedAt = new Date().toISOString();
   saveOcrWorkspaceState();
-  persistDbOcrPatch(patch);
-  persistDbOcrPatchStatus(patch, targetStatus);
+  persistDbOcrPatch(patch).catch(() => {});
+  persistDbOcrPatchStatus(patch, targetStatus).catch(() => {});
   return { ok: true, reason: "", patch };
 }
 
