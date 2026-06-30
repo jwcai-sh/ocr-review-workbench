@@ -13,10 +13,13 @@
       <div>
         <h1>OCR 三栏对照</h1>
       </div>
-      <label class="reviewer-session-pill" for="currentUserSelect">
-        <span>当前用户</span>
+      <form id="reviewerLoginForm" class="reviewer-session-pill" autocomplete="off">
+        <span>用户</span>
         <select id="currentUserSelect" aria-label="当前用户"></select>
-      </label>
+        <input id="loginPasswordInput" type="password" placeholder="口令" autocomplete="current-password">
+        <button id="loginButton" type="submit">登录</button>
+        <button id="logoutButton" type="button" disabled>退出</button>
+      </form>
       <span id="reviewerAccessBadge" class="reviewer-access-badge">本地模式</span>
       <span id="statusBadge" class="status-badge">Ready</span>
     </header>

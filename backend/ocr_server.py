@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import mimetypes
 import posixpath
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,6 +22,8 @@ from backend.services.workbench_db import DB_SERVICE
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
 DEFAULT_OSS_SYNC_LIMIT = 200000
+SESSION_COOKIE_NAME = "ocr_workbench_session"
+SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 14
 
 
 class OcrWorkbenchHandler(BaseHTTPRequestHandler):
@@ -59,6 +65,9 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/config":
             self._send_json(SETTINGS.public_dict())
+            return
+        if parsed.path == "/api/auth/me":
+            self._send_json(self._auth_me_payload())
             return
         if parsed.path == "/api/books":
             query = parse_qs(parsed.query)
@@ -103,6 +112,12 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
 
         payload = self._read_json()
 
+        if parsed.path == "/api/auth/login":
+            self._handle_login(payload)
+            return
+        if parsed.path == "/api/auth/logout":
+            self._handle_logout()
+            return
         if parsed.path == "/api/ocr/preview-pages":
             self._send_json(OCR_PREVIEW_SERVICE.preview_pages(payload))
             return
@@ -127,7 +142,7 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
                 DB_SERVICE.update_book(
                     book_update_id,
                     payload,
-                    user_id=str(payload.get("updatedBy") or payload.get("userId") or ""),
+                    user_id=self._current_user_id(),
                 )
             )
             return
@@ -137,7 +152,7 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
                 DB_SERVICE.save_review_mark(
                     book_mark_id,
                     payload,
-                    user_id=str(payload.get("createdBy") or payload.get("updatedBy") or payload.get("userId") or ""),
+                    user_id=self._current_user_id(),
                 )
             )
             return
@@ -150,7 +165,7 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
                         book_id,
                         patch_id,
                         str(payload.get("status") or ""),
-                        user_id=str(payload.get("updatedBy") or payload.get("userId") or ""),
+                        user_id=self._current_user_id(),
                     )
                 )
             else:
@@ -158,7 +173,7 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
                     DB_SERVICE.save_patch(
                         book_id,
                         payload,
-                        user_id=str(payload.get("createdBy") or payload.get("userId") or ""),
+                        user_id=self._current_user_id(),
                     )
                 )
             return
@@ -176,6 +191,47 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             return
 
         self._send_json({"ok": False, "error": "Not found"}, status=HTTPStatus.NOT_FOUND)
+
+    def _auth_me_payload(self) -> dict:
+        user_id = self._current_user_id()
+        users = SETTINGS.auth_users
+        current = next((user for user in users if user["id"] == user_id), None)
+        return {
+            "ok": True,
+            "authenticated": bool(current),
+            "user": current,
+            "users": users,
+            "adminUserId": SETTINGS.app_admin_user_id,
+        }
+
+    def _handle_login(self, payload: dict) -> None:
+        user_id = str(payload.get("userId") or payload.get("user_id") or "").strip()
+        password = str(payload.get("password") or "")
+        users = SETTINGS.auth_users
+        if not any(user["id"] == user_id for user in users):
+            self._send_json({"ok": False, "error": "unknown_user"}, status=HTTPStatus.UNAUTHORIZED)
+            return
+        expected = SETTINGS.login_password_for(user_id)
+        if not expected or not hmac.compare_digest(password, expected):
+            self._send_json({"ok": False, "error": "invalid_password"}, status=HTTPStatus.UNAUTHORIZED)
+            return
+        token = _sign_session_token(user_id)
+        self._send_json_with_cookie(
+            {
+                "ok": True,
+                "authenticated": True,
+                "user": next(user for user in users if user["id"] == user_id),
+                "users": users,
+                "adminUserId": SETTINGS.app_admin_user_id,
+            },
+            cookie=f"{SESSION_COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_MAX_AGE_SECONDS}",
+        )
+
+    def _handle_logout(self) -> None:
+        self._send_json_with_cookie(
+            {"ok": True, "authenticated": False, "user": None, "users": SETTINGS.auth_users, "adminUserId": SETTINGS.app_admin_user_id},
+            cookie=f"{SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+        )
 
     def _load_workspace(self, payload: dict) -> dict:
         workspace_id = str(payload.get("workspaceId") or "").strip()
@@ -309,21 +365,37 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         return unquote(raw).strip() or "upload"
 
     def _send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
+        self._send_json_with_cookie(payload, status=status)
+
+    def _send_json_with_cookie(self, payload: dict, status: HTTPStatus = HTTPStatus.OK, cookie: str = "") -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
         self._send_cors_headers()
         self.end_headers()
         self.wfile.write(body)
 
     def _send_cors_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = str(self.headers.get("Origin") or "")
+        self.send_header("Access-Control-Allow-Origin", origin or "*")
+        if origin:
+            self.send_header("Access-Control-Allow-Credentials", "true")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, HEAD, OPTIONS")
         self.send_header(
             "Access-Control-Allow-Headers",
             "Content-Type, Authorization, X-Upload-Id, X-Chunk-Index, X-Chunk-Count, X-File-Name",
         )
+
+    def _current_user_id(self) -> str:
+        cookies = str(self.headers.get("Cookie") or "")
+        for part in cookies.split(";"):
+            key, _, value = part.strip().partition("=")
+            if key == SESSION_COOKIE_NAME:
+                return _verify_session_token(value)
+        return ""
 
     def _serve_static(self, path: str, head_only: bool = False) -> None:
         relative_path = "index.html" if path in {"", "/"} else path.lstrip("/")
@@ -435,6 +507,32 @@ def _workspace_id_for_oss_entry(middle_key: str, page_count: object) -> str:
     count = str(page_count or "").strip()
     suffix = f":{count}" if count else ""
     return f"oss:{middle_key}{suffix}"
+
+
+def _sign_session_token(user_id: str) -> str:
+    expires_at = int(time.time()) + SESSION_MAX_AGE_SECONDS
+    payload = f"{user_id}|{expires_at}"
+    signature = hmac.new(SETTINGS.session_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    raw = f"{payload}|{signature}".encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _verify_session_token(token: str) -> str:
+    try:
+        padded = token + "=" * (-len(token) % 4)
+        raw = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        user_id, expires_raw, signature = raw.rsplit("|", 2)
+        payload = f"{user_id}|{expires_raw}"
+        expected = hmac.new(SETTINGS.session_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return ""
+        if int(expires_raw) < int(time.time()):
+            return ""
+        if not any(user["id"] == user_id for user in SETTINGS.auth_users):
+            return ""
+        return user_id
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _book_state_id_from_path(path: str) -> str:

@@ -79,6 +79,10 @@ class Settings:
     oss_region: str = os.getenv("OSS_REGION", "")
     oss_endpoint: str = os.getenv("OSS_ENDPOINT", "")
     oss_prefix: str = os.getenv("OSS_PREFIX", "books")
+    database_url: str = os.getenv("DATABASE_URL", f"sqlite:///{os.path.join(ROOT_DIR, 'data', 'ocr_workbench.db')}")
+    app_users: str = os.getenv("APP_USERS", "傲,门,白,丹")
+    app_admin_user_id: str = os.getenv("APP_ADMIN_USER_ID", "门")
+    session_secret: str = os.getenv("SESSION_SECRET", "ocr-review-workbench-local-session")
 
     @property
     def oss_endpoint_url(self) -> str:
@@ -111,7 +115,36 @@ class Settings:
             "ossConfigured": self.oss_configured,
             "ossBucket": self.oss_bucket or None,
             "ossPrefix": self.oss_prefix or None,
+            "databaseConfigured": bool(self.database_url),
         }
+
+    @property
+    def auth_users(self) -> list[dict[str, str]]:
+        users = []
+        for raw_item in self.app_users.split(","):
+            item = raw_item.strip()
+            if not item:
+                continue
+            if ":" in item:
+                user_id, name = item.split(":", 1)
+            else:
+                user_id, name = item, item
+            user_id = user_id.strip()
+            name = name.strip() or user_id
+            if user_id:
+                users.append({"id": user_id, "name": name})
+        return users or [{"id": name, "name": name} for name in ("傲", "门", "白", "丹")]
+
+    def login_password_for(self, user_id: str) -> str:
+        user_id = str(user_id or "").strip()
+        env_suffix_map = {
+            "傲": "AO",
+            "门": "MEN",
+            "白": "BAI",
+            "丹": "DAN",
+        }
+        suffix = env_suffix_map.get(user_id, user_id.upper().replace("-", "_"))
+        return os.getenv(f"APP_LOGIN_PASSWORD_{suffix}", user_id)
 
 
 SETTINGS = Settings()

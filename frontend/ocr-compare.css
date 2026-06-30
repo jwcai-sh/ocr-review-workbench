@@ -110,13 +110,30 @@ label[role="button"] {
   font-weight: 700;
 }
 
-.reviewer-session-pill select {
+.reviewer-session-pill select,
+.reviewer-session-pill input,
+.reviewer-session-pill button {
   min-height: 28px;
   padding: 0 8px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: #fff;
   color: var(--ink);
+}
+
+.reviewer-session-pill input {
+  width: 92px;
+}
+
+.reviewer-session-pill button {
+  cursor: pointer;
+}
+
+.reviewer-session-pill button:disabled,
+.reviewer-session-pill input:disabled,
+.reviewer-session-pill select:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .reviewer-access-badge {

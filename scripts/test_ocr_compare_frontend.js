@@ -164,7 +164,8 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes("ocr-compare.js?v=20260629-folder-upload"));
   assert(ocrCompareHtml.includes("ocr-compare.css?v=20260629-folder-upload"));
   assert(source.includes('OCR_COMPARE_BUILD_ID = "20260629-folder-upload"'));
-  assert(source.includes('CURRENT_USER_KEY = "ocr-workbench-dashboard-current-user-v1"'));
+  assert(source.includes('fetchApi("/api/auth/me"'));
+  assert(source.includes('postJson("/api/auth/login"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
   assert(source.includes('LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"]'));
   assert(source.includes("async function fetchApi(path, options = {})"));
@@ -182,6 +183,7 @@ function runOcrCompareInContext(testContext) {
   const accessResult = JSON.parse(
     call(`(() => {
       state.currentUser = "白";
+      state.authenticated = true;
       state.currentBookId = "book-1";
       state.currentBookOwnerId = "门";
       return JSON.stringify({
@@ -196,6 +198,7 @@ function runOcrCompareInContext(testContext) {
   const ownerResult = JSON.parse(
     call(`(() => {
       state.currentUser = "门";
+      state.authenticated = true;
       state.currentBookId = "book-1";
       state.currentBookOwnerId = "门";
       return JSON.stringify({

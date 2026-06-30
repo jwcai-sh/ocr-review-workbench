@@ -6,7 +6,6 @@ const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
 const OCR_COMPARE_BUILD_ID = "20260629-folder-upload";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
-const CURRENT_USER_KEY = "ocr-workbench-dashboard-current-user-v1";
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
 const state = {
@@ -51,6 +50,9 @@ const state = {
   currentBookId: "",
   currentBookOwnerId: "",
   currentUser: "门",
+  authenticated: false,
+  users: PARTICIPANTS.map((name) => ({ id: name, name })),
+  adminUserId: "门",
   workspaceRemoteSaveTimer: null,
   currentBookProgressSaveTimer: null,
   busy: false,
@@ -358,7 +360,7 @@ async function fetchApi(path, options = {}) {
   let lastError = null;
   for (const base of localApiBaseFallbacks()) {
     try {
-      const response = await fetch(`${base}${path}`, options);
+      const response = await fetch(`${base}${path}`, { credentials: "include", ...options });
       apiBase = base;
       return response;
     } catch (error) {
@@ -379,7 +381,11 @@ function bindElements() {
     "pickContentListButton",
     "pickRequiredFilesButton",
     "refreshOssBooksButton",
+    "reviewerLoginForm",
     "currentUserSelect",
+    "loginPasswordInput",
+    "loginButton",
+    "logoutButton",
     "reviewerAccessBadge",
     "ossBookBrowser",
     "ossBookGroupList",
@@ -395,9 +401,9 @@ function bindElements() {
   });
 }
 
-function initialize() {
+async function initialize() {
   bindElements();
-  initCurrentUser();
+  await initCurrentUser();
   restoreColumnWidths();
   restoreMiddleColumnCollapsed();
   applyMiddleColumnCollapsedState();
@@ -410,7 +416,9 @@ function initialize() {
   els.downloadAcceptedCorrectedButton?.addEventListener("click", downloadAcceptedCorrectedFromTop);
   els.refreshOssBooksButton?.addEventListener("click", refreshOssBooks);
   els.loadOssBookButton?.addEventListener("click", loadSelectedOssBook);
-  els.currentUserSelect?.addEventListener("change", handleCurrentUserChange);
+  els.reviewerLoginForm?.addEventListener("submit", handleLoginSubmit);
+  els.logoutButton?.addEventListener("click", logout);
+  els.currentUserSelect?.addEventListener("change", updateReviewerSessionUi);
   els.ossBookGroupList?.addEventListener("click", handleOssBookGroupClick);
   els.ossBookEntryList?.addEventListener("click", handleOssBookEntryClick);
   bindFileInputEvents(els.pdfInput, handlePdfChange, "pdfInput");
@@ -430,22 +438,105 @@ function initialize() {
   });
 }
 
-function initCurrentUser() {
-  const storage = safeLocalStorage();
-  const stored = storage?.getItem?.(CURRENT_USER_KEY) || "";
-  state.currentUser = PARTICIPANTS.includes(stored) ? stored : "门";
-  if (els.currentUserSelect) {
-    els.currentUserSelect.innerHTML = PARTICIPANTS
-      .map((name) => `<option value="${escapeHtml(name)}" ${name === state.currentUser ? "selected" : ""}>${escapeHtml(name)}</option>`)
-      .join("");
+async function initCurrentUser() {
+  try {
+    const response = await fetchApi("/api/auth/me", { cache: "no-store" });
+    const data = await response.json();
+    applyAuthState(data);
+  } catch {
+    applyAuthState({ authenticated: false, users: state.users, adminUserId: state.adminUserId });
   }
+}
+
+async function handleLoginSubmit(event) {
+  event.preventDefault();
+  const userId = String(els.currentUserSelect?.value || "").trim();
+  const password = String(els.loginPasswordInput?.value || "");
+  if (!userId || !password) {
+    setStatus("请选择用户并输入登录口令", "error");
+    return;
+  }
+  setAuthBusy(true);
+  try {
+    const response = await postJson("/api/auth/login", { userId, password });
+    if (!response?.ok) {
+      throw new Error(response?.error || "登录失败");
+    }
+    if (els.loginPasswordInput) {
+      els.loginPasswordInput.value = "";
+    }
+    applyAuthState(response);
+    setStatus("已登录", "ok", state.currentUser);
+    if (state.mineruInfo) {
+      await renderCurrentPage();
+    }
+  } catch (error) {
+    setStatus("登录失败", "error", error?.message || String(error || ""));
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
+async function logout() {
+  setAuthBusy(true);
+  try {
+    const response = await postJson("/api/auth/logout", {});
+    applyAuthState(response);
+    setStatus("已退出", "ok");
+    if (state.mineruInfo) {
+      await renderCurrentPage();
+    }
+  } catch (error) {
+    setStatus("退出失败", "error", error?.message || String(error || ""));
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
+function applyAuthState(data) {
+  const users = Array.isArray(data?.users) && data.users.length ? data.users : state.users;
+  state.users = users.map((user) => ({ id: String(user.id || user.name || ""), name: String(user.name || user.id || "") })).filter((user) => user.id);
+  state.adminUserId = String(data?.adminUserId || "门");
+  state.authenticated = Boolean(data?.authenticated && data?.user?.id);
+  state.currentUser = state.authenticated ? String(data.user.id) : state.adminUserId;
+  renderUserOptions();
   updateReviewerSessionUi();
 }
 
-function handleCurrentUserChange() {
-  state.currentUser = String(els.currentUserSelect?.value || "门").trim() || "门";
-  safeLocalStorage()?.setItem?.(CURRENT_USER_KEY, state.currentUser);
-  updateReviewerSessionUi();
+function renderUserOptions() {
+  if (!els.currentUserSelect) {
+    return;
+  }
+  const selected = state.authenticated ? state.currentUser : String(els.currentUserSelect.value || state.adminUserId);
+  els.currentUserSelect.innerHTML = state.users.map((user) => {
+    const label = user.name || user.id;
+    return `<option value="${escapeHtml(user.id)}" ${user.id === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
+  }).join("");
+  els.currentUserSelect.disabled = state.authenticated;
+  if (els.loginPasswordInput) {
+    els.loginPasswordInput.disabled = state.authenticated;
+  }
+  if (els.loginButton) {
+    els.loginButton.disabled = state.authenticated;
+  }
+  if (els.logoutButton) {
+    els.logoutButton.disabled = !state.authenticated;
+  }
+}
+
+function setAuthBusy(busy) {
+  if (els.currentUserSelect) {
+    els.currentUserSelect.disabled = busy || state.authenticated;
+  }
+  if (els.loginPasswordInput) {
+    els.loginPasswordInput.disabled = busy || state.authenticated;
+  }
+  if (els.loginButton) {
+    els.loginButton.disabled = busy || state.authenticated;
+  }
+  if (els.logoutButton) {
+    els.logoutButton.disabled = busy || !state.authenticated;
+  }
 }
 
 async function refreshRuntimeCapabilities() {
@@ -936,6 +1027,9 @@ function bookReadOnlyReason() {
   }
   const owner = currentBookOwnerId();
   const reviewer = currentReviewerId();
+  if (!state.authenticated) {
+    return "请先登录后再保存校对修改。";
+  }
   if (!owner) {
     return "当前 OSS 书籍尚未分配 owner，请先在书库中完成分配。";
   }
@@ -950,16 +1044,14 @@ function canEditCurrentBook() {
 }
 
 function updateReviewerSessionUi() {
-  if (els.currentUserSelect) {
-    els.currentUserSelect.value = state.currentUser || "门";
-  }
+  renderUserOptions();
   if (!els.reviewerAccessBadge) {
     return;
   }
   const reason = bookReadOnlyReason();
   const label = currentDbBookId()
     ? (reason ? `只读 · ${truncateText(reason, 40)}` : `可编辑 · owner「${currentBookOwnerId()}」`)
-    : "本地模式 · 可编辑";
+    : (state.authenticated ? `本地模式 · ${state.currentUser}` : "本地模式 · 未登录");
   els.reviewerAccessBadge.textContent = label;
   els.reviewerAccessBadge.className = `reviewer-access-badge ${reason ? "is-readonly" : ""}`;
   els.reviewerAccessBadge.title = reason || "当前书籍可编辑";
@@ -1499,9 +1591,8 @@ function scheduleCurrentBookProgressSave() {
   }
   state.currentBookProgressSaveTimer = setTimeout(() => {
     state.currentBookProgressSaveTimer = null;
-    postJson(`/api/books/${encodeURIComponent(bookId)}/update`, {
-      currentPage: Number(state.currentPage) || 1,
-      updatedBy: reviewer,
+  postJson(`/api/books/${encodeURIComponent(bookId)}/update`, {
+    currentPage: Number(state.currentPage) || 1,
     }).catch((error) => {
       if (typeof console !== "undefined" && typeof console.warn === "function") {
         console.warn("[OCR DB] 无法保存当前页进度。", error);
@@ -1518,8 +1609,6 @@ function persistDbOcrPatch(patch) {
   }
   postJson(`/api/books/${encodeURIComponent(bookId)}/patches`, {
     ...patch,
-    createdBy: patch?.createdBy || reviewer,
-    updatedBy: reviewer,
   }).catch((error) => {
     setStatus("数据库保存失败", "error", error?.message || String(error || ""));
     if (typeof console !== "undefined" && typeof console.warn === "function") {
@@ -1536,7 +1625,6 @@ function persistDbOcrPatchStatus(patch, status) {
   }
   postJson(`/api/books/${encodeURIComponent(bookId)}/patches/${encodeURIComponent(patch.patchId)}/status`, {
     status,
-    updatedBy: reviewer,
   }).catch((error) => {
     setStatus("数据库状态保存失败", "error", error?.message || String(error || ""));
     if (typeof console !== "undefined" && typeof console.warn === "function") {
@@ -1558,8 +1646,6 @@ function persistDbReviewMark(blockId, status) {
     pageNo,
     markType: "needs_extra_correction",
     status,
-    updatedBy: reviewer,
-    createdBy: reviewer,
   }).catch((error) => {
     setStatus("数据库标记保存失败", "error", error?.message || String(error || ""));
     if (typeof console !== "undefined" && typeof console.warn === "function") {

@@ -71,6 +71,13 @@
       margin-bottom: 14px;
     }
 
+    .login-form {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
     button,
     select,
     input {
@@ -496,10 +503,15 @@
       <button id="syncOssButton" class="primary" type="button">同步 OSS 书籍</button>
       <button id="reloadButton" type="button">刷新列表</button>
       <input id="searchInput" type="search" placeholder="搜索分类、书名、文件夹">
-      <label class="pill" for="currentUserSelect">当前用户
+      <form id="loginForm" class="login-form" autocomplete="off">
+      <label class="pill" for="currentUserSelect">用户
         <select id="currentUserSelect" aria-label="当前用户"></select>
       </label>
-      <span id="adminBadge" class="pill">仅“门”可分配</span>
+        <input id="loginPasswordInput" type="password" placeholder="登录口令" autocomplete="current-password">
+        <button id="loginButton" type="submit">登录</button>
+        <button id="logoutButton" type="button" disabled>退出</button>
+      </form>
+      <span id="adminBadge" class="pill">请先登录</span>
     </section>
 
     <p id="statusLine" class="status">正在加载书籍列表...</p>
@@ -563,12 +575,14 @@
 
   <script>
     const PARTICIPANTS = ["傲", "门", "白", "丹"];
-    const CURRENT_USER_KEY = "ocr-workbench-dashboard-current-user-v1";
     const state = {
       books: [],
       selectedCategoryKey: "",
       selectedBookKey: "",
       currentUser: "门",
+      authenticated: false,
+      users: PARTICIPANTS.map((name) => ({ id: name, name })),
+      adminUserId: "门",
       savingFolderKeys: new Set(),
     };
     const els = {};
@@ -578,7 +592,11 @@
         "syncOssButton",
         "reloadButton",
         "searchInput",
+        "loginForm",
         "currentUserSelect",
+        "loginPasswordInput",
+        "loginButton",
+        "logoutButton",
         "adminBadge",
         "statusLine",
         "totalBookCount",
@@ -599,45 +617,115 @@
       ].forEach((id) => {
         els[id] = document.getElementById(id);
       });
-      initCurrentUser();
       els.syncOssButton.addEventListener("click", syncOssBooks);
       els.reloadButton.addEventListener("click", loadBooks);
       els.searchInput.addEventListener("input", renderExplorer);
-      els.currentUserSelect.addEventListener("change", handleCurrentUserChange);
+      els.loginForm.addEventListener("submit", handleLoginSubmit);
+      els.logoutButton.addEventListener("click", logout);
+      els.currentUserSelect.addEventListener("change", updateAdminBadge);
       els.categoryList.addEventListener("click", handleCategoryClick);
       els.bookList.addEventListener("click", handleBookClick);
       els.folderList.addEventListener("click", handleFolderClick);
-      loadBooks();
+      initAuth().finally(loadBooks);
     });
 
-    function initCurrentUser() {
-      const stored = safeStorage().getItem(CURRENT_USER_KEY);
-      state.currentUser = PARTICIPANTS.includes(stored) ? stored : "门";
-      els.currentUserSelect.innerHTML = PARTICIPANTS.map((name) => `<option value="${escapeHtml(name)}" ${name === state.currentUser ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
+    async function initAuth() {
+      try {
+        const response = await fetch("/api/auth/me", { cache: "no-store", credentials: "include" });
+        const data = await response.json();
+        applyAuthState(data);
+      } catch {
+        applyAuthState({ authenticated: false, users: state.users, adminUserId: state.adminUserId });
+      }
+    }
+
+    async function handleLoginSubmit(event) {
+      event.preventDefault();
+      const userId = String(els.currentUserSelect.value || "").trim();
+      const password = String(els.loginPasswordInput.value || "");
+      if (!userId || !password) {
+        setStatus("请选择用户并输入登录口令", true);
+        return;
+      }
+      setBusy(true, "正在登录...");
+      try {
+        const response = await fetch("/api/auth/login", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, password }),
+        });
+        const data = await response.json();
+        if (!data.ok) {
+          throw new Error(data.error || "登录失败");
+        }
+        els.loginPasswordInput.value = "";
+        applyAuthState(data);
+        setStatus(`已登录：${state.currentUser}`);
+        renderExplorer();
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function logout() {
+      setBusy(true, "正在退出...");
+      try {
+        const response = await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+        const data = await response.json();
+        applyAuthState(data);
+        setStatus("已退出");
+        renderExplorer();
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function applyAuthState(data) {
+      const users = Array.isArray(data?.users) && data.users.length ? data.users : state.users;
+      state.users = users.map((user) => ({ id: String(user.id || user.name || ""), name: String(user.name || user.id || "") })).filter((user) => user.id);
+      state.adminUserId = String(data?.adminUserId || "门");
+      state.authenticated = Boolean(data?.authenticated && data?.user?.id);
+      state.currentUser = state.authenticated ? String(data.user.id) : state.adminUserId;
+      renderUserOptions();
       updateAdminBadge();
     }
 
-    function handleCurrentUserChange() {
-      state.currentUser = String(els.currentUserSelect.value || "门");
-      safeStorage().setItem(CURRENT_USER_KEY, state.currentUser);
-      updateAdminBadge();
-      renderExplorer();
+    function renderUserOptions() {
+      const selected = state.authenticated ? state.currentUser : String(els.currentUserSelect?.value || state.adminUserId);
+      els.currentUserSelect.innerHTML = state.users.map((user) => {
+        const label = user.name || user.id;
+        return `<option value="${escapeHtml(user.id)}" ${user.id === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
+      }).join("");
+      els.currentUserSelect.disabled = state.authenticated;
+      els.loginPasswordInput.disabled = state.authenticated;
+      els.loginButton.disabled = state.authenticated;
+      els.logoutButton.disabled = !state.authenticated;
     }
 
     function updateAdminBadge() {
       const isAdmin = canAssign();
-      els.adminBadge.textContent = isAdmin ? "当前为管理员“门”，可分配" : `当前为“${state.currentUser}”，不可分配`;
+      if (!state.authenticated) {
+        els.adminBadge.textContent = "未登录，只可浏览";
+        els.adminBadge.style.color = "#8b6d12";
+        return;
+      }
+      els.adminBadge.textContent = isAdmin ? `当前为管理员“${state.currentUser}”，可分配` : `当前为“${state.currentUser}”，不可分配`;
       els.adminBadge.style.color = isAdmin ? "#2f7c48" : "#8b6d12";
     }
 
     function canAssign() {
-      return state.currentUser === "门";
+      return state.authenticated && state.currentUser === state.adminUserId;
     }
 
     async function loadBooks() {
       setBusy(true, "正在加载书籍列表...");
       try {
-        const response = await fetch("/api/books?limit=5000", { cache: "no-store" });
+        const response = await fetch("/api/books?limit=5000", { cache: "no-store", credentials: "include" });
         const data = await response.json();
         if (!data.ok) {
           throw new Error(data.error || "书籍列表读取失败");
@@ -660,6 +748,7 @@
       try {
         const response = await fetch("/api/books/sync-oss", {
           method: "POST",
+          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ limit: 200000 }),
         });
@@ -998,7 +1087,7 @@
         return;
       }
       if (!canAssign()) {
-        setStatus("只有管理员“门”可以分配", true);
+        setStatus(state.authenticated ? "只有管理员可以分配" : "请先登录管理员账号", true);
         return;
       }
       const folderKey = String(button.dataset.folderAssign || "");
@@ -1024,11 +1113,11 @@
         for (const record of folder.records) {
           const response = await fetch(`/api/books/${encodeURIComponent(String(record.id || ""))}/update`, {
             method: "POST",
+            credentials: "include",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               ownerUserId: assignee,
               status: record.status || "unreviewed",
-              updatedBy: state.currentUser,
             }),
           });
           const data = await response.json();
@@ -1064,6 +1153,10 @@
       els.syncOssButton.disabled = busy;
       els.reloadButton.disabled = busy;
       els.searchInput.disabled = busy;
+      els.loginButton.disabled = busy || state.authenticated;
+      els.logoutButton.disabled = busy || !state.authenticated;
+      els.loginPasswordInput.disabled = busy || state.authenticated;
+      els.currentUserSelect.disabled = busy || state.authenticated;
       if (message) {
         setStatus(message);
       }
@@ -1094,13 +1187,6 @@
       return String(value || "").replace(/["\\]/g, "\\$&");
     }
 
-    function safeStorage() {
-      try {
-        return window.localStorage;
-      } catch {
-        return { getItem() { return ""; }, setItem() {} };
-      }
-    }
   </script>
 </body>
 </html>

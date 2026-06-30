@@ -28,9 +28,6 @@ def _json_dumps(value: Any) -> str:
 
 
 BOOK_STATUS_VALUES = {"unreviewed", "first_review", "second_review", "needs_extra_correction", "completed"}
-ADMIN_USER_ID = "门"
-
-
 @dataclass(slots=True)
 class WorkbenchDatabase:
     database_url: str
@@ -357,7 +354,7 @@ class WorkbenchDatabase:
             updates["status"] != str(book.get("status") or "").strip()
             or updates["current_page"] != int(book.get("current_page") or 1)
         )
-        if assignment_changed and user_id != ADMIN_USER_ID:
+        if assignment_changed and user_id != SETTINGS.app_admin_user_id:
             return {"ok": False, "error": "permission_denied_admin_only"}
         if progress_changed:
             permission = self._write_permission(book, user_id)
