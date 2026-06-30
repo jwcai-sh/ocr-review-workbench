@@ -6,16 +6,18 @@ import posixpath
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from backend.config import SETTINGS
 from backend.services.mathpix_ocr import MATHPIX_OCR_SERVICE
 from backend.services.ocr_correction import OCR_CORRECTION_SERVICE
 from backend.services.ocr_preview import OCR_PREVIEW_SERVICE
 from backend.services.oss_storage import OSS_STORAGE_SERVICE
+from backend.services.workbench_db import DB_SERVICE
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
+DEFAULT_OSS_SYNC_LIMIT = 200000
 
 
 class OcrWorkbenchHandler(BaseHTTPRequestHandler):
@@ -38,6 +40,7 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if parsed.path == "/api/health":
+            db_health = DB_SERVICE.health()
             self._send_json(
                 {
                     "ok": True,
@@ -48,11 +51,28 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
                     "ossConfigured": SETTINGS.oss_configured,
                     "ossStorageEnabled": OSS_STORAGE_SERVICE.enabled,
                     "ossStorageError": OSS_STORAGE_SERVICE.error or None,
+                    "databaseConfigured": DB_SERVICE.enabled,
+                    "databaseBackend": db_health.get("backend"),
+                    "databaseError": db_health.get("error"),
                 }
             )
             return
         if parsed.path == "/api/config":
             self._send_json(SETTINGS.public_dict())
+            return
+        if parsed.path == "/api/books":
+            query = parse_qs(parsed.query)
+            self._send_json(
+                DB_SERVICE.list_books(
+                    status=str(query.get("status", [""])[0] or ""),
+                    reviewer_id=str(query.get("reviewerId", [""])[0] or ""),
+                    limit=int(query.get("limit", ["5000"])[0] or "5000"),
+                )
+            )
+            return
+        book_state_id = _book_state_id_from_path(parsed.path)
+        if book_state_id:
+            self._send_json(DB_SERVICE.get_state(book_state_id))
             return
         self._serve_static(parsed.path)
 
@@ -95,8 +115,52 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/oss/books":
             self._send_json(self._oss_books(payload))
             return
+        if parsed.path == "/api/books/sync-oss":
+            self._send_json(self._sync_oss_books(payload))
+            return
         if parsed.path == "/api/oss/load-book":
             self._send_json(self._load_oss_book(payload))
+            return
+        book_update_id = _book_update_id_from_path(parsed.path)
+        if book_update_id:
+            self._send_json(
+                DB_SERVICE.update_book(
+                    book_update_id,
+                    payload,
+                    user_id=str(payload.get("updatedBy") or payload.get("userId") or ""),
+                )
+            )
+            return
+        book_mark_id = _book_mark_from_path(parsed.path)
+        if book_mark_id:
+            self._send_json(
+                DB_SERVICE.save_review_mark(
+                    book_mark_id,
+                    payload,
+                    user_id=str(payload.get("createdBy") or payload.get("updatedBy") or payload.get("userId") or ""),
+                )
+            )
+            return
+        book_patch = _book_patch_from_path(parsed.path)
+        if book_patch:
+            book_id, patch_id = book_patch
+            if patch_id:
+                self._send_json(
+                    DB_SERVICE.update_patch_status(
+                        book_id,
+                        patch_id,
+                        str(payload.get("status") or ""),
+                        user_id=str(payload.get("updatedBy") or payload.get("userId") or ""),
+                    )
+                )
+            else:
+                self._send_json(
+                    DB_SERVICE.save_patch(
+                        book_id,
+                        payload,
+                        user_id=str(payload.get("createdBy") or payload.get("userId") or ""),
+                    )
+                )
             return
         if parsed.path == "/api/ocr/correct":
             self._send_json(OCR_CORRECTION_SERVICE.correct_markdown(payload))
@@ -143,17 +207,42 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         if not OSS_STORAGE_SERVICE.enabled:
             return {"ok": False, "error": OSS_STORAGE_SERVICE.error or "OSS storage is not configured", "books": []}
         prefix = str(payload.get("prefix") or "").strip()
-        keys = OSS_STORAGE_SERVICE.list_keys(prefix=prefix, limit=int(payload.get("limit") or 10000))
-        return {"ok": True, "books": _build_oss_book_index(keys), "keyCount": len(keys)}
+        keys = OSS_STORAGE_SERVICE.list_keys(prefix=prefix, limit=int(payload.get("limit") or DEFAULT_OSS_SYNC_LIMIT))
+        books = _build_oss_book_index(keys)
+        sync_result = DB_SERVICE.upsert_oss_books(books, owner_user_id=str(payload.get("ownerUserId") or "")) if DB_SERVICE.enabled else {"ok": False, "count": 0, "error": DB_SERVICE.error}
+        return {"ok": True, "books": books, "keyCount": len(keys), "booksFound": len(books), "dbSync": sync_result}
+
+    def _sync_oss_books(self, payload: dict) -> dict:
+        if not OSS_STORAGE_SERVICE.enabled:
+            return {"ok": False, "error": OSS_STORAGE_SERVICE.error or "OSS storage is not configured", "books": []}
+        prefix = str(payload.get("prefix") or "").strip()
+        keys = OSS_STORAGE_SERVICE.list_keys(prefix=prefix, limit=int(payload.get("limit") or DEFAULT_OSS_SYNC_LIMIT))
+        books = _build_oss_book_index(keys)
+        sync_result = DB_SERVICE.upsert_oss_books(books, owner_user_id=str(payload.get("ownerUserId") or ""))
+        return {"ok": bool(sync_result.get("ok")), "books": books, "keyCount": len(keys), "booksFound": len(books), "dbSync": sync_result}
 
     def _load_oss_book(self, payload: dict) -> dict:
         if not OSS_STORAGE_SERVICE.enabled:
             return {"ok": False, "error": OSS_STORAGE_SERVICE.error or "OSS storage is not configured"}
-        pdf_key = str(payload.get("pdfKey") or "").strip()
-        middle_key = str(payload.get("middleKey") or "").strip()
-        content_list_key = str(payload.get("contentListKey") or "").strip()
+        db_book = None
+        book_id = str(payload.get("bookId") or payload.get("book_id") or "").strip()
+        if book_id and DB_SERVICE.enabled:
+            book_result = DB_SERVICE.get_book(book_id)
+            if book_result.get("ok"):
+                db_book = book_result.get("book")
+            elif not payload.get("pdfKey") and not payload.get("middleKey"):
+                return {"ok": False, "error": "book_not_found", "bookId": book_id}
+        elif book_id and not DB_SERVICE.enabled and not payload.get("pdfKey") and not payload.get("middleKey"):
+            return {"ok": False, "error": "database_not_configured", "bookId": book_id}
+        pdf_key = str(payload.get("pdfKey") or (db_book or {}).get("oss_pdf_key") or "").strip()
+        middle_key = str(payload.get("middleKey") or (db_book or {}).get("oss_middle_key") or "").strip()
+        content_list_key = str(payload.get("contentListKey") or (db_book or {}).get("oss_content_list_key") or "").strip()
         if not pdf_key or not middle_key:
-            return {"ok": False, "error": "Missing pdfKey or middleKey"}
+            return {
+                "ok": False,
+                "error": "book_missing_oss_keys" if db_book else "missing_pdf_or_middle_key",
+                "bookId": book_id,
+            }
 
         pdf_bytes = OSS_STORAGE_SERVICE.get_bytes(pdf_key)
         middle_bytes = OSS_STORAGE_SERVICE.get_bytes(middle_key)
@@ -178,6 +267,7 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         )
         if not document.get("ok"):
             return document
+        db_state = DB_SERVICE.get_state(book_id) if book_id and DB_SERVICE.enabled else {}
         return {
             "ok": True,
             "document": document,
@@ -185,7 +275,10 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             "middleName": posixpath.basename(middle_key) or "middle.json",
             "contentListJson": content_list_json,
             "contentListName": posixpath.basename(content_list_key) if content_list_key else "",
-            "workspaceId": str(payload.get("workspaceId") or _workspace_id_for_oss_entry(middle_key, document.get("pageCount"))),
+            "workspaceId": str(payload.get("workspaceId") or book_id or _workspace_id_for_oss_entry(middle_key, document.get("pageCount"))),
+            "book": db_book,
+            "ocrPatches": db_state.get("ocrPatches", []) if db_state.get("ok") else [],
+            "reviewMarks": db_state.get("reviewMarks", []) if db_state.get("ok") else [],
             "ossKeys": {
                 "pdf": pdf_key,
                 "middle": middle_key,
@@ -233,7 +326,7 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         )
 
     def _serve_static(self, path: str, head_only: bool = False) -> None:
-        relative_path = "ocr-compare.html" if path in {"", "/"} else path.lstrip("/")
+        relative_path = "index.html" if path in {"", "/"} else path.lstrip("/")
         file_path = (FRONTEND_DIR / relative_path).resolve()
         if FRONTEND_DIR not in file_path.parents and file_path != FRONTEND_DIR:
             self._send_json({"ok": False, "error": "Forbidden"}, status=HTTPStatus.FORBIDDEN)
@@ -342,6 +435,45 @@ def _workspace_id_for_oss_entry(middle_key: str, page_count: object) -> str:
     count = str(page_count or "").strip()
     suffix = f":{count}" if count else ""
     return f"oss:{middle_key}{suffix}"
+
+
+def _book_state_id_from_path(path: str) -> str:
+    prefix = "/api/books/"
+    suffix = "/state"
+    if not path.startswith(prefix) or not path.endswith(suffix):
+        return ""
+    raw = path[len(prefix) : -len(suffix)]
+    return unquote(raw).strip("/")
+
+
+def _book_patch_from_path(path: str) -> tuple[str, str] | None:
+    prefix = "/api/books/"
+    if not path.startswith(prefix):
+        return None
+    parts = [unquote(part) for part in path[len(prefix) :].split("/") if part]
+    if len(parts) == 2 and parts[1] == "patches":
+        return parts[0], ""
+    if len(parts) == 4 and parts[1] == "patches" and parts[3] == "status":
+        return parts[0], parts[2]
+    return None
+
+
+def _book_mark_from_path(path: str) -> str:
+    prefix = "/api/books/"
+    suffix = "/marks"
+    if not path.startswith(prefix) or not path.endswith(suffix):
+        return ""
+    raw = path[len(prefix) : -len(suffix)]
+    return unquote(raw).strip("/")
+
+
+def _book_update_id_from_path(path: str) -> str:
+    prefix = "/api/books/"
+    suffix = "/update"
+    if not path.startswith(prefix) or not path.endswith(suffix):
+        return ""
+    raw = path[len(prefix) : -len(suffix)]
+    return unquote(raw).strip("/")
 
 
 if __name__ == "__main__":
