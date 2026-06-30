@@ -126,18 +126,92 @@
       font-size: 14px;
     }
 
-    .stats {
+    .dashboard-overview {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
+      grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.6fr);
+      gap: 12px;
       margin-bottom: 16px;
     }
 
+    .dashboard-main,
     .metric {
       border: 1px solid var(--border);
       border-radius: 12px;
       background: rgba(255, 255, 255, 0.86);
       box-shadow: var(--shadow);
+    }
+
+    .dashboard-main {
+      padding: 16px;
+      display: grid;
+      align-content: space-between;
+      gap: 14px;
+    }
+
+    .dashboard-kicker,
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .dashboard-total {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .dashboard-total strong {
+      font-size: 42px;
+      line-height: 1;
+      font-weight: 780;
+    }
+
+    .dashboard-total span {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .dashboard-meta {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .progress-track {
+      display: flex;
+      height: 12px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e6ebe2;
+      border: 1px solid rgba(110, 126, 103, 0.18);
+    }
+
+    .progress-segment {
+      width: 0%;
+      min-width: 0;
+      transition: width 180ms ease;
+    }
+
+    .progress-segment.done {
+      background: #4f9b59;
+    }
+
+    .progress-segment.active {
+      background: #d39a2e;
+    }
+
+    .progress-segment.todo {
+      background: #a7b0a1;
+    }
+
+    .dashboard-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
       padding: 12px 14px;
     }
 
@@ -148,9 +222,16 @@
       font-weight: 760;
     }
 
-    .metric span {
-      color: var(--muted);
-      font-size: 13px;
+    .metric.done strong {
+      color: #2f7c48;
+    }
+
+    .metric.active strong {
+      color: #7a5a13;
+    }
+
+    .metric.todo strong {
+      color: #59645a;
     }
 
     .explorer {
@@ -389,6 +470,7 @@
     }
 
     @media (max-width: 1080px) {
+      .dashboard-overview,
       .explorer {
         grid-template-columns: 1fr;
       }
@@ -422,11 +504,30 @@
 
     <p id="statusLine" class="status">正在加载书籍列表...</p>
 
-    <section class="stats" aria-label="书籍统计">
-      <div class="metric"><strong id="totalCount">0</strong><span>实际书籍记录</span></div>
-      <div class="metric"><strong id="categoryCount">0</strong><span>分类目录</span></div>
-      <div class="metric"><strong id="bookCount">0</strong><span>书名目录</span></div>
-      <div class="metric"><strong id="assignedCount">0</strong><span>已分配记录</span></div>
+    <section class="dashboard-overview" aria-label="书库仪表盘总览">
+      <div class="dashboard-main">
+        <div>
+          <div class="dashboard-kicker">书库总览</div>
+          <div class="dashboard-total">
+            <strong id="totalBookCount">0</strong>
+            <span>本书</span>
+          </div>
+          <div id="totalBookLabel" class="dashboard-meta">0 条记录 / 0 个分类</div>
+        </div>
+        <div>
+          <div id="completionRateLabel" class="dashboard-meta">完成率 0%</div>
+          <div class="progress-track" aria-label="校对状态分布">
+            <span id="completedProgress" class="progress-segment done"></span>
+            <span id="activeProgress" class="progress-segment active"></span>
+            <span id="unreviewedProgress" class="progress-segment todo"></span>
+          </div>
+        </div>
+      </div>
+      <div class="dashboard-metrics">
+        <div class="metric done"><strong id="completedBookCount">0</strong><span>校对完成</span></div>
+        <div class="metric active"><strong id="activeBookCount">0</strong><span>正在校对</span></div>
+        <div class="metric todo"><strong id="unreviewedBookCount">0</strong><span>未校对</span></div>
+      </div>
     </section>
 
     <section class="explorer" aria-label="书籍层级浏览">
@@ -480,10 +581,15 @@
         "currentUserSelect",
         "adminBadge",
         "statusLine",
-        "totalCount",
-        "categoryCount",
-        "bookCount",
-        "assignedCount",
+        "totalBookCount",
+        "totalBookLabel",
+        "completionRateLabel",
+        "completedProgress",
+        "activeProgress",
+        "unreviewedProgress",
+        "completedBookCount",
+        "activeBookCount",
+        "unreviewedBookCount",
         "categorySummary",
         "bookSummary",
         "folderSummary",
@@ -689,17 +795,69 @@
     }
 
     function renderStats(categories) {
-      const bookCount = categories.reduce((sum, category) => sum + category.books.length, 0);
-      const assignedCount = state.books.filter((book) => String(book.owner_user_id || "").trim()).length;
-      els.totalCount.textContent = String(state.books.length);
-      els.categoryCount.textContent = String(categories.length);
-      els.bookCount.textContent = String(bookCount);
-      els.assignedCount.textContent = String(assignedCount);
+      const overview = summarizeBookOverview(categories);
+      els.totalBookCount.textContent = String(overview.total);
+      els.totalBookLabel.textContent = `${overview.recordCount} 条记录 / ${overview.categoryCount} 个分类`;
+      const completedRate = overview.total ? Math.round((overview.completed / overview.total) * 100) : 0;
+      els.completionRateLabel.textContent = `完成率 ${completedRate}%`;
+      setProgressSegment(els.completedProgress, overview.completed, overview.total);
+      setProgressSegment(els.activeProgress, overview.active, overview.total);
+      setProgressSegment(els.unreviewedProgress, overview.unreviewed, overview.total);
+      els.completedBookCount.textContent = String(overview.completed);
+      els.activeBookCount.textContent = String(overview.active);
+      els.unreviewedBookCount.textContent = String(overview.unreviewed);
       els.categorySummary.textContent = `${categories.length} 个分类`;
       const currentCategory = categories.find((item) => item.key === state.selectedCategoryKey);
       els.bookSummary.textContent = `${currentCategory?.books.length || 0} 本书`;
       const currentBook = currentCategory?.books.find((item) => item.key === state.selectedBookKey);
       els.folderSummary.textContent = `${currentBook?.folders.length || 0} 个文件夹`;
+    }
+
+    function summarizeBookOverview(categories) {
+      const overview = {
+        total: 0,
+        completed: 0,
+        active: 0,
+        unreviewed: 0,
+        categoryCount: categories.length,
+        recordCount: 0,
+      };
+      categories.forEach((category) => {
+        category.books.forEach((book) => {
+          overview.total += 1;
+          const records = book.folders.flatMap((folder) => folder.records);
+          overview.recordCount += records.length;
+          const summary = summarizeBookStatus(records);
+          if (summary === "completed") {
+            overview.completed += 1;
+          } else if (summary === "unreviewed") {
+            overview.unreviewed += 1;
+          } else {
+            overview.active += 1;
+          }
+        });
+      });
+      return overview;
+    }
+
+    function setProgressSegment(element, count, total) {
+      if (!element) {
+        return;
+      }
+      const percent = total ? (Number(count || 0) / total) * 100 : 0;
+      element.style.width = `${percent}%`;
+      element.title = `${count} / ${total}`;
+    }
+
+    function summarizeBookStatus(records) {
+      const statuses = records.map((record) => String(record.status || "unreviewed").trim() || "unreviewed");
+      if (!statuses.length || statuses.every((status) => status === "unreviewed")) {
+        return "unreviewed";
+      }
+      if (statuses.every((status) => status === "completed")) {
+        return "completed";
+      }
+      return "active";
     }
 
     function renderCategories(categories) {
