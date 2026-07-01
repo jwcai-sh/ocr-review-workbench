@@ -551,7 +551,7 @@
 
     <section class="toolbar" aria-label="书库操作">
       <select id="syncCategorySelect" aria-label="选择要同步的 OSS 分类">
-        <option value="">同步全部分类</option>
+        <option value="">分类</option>
       </select>
       <button id="syncOssButton" class="primary" type="button">同步所选分类</button>
       <button id="syncAllCategoriesButton" type="button">一键同步所有分类</button>
@@ -995,7 +995,7 @@
       categories.forEach((category) => {
         addOption(category.title, category.title);
       });
-      const options = ['<option value="">同步全部分类</option>'].concat(
+      const options = ['<option value="">分类</option>'].concat(
         Array.from(byValue.entries())
           .sort((left, right) => left[1].localeCompare(right[1], "zh-Hans-CN"))
           .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(syncCategoryLabel(label))}</option>`),
@@ -1032,9 +1032,9 @@
     function selectedSyncCategoryLabel() {
       const select = els.syncCategorySelect;
       if (!select || !select.selectedOptions || !select.selectedOptions.length) {
-        return "同步全部分类";
+        return "分类";
       }
-      return select.selectedOptions[0].textContent || "同步全部分类";
+      return select.selectedOptions[0].textContent || "分类";
     }
 
     function formatDateTime(value) {
