@@ -84,13 +84,14 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/books":
             query = parse_qs(parsed.query)
-            self._send_json(
-                DB_SERVICE.list_books(
-                    status=str(query.get("status", [""])[0] or ""),
-                    reviewer_id=str(query.get("reviewerId", [""])[0] or ""),
-                    limit=int(query.get("limit", ["5000"])[0] or "5000"),
-                )
+            books_payload = DB_SERVICE.list_books(
+                status=str(query.get("status", [""])[0] or ""),
+                reviewer_id=str(query.get("reviewerId", [""])[0] or ""),
+                limit=int(query.get("limit", ["5000"])[0] or "5000"),
             )
+            if books_payload.get("ok"):
+                books_payload["syncRuns"] = DB_SERVICE.list_oss_sync_runs(limit=100).get("runs", [])
+            self._send_json(books_payload)
             return
         book_state_id = _book_state_id_from_path(parsed.path)
         if book_state_id:
@@ -301,6 +302,7 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         prefix = str(payload.get("prefix") or DEFAULT_OSS_BOOKS_PREFIX).strip()
         limit = int(payload.get("limit") or DEFAULT_OSS_SYNC_LIMIT)
         owner_user_id = str(payload.get("ownerUserId") or "")
+        force = bool(payload.get("force"))
         job_id = uuid.uuid4().hex
         _set_oss_sync_job(
             job_id,
@@ -311,12 +313,13 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
                 "message": "OSS 同步任务已启动",
                 "prefix": prefix,
                 "limit": limit,
+                "force": force,
                 "startedAt": int(time.time()),
             },
         )
         thread = threading.Thread(
             target=_run_oss_sync_job,
-            args=(job_id, prefix, limit, owner_user_id),
+            args=(job_id, prefix, limit, owner_user_id, force),
             daemon=True,
         )
         thread.start()
@@ -573,10 +576,19 @@ def _get_oss_sync_job(job_id: str) -> dict:
     return job
 
 
-def _run_oss_sync_job(job_id: str, prefix: str, limit: int, owner_user_id: str) -> None:
+def _run_oss_sync_job(job_id: str, prefix: str, limit: int, owner_user_id: str, force: bool = False) -> None:
+    run_id = ""
+    scanned_count = 0
+    entries: list[dict] = []
+    changed_entries: list[dict] = []
+    books_found = 0
+    db_sync_count = 0
     try:
+        if DB_SERVICE.enabled:
+            run = DB_SERVICE.begin_oss_sync_run(prefix=prefix, mode="full" if force else "incremental")
+            run_id = str(run.get("id") or "") if run.get("ok") else ""
         _set_oss_sync_job(job_id, {"message": "正在扫描 OSS 对象..."})
-        keys, scanned_count = OSS_STORAGE_SERVICE.list_book_index_keys(
+        entries, scanned_count = OSS_STORAGE_SERVICE.list_book_index_entries(
             prefix=prefix,
             limit=limit,
             progress=lambda scanned, kept: _set_oss_sync_job(
@@ -588,10 +600,41 @@ def _run_oss_sync_job(job_id: str, prefix: str, limit: int, owner_user_id: str) 
                 },
             ),
         )
-        _set_oss_sync_job(job_id, {"scannedCount": scanned_count, "keyCount": len(keys), "message": "正在识别书籍结构..."})
-        books = _build_oss_book_index(keys)
-        _set_oss_sync_job(job_id, {"booksFound": len(books), "message": "正在写入数据库..."})
+        changed_result = (
+            DB_SERVICE.changed_oss_sync_entries(prefix=prefix, entries=entries, force=force)
+            if DB_SERVICE.enabled
+            else {"ok": True, "entries": entries}
+        )
+        changed_entries = changed_result.get("entries", entries)
+        changed_dirs = {posixpath.dirname(str(entry.get("key") or "")) for entry in changed_entries}
+        keys = [str(entry.get("key") or "") for entry in entries if posixpath.dirname(str(entry.get("key") or "")) in changed_dirs]
+        _set_oss_sync_job(
+            job_id,
+            {
+                "scannedCount": scanned_count,
+                "keyCount": len(entries),
+                "changedKeyCount": len(changed_entries),
+                "message": "正在识别变化书籍结构..." if changed_entries else "没有发现新增或变化的索引文件",
+            },
+        )
+        books = _build_oss_book_index(keys) if changed_entries else []
+        books_found = len(books)
+        _set_oss_sync_job(job_id, {"booksFound": books_found, "message": "正在写入数据库..." if books else "正在记录同步结果..."})
         sync_result = DB_SERVICE.upsert_oss_books(books, owner_user_id=owner_user_id)
+        db_sync_count = int(sync_result.get("count") or 0)
+        if DB_SERVICE.enabled and run_id:
+            DB_SERVICE.finish_oss_sync_run(
+                run_id,
+                prefix=prefix,
+                entries=entries,
+                status="completed" if sync_result.get("ok") else "failed",
+                scanned_count=scanned_count,
+                key_count=len(entries),
+                changed_key_count=len(changed_entries),
+                books_found=books_found,
+                db_sync_count=db_sync_count,
+                error="" if sync_result.get("ok") else str(sync_result.get("error") or "OSS 同步失败"),
+            )
         _set_oss_sync_job(
             job_id,
             {
@@ -599,10 +642,24 @@ def _run_oss_sync_job(job_id: str, prefix: str, limit: int, owner_user_id: str) 
                 "status": "completed" if sync_result.get("ok") else "failed",
                 "message": "OSS 同步完成" if sync_result.get("ok") else sync_result.get("error") or "OSS 同步失败",
                 "dbSync": sync_result,
+                "changedKeyCount": len(changed_entries),
                 "completedAt": int(time.time()),
             },
         )
     except Exception as error:  # noqa: BLE001
+        if DB_SERVICE.enabled and run_id:
+            DB_SERVICE.finish_oss_sync_run(
+                run_id,
+                prefix=prefix,
+                entries=entries,
+                status="failed",
+                scanned_count=scanned_count,
+                key_count=len(entries),
+                changed_key_count=len(changed_entries),
+                books_found=books_found,
+                db_sync_count=db_sync_count,
+                error=str(error),
+            )
         _set_oss_sync_job(
             job_id,
             {

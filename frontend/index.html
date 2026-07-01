@@ -43,10 +43,21 @@
 
     .topbar {
       display: flex;
-      align-items: flex-end;
+      align-items: flex-start;
       justify-content: space-between;
       gap: 20px;
       margin-bottom: 14px;
+    }
+
+    .topbar-title {
+      min-width: 280px;
+    }
+
+    .topbar-user {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
     }
 
     h1 {
@@ -69,6 +80,10 @@
       gap: 10px;
       flex-wrap: wrap;
       margin-bottom: 14px;
+    }
+
+    .toolbar select {
+      min-width: 320px;
     }
 
     .login-form {
@@ -126,11 +141,23 @@
       font-size: 13px;
     }
 
+    .admin-badge {
+      min-height: 30px;
+      font-size: 12px;
+    }
+
     .status {
       min-height: 20px;
       margin: 0 0 12px;
       color: var(--muted);
       font-size: 14px;
+    }
+
+    .sync-summary {
+      min-height: 18px;
+      margin: -6px 0 12px;
+      color: var(--muted);
+      font-size: 13px;
     }
 
     .dashboard-overview {
@@ -477,6 +504,19 @@
     }
 
     @media (max-width: 1080px) {
+      .topbar {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .topbar-user {
+        align-items: flex-start;
+      }
+
+      .toolbar select {
+        min-width: min(100%, 320px);
+      }
+
       .dashboard-overview,
       .explorer {
         grid-template-columns: 1fr;
@@ -492,31 +532,33 @@
 <body>
   <main>
     <section class="topbar">
-      <div>
+      <div class="topbar-title">
         <h1>OCR 校对书库</h1>
         <p class="subtle">按本地书库层级浏览：分类、书名、MinerU 识别文件夹。分配动作只允许管理员“门”执行。</p>
       </div>
-      <a class="link-button" href="./ocr-compare.html">本地文件模式</a>
+      <div class="topbar-user" aria-label="用户登录状态">
+        <form id="loginForm" class="login-form" autocomplete="off">
+          <label class="pill" for="currentUserSelect">用户
+            <select id="currentUserSelect" aria-label="当前用户"></select>
+          </label>
+          <input id="loginPasswordInput" type="password" placeholder="登录口令" autocomplete="current-password">
+          <button id="loginButton" type="submit">登录</button>
+          <button id="logoutButton" type="button" disabled>退出</button>
+        </form>
+        <span id="adminBadge" class="pill admin-badge">请先登录</span>
+      </div>
     </section>
 
     <section class="toolbar" aria-label="书库操作">
-      <button id="syncOssButton" class="primary" type="button">同步 OSS 书籍</button>
-      <button id="reloadButton" type="button">刷新列表</button>
       <select id="syncCategorySelect" aria-label="选择要同步的 OSS 分类">
         <option value="">同步全部分类</option>
       </select>
+      <button id="syncOssButton" class="primary" type="button">同步所选分类</button>
       <input id="searchInput" type="search" placeholder="搜索分类、书名、文件夹">
-      <form id="loginForm" class="login-form" autocomplete="off">
-      <label class="pill" for="currentUserSelect">用户
-        <select id="currentUserSelect" aria-label="当前用户"></select>
-      </label>
-        <input id="loginPasswordInput" type="password" placeholder="登录口令" autocomplete="current-password">
-        <button id="loginButton" type="submit">登录</button>
-        <button id="logoutButton" type="button" disabled>退出</button>
-      </form>
-      <span id="adminBadge" class="pill">请先登录</span>
+      <button id="reloadButton" type="button">刷新列表</button>
     </section>
 
+    <p id="syncSummaryLine" class="sync-summary">请选择分类后同步。已入库书籍会直接从数据库加载。</p>
     <p id="statusLine" class="status">正在加载书籍列表...</p>
 
     <section class="dashboard-overview" aria-label="书库仪表盘总览">
@@ -587,6 +629,7 @@
       users: PARTICIPANTS.map((name) => ({ id: name, name })),
       adminUserId: "门",
       ossCategories: [],
+      syncRuns: [],
       savingFolderKeys: new Set(),
     };
     const els = {};
@@ -603,6 +646,7 @@
         "loginButton",
         "logoutButton",
         "adminBadge",
+        "syncSummaryLine",
         "statusLine",
         "totalBookCount",
         "totalBookLabel",
@@ -624,6 +668,7 @@
       });
       els.syncOssButton.addEventListener("click", syncOssBooks);
       els.reloadButton.addEventListener("click", loadBooks);
+      els.syncCategorySelect.addEventListener("change", updateSyncSummary);
       els.searchInput.addEventListener("input", renderExplorer);
       els.loginForm.addEventListener("submit", handleLoginSubmit);
       els.logoutButton.addEventListener("click", logout);
@@ -739,11 +784,13 @@
           throw new Error(data.error || "书籍列表读取失败");
         }
         state.books = Array.isArray(data.books) ? data.books : [];
+        state.syncRuns = Array.isArray(data.syncRuns) ? data.syncRuns : [];
         ensureSelection();
         setStatus(`已加载 ${state.books.length} 条书籍记录`);
         renderExplorer();
       } catch (error) {
         state.books = [];
+        state.syncRuns = [];
         renderExplorer();
         setStatus(error.message || String(error), true);
       } finally {
@@ -780,7 +827,8 @@
         if (data.jobId) {
           await pollOssSyncJob(data.jobId);
         } else {
-          setStatus(`OSS 同步完成：对象 ${data.keyCount || 0}，识别 ${data.booksFound || 0}，入库 ${data.dbSync?.count || 0}`);
+          const changedCount = data.changedKeyCount == null ? data.keyCount || 0 : data.changedKeyCount;
+          setStatus(`OSS 同步完成：对象 ${data.keyCount || 0}，变化 ${changedCount}，识别 ${data.booksFound || 0}，入库 ${data.dbSync?.count || 0}`);
         }
         await loadBooks();
       } catch (error) {
@@ -814,7 +862,7 @@
         if (!data.ok && data.status !== "failed") {
           throw new Error(data.error || "OSS 同步状态读取失败");
         }
-        const progress = `已扫描 ${data.scannedCount || 0}，有效文件 ${data.keyCount || 0}，识别 ${data.booksFound || 0}，入库 ${data.dbSync?.count || 0}`;
+        const progress = `已扫描 ${data.scannedCount || 0}，有效文件 ${data.keyCount || 0}，变化 ${data.changedKeyCount || 0}，识别 ${data.booksFound || 0}，入库 ${data.dbSync?.count || 0}`;
         setStatus(`${data.message || "正在同步 OSS 书籍"}：${progress}`);
         if (data.status === "completed") {
           setStatus(`OSS 同步完成：${progress}`);
@@ -833,6 +881,7 @@
       ensureSelection(categories);
       renderSyncCategoryOptions(buildHierarchy(state.books).categories);
       renderStats(categories);
+      updateSyncSummary();
       renderCategories(categories);
       renderBooks(categories);
       renderFolders(categories);
@@ -845,9 +894,9 @@
       const currentValue = els.syncCategorySelect.value;
       const byValue = new Map();
       state.ossCategories.forEach((category) => {
-        const title = String(category.title || "").trim();
+        const title = String(category.title || "");
         const prefix = String(category.prefix || "");
-        if (title && prefix) {
+        if (title.trim() && prefix) {
           byValue.set(prefix, title);
         }
       });
@@ -860,12 +909,58 @@
       const options = ['<option value="">同步全部分类</option>'].concat(
         Array.from(byValue.entries())
           .sort((left, right) => left[1].localeCompare(right[1], "zh-Hans-CN"))
-          .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`),
+          .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(syncCategoryLabel(label))}</option>`),
       );
       els.syncCategorySelect.innerHTML = options.join("");
       if (Array.from(els.syncCategorySelect.options).some((option) => option.value === currentValue)) {
         els.syncCategorySelect.value = currentValue;
       }
+    }
+
+    function syncCategoryLabel(title) {
+      const value = String(title || "");
+      const markers = [];
+      if (/^\s/.test(value)) markers.push("前导空格");
+      if (/\s$/.test(value)) markers.push("尾随空格");
+      const visible = value.trim() || value;
+      return markers.length ? `[${markers.join("、")}] ${visible}` : visible;
+    }
+
+    function updateSyncSummary() {
+      if (!els.syncSummaryLine) {
+        return;
+      }
+      const prefix = syncOssPrefix();
+      const run = state.syncRuns.find((item) => String(item.prefix || "") === prefix);
+      const label = selectedSyncCategoryLabel();
+      if (!run) {
+        els.syncSummaryLine.textContent = `${label}：尚无同步记录。已入库书籍仍会直接从数据库加载。`;
+        return;
+      }
+      const finished = formatDateTime(run.completedAt || run.startedAt);
+      const changed = Number(run.changedKeyCount || 0);
+      const dbCount = Number(run.dbSyncCount || 0);
+      const status = run.status === "completed" ? "上次同步完成" : `上次同步${run.status || ""}`;
+      els.syncSummaryLine.textContent = `${label}：${status} ${finished}，扫描 ${run.scannedCount || 0}，有效 ${run.keyCount || 0}，变化 ${changed}，入库 ${dbCount}`;
+    }
+
+    function selectedSyncCategoryLabel() {
+      const select = els.syncCategorySelect;
+      if (!select || !select.selectedOptions || !select.selectedOptions.length) {
+        return "同步全部分类";
+      }
+      return select.selectedOptions[0].textContent || "同步全部分类";
+    }
+
+    function formatDateTime(value) {
+      if (!value) {
+        return "时间未知";
+      }
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return String(value);
+      }
+      return date.toLocaleString("zh-CN", { hour12: false });
     }
 
     function filteredBooks() {

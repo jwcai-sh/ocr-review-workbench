@@ -115,9 +115,19 @@ class OssStorageService:
         limit: int = 5000,
         progress: Callable[[int, int], None] | None = None,
     ) -> tuple[list[str], int]:
+        entries, scanned = self.list_book_index_entries(prefix=prefix, limit=limit, progress=progress)
+        return [entry["key"] for entry in entries], scanned
+
+    def list_book_index_entries(
+        self,
+        prefix: str = "",
+        *,
+        limit: int = 5000,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
         if not self.enabled or not self._bucket:
             return [], 0
-        keys: list[str] = []
+        entries: list[dict[str, Any]] = []
         scanned = 0
         try:
             scan_prefix = str(prefix or "").strip().lstrip("/")
@@ -125,14 +135,21 @@ class OssStorageService:
                 scanned += 1
                 key = str(item.key)
                 if _is_book_index_key(key):
-                    keys.append(key)
+                    entries.append(
+                        {
+                            "key": key,
+                            "etag": str(getattr(item, "etag", "") or ""),
+                            "lastModified": str(getattr(item, "last_modified", "") or ""),
+                            "size": int(getattr(item, "size", 0) or 0),
+                        }
+                    )
                 if progress and scanned % 1000 == 0:
-                    progress(scanned, len(keys))
-                if len(keys) >= limit:
+                    progress(scanned, len(entries))
+                if len(entries) >= limit:
                     break
         except Exception as error:  # noqa: BLE001
             self.error = str(error)
-        return keys, scanned
+        return entries, scanned
 
     def document_key(self, document_id: str, name: str) -> str:
         return _join_key("uploads", document_id, name or "upload")

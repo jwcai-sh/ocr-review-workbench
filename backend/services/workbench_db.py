@@ -171,12 +171,41 @@ class WorkbenchDatabase:
                     metadata_json TEXT NOT NULL DEFAULT '{}'
                 )
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS oss_sync_runs (
+                    id TEXT PRIMARY KEY,
+                    prefix TEXT NOT NULL,
+                    mode TEXT NOT NULL DEFAULT 'incremental',
+                    status TEXT NOT NULL,
+                    scanned_count INTEGER NOT NULL DEFAULT 0,
+                    key_count INTEGER NOT NULL DEFAULT 0,
+                    changed_key_count INTEGER NOT NULL DEFAULT 0,
+                    books_found INTEGER NOT NULL DEFAULT 0,
+                    db_sync_count INTEGER NOT NULL DEFAULT 0,
+                    error TEXT NOT NULL DEFAULT '',
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT NOT NULL DEFAULT ''
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS oss_sync_objects (
+                    prefix TEXT NOT NULL,
+                    object_key TEXT NOT NULL,
+                    etag TEXT NOT NULL DEFAULT '',
+                    last_modified TEXT NOT NULL DEFAULT '',
+                    size INTEGER NOT NULL DEFAULT 0,
+                    seen_at TEXT NOT NULL,
+                    PRIMARY KEY (prefix, object_key)
+                )
+                """,
                 "CREATE INDEX IF NOT EXISTS idx_books_status ON books(status)",
                 "CREATE INDEX IF NOT EXISTS idx_books_reviewer ON books(first_reviewer_id, second_reviewer_id)",
                 "CREATE INDEX IF NOT EXISTS idx_books_oss_middle ON books(oss_middle_key)",
                 "CREATE INDEX IF NOT EXISTS idx_patches_book_status ON ocr_patches(book_id, status)",
                 "CREATE INDEX IF NOT EXISTS idx_marks_book_status ON review_marks(book_id, status)",
                 "CREATE INDEX IF NOT EXISTS idx_exports_book ON exports(book_id)",
+                "CREATE INDEX IF NOT EXISTS idx_oss_sync_runs_prefix ON oss_sync_runs(prefix, started_at)",
+                "CREATE INDEX IF NOT EXISTS idx_oss_sync_objects_seen ON oss_sync_objects(prefix, seen_at)",
             ]
             for statement in statements:
                 cur.execute(statement)
@@ -216,8 +245,28 @@ class WorkbenchDatabase:
             "updated_at",
         ]
         values_sql = ", ".join([placeholder] * len(columns))
-        update_columns = [column for column in columns if column not in {"id", "created_at"}]
-        update_sql = ", ".join([f"{column}=excluded.{column}" for column in update_columns])
+        update_sql = """
+            title=excluded.title,
+            mode=excluded.mode,
+            parent_book_id=excluded.parent_book_id,
+            chunk_label=excluded.chunk_label,
+            oss_pdf_key=excluded.oss_pdf_key,
+            oss_middle_key=excluded.oss_middle_key,
+            oss_content_list_key=excluded.oss_content_list_key,
+            owner_user_id=CASE
+                WHEN excluded.owner_user_id <> '' THEN excluded.owner_user_id
+                ELSE books.owner_user_id
+            END,
+            status=CASE
+                WHEN books.status <> '' THEN books.status
+                ELSE excluded.status
+            END,
+            current_page=CASE
+                WHEN books.current_page > 0 THEN books.current_page
+                ELSE excluded.current_page
+            END,
+            updated_at=excluded.updated_at
+        """
         sql = f"""
             INSERT INTO books ({", ".join(columns)})
             VALUES ({values_sql})
@@ -230,6 +279,137 @@ class WorkbenchDatabase:
                 if row["owner_user_id"]:
                     self._upsert_book_user(cur, row["id"], row["owner_user_id"], "owner", row["owner_user_id"], now)
         return {"ok": True, "count": len(rows)}
+
+    def begin_oss_sync_run(self, *, prefix: str, mode: str = "incremental") -> dict[str, Any]:
+        if not self.enabled:
+            return {"ok": False, "error": self.error}
+        now = utc_now()
+        run_id = f"oss-sync:{now}:{os.urandom(4).hex()}"
+        placeholder = self.placeholder
+        with self.connect() as conn:
+            conn.cursor().execute(
+                f"""
+                INSERT INTO oss_sync_runs(id, prefix, mode, status, started_at)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, 'running', {placeholder})
+                """,
+                [run_id, prefix, mode, now],
+            )
+        return {"ok": True, "id": run_id, "prefix": prefix, "mode": mode, "startedAt": now}
+
+    def changed_oss_sync_entries(self, *, prefix: str, entries: list[dict[str, Any]], force: bool = False) -> dict[str, Any]:
+        if not self.enabled:
+            return {"ok": False, "error": self.error, "entries": entries}
+        if force:
+            return {"ok": True, "entries": entries, "changedCount": len(entries), "unchangedCount": 0}
+        placeholder = self.placeholder
+        changed: list[dict[str, Any]] = []
+        with self.connect() as conn:
+            cur = conn.cursor()
+            for entry in entries:
+                key = str(entry.get("key") or "")
+                row = cur.execute(
+                    f"""
+                    SELECT etag, last_modified, size
+                    FROM oss_sync_objects
+                    WHERE prefix = {placeholder} AND object_key = {placeholder}
+                    """,
+                    [prefix, key],
+                ).fetchone()
+                old = self._normalize_row(row)
+                if (
+                    not old
+                    or str(old.get("etag") or "") != str(entry.get("etag") or "")
+                    or str(old.get("last_modified") or "") != str(entry.get("lastModified") or "")
+                    or int(old.get("size") or 0) != int(entry.get("size") or 0)
+                ):
+                    changed.append(entry)
+        return {
+            "ok": True,
+            "entries": changed,
+            "changedCount": len(changed),
+            "unchangedCount": max(0, len(entries) - len(changed)),
+        }
+
+    def finish_oss_sync_run(
+        self,
+        run_id: str,
+        *,
+        prefix: str,
+        entries: list[dict[str, Any]],
+        status: str,
+        scanned_count: int,
+        key_count: int,
+        changed_key_count: int,
+        books_found: int,
+        db_sync_count: int,
+        error: str = "",
+    ) -> dict[str, Any]:
+        if not self.enabled:
+            return {"ok": False, "error": self.error}
+        now = utc_now()
+        placeholder = self.placeholder
+        with self.connect() as conn:
+            cur = conn.cursor()
+            for entry in entries:
+                cur.execute(
+                    f"""
+                    INSERT INTO oss_sync_objects(prefix, object_key, etag, last_modified, size, seen_at)
+                    VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                    ON CONFLICT(prefix, object_key) DO UPDATE SET
+                        etag=excluded.etag,
+                        last_modified=excluded.last_modified,
+                        size=excluded.size,
+                        seen_at=excluded.seen_at
+                    """,
+                    [
+                        prefix,
+                        str(entry.get("key") or ""),
+                        str(entry.get("etag") or ""),
+                        str(entry.get("lastModified") or ""),
+                        int(entry.get("size") or 0),
+                        now,
+                    ],
+                )
+            cur.execute(
+                f"""
+                UPDATE oss_sync_runs
+                SET status = {placeholder},
+                    scanned_count = {placeholder},
+                    key_count = {placeholder},
+                    changed_key_count = {placeholder},
+                    books_found = {placeholder},
+                    db_sync_count = {placeholder},
+                    error = {placeholder},
+                    completed_at = {placeholder}
+                WHERE id = {placeholder}
+                """,
+                [
+                    status,
+                    int(scanned_count),
+                    int(key_count),
+                    int(changed_key_count),
+                    int(books_found),
+                    int(db_sync_count),
+                    error,
+                    now,
+                    run_id,
+                ],
+            )
+        return {"ok": True, "id": run_id, "completedAt": now}
+
+    def list_oss_sync_runs(self, *, limit: int = 100) -> dict[str, Any]:
+        if not self.enabled:
+            return {"ok": False, "error": self.error, "runs": []}
+        with self.connect() as conn:
+            rows = conn.cursor().execute(
+                f"""
+                SELECT *
+                FROM oss_sync_runs
+                ORDER BY started_at DESC
+                LIMIT {int(limit)}
+                """
+            ).fetchall()
+        return {"ok": True, "runs": [self._sync_run_from_row(row) for row in rows], "count": len(rows)}
 
     def _book_row_from_oss(self, item: dict[str, Any], *, owner_user_id: str, now: str) -> dict[str, Any]:
         book_id = str(item.get("workspaceId") or item.get("id") or item.get("middleKey") or "").strip()
@@ -691,6 +871,23 @@ class WorkbenchDatabase:
             "createdAt": data.get("created_at", ""),
             "updatedAt": data.get("updated_at", ""),
             "metadata": metadata,
+        }
+
+    def _sync_run_from_row(self, row: Any) -> dict[str, Any]:
+        data = self._normalize_row(row)
+        return {
+            "id": data.get("id", ""),
+            "prefix": data.get("prefix", ""),
+            "mode": data.get("mode", "incremental"),
+            "status": data.get("status", ""),
+            "scannedCount": int(data.get("scanned_count") or 0),
+            "keyCount": int(data.get("key_count") or 0),
+            "changedKeyCount": int(data.get("changed_key_count") or 0),
+            "booksFound": int(data.get("books_found") or 0),
+            "dbSyncCount": int(data.get("db_sync_count") or 0),
+            "error": data.get("error", ""),
+            "startedAt": data.get("started_at", ""),
+            "completedAt": data.get("completed_at", ""),
         }
 
     def _normalize_row(self, row: Any) -> dict[str, Any]:
