@@ -79,7 +79,7 @@ function runOcrCompareInContext(testContext) {
 }
 
 {
-  assert.strictEqual(call("DEFAULT_PDF_IMAGE_ZOOM"), 1.25);
+  assert.strictEqual(call("DEFAULT_PDF_IMAGE_ZOOM"), 1);
   assert(ocrCompareCss.includes(".review-navigation-bar"));
   assert(ocrCompareCss.includes(".review-font-nav-group"));
   assert(ocrCompareCss.includes("position: sticky"));

@@ -2,7 +2,7 @@ const RUNTIME_CONFIG = window.__UMA_RUNTIME_CONFIG__ || {};
 const LOCAL_API_BASE_CANDIDATES = ["http://127.0.0.1:8790", "http://127.0.0.1:8787"];
 let apiBase = resolveApiBase();
 
-const DEFAULT_PDF_IMAGE_ZOOM = 1.25;
+const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
 const OCR_COMPARE_BUILD_ID = "20260629-folder-upload";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];

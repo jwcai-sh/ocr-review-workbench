@@ -1076,7 +1076,8 @@
       els.totalBookCount.textContent = String(overview.total);
       els.totalBookLabel.textContent = `${overview.recordCount} 条记录 / ${overview.categoryCount} 个分类`;
       const completedRate = overview.total ? Math.round((overview.completed / overview.total) * 100) : 0;
-      els.completionRateLabel.textContent = `完成率 ${completedRate}%`;
+      const startedRate = overview.total ? Math.round(((overview.completed + overview.active) / overview.total) * 100) : 0;
+      els.completionRateLabel.textContent = `校对进度 ${startedRate}% · 完成 ${completedRate}%`;
       setProgressSegment(els.completedProgress, overview.completed, overview.total);
       setProgressSegment(els.activeProgress, overview.active, overview.total);
       setProgressSegment(els.unreviewedProgress, overview.unreviewed, overview.total);
