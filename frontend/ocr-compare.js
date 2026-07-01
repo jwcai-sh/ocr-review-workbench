@@ -1497,7 +1497,7 @@ function resetPage() {
   if (els.requiredFilesInput) {
     els.requiredFilesInput.value = "";
   }
-  els.pageList.innerHTML = '<div class="empty-state">选择原书 PDF，再选择对应的 MinerU `_middle.json`。优先点击高风险块，只对该块调用 Mathpix。</div>';
+  els.pageList.innerHTML = '<div class="empty-state">请从书库 Dashboard 打开一本 OSS 书籍。本地调试入口已收起在顶部菜单中。</div>';
   updatePager();
   setStatus("Ready", "ok");
 }

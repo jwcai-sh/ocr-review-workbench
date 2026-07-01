@@ -290,6 +290,52 @@ label[role="button"] {
   flex-wrap: wrap;
 }
 
+.local-debug-panel {
+  position: relative;
+  margin-left: auto;
+}
+
+.local-debug-summary {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  list-style: none;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.local-debug-summary::-webkit-details-marker {
+  display: none;
+}
+
+.local-debug-summary::after {
+  content: "⌄";
+  margin-left: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.local-debug-panel[open] .local-debug-summary::after {
+  content: "⌃";
+}
+
+.local-debug-actions {
+  position: absolute;
+  z-index: 21;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: min(920px, calc(100vw - 44px));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  background: #f8fbff;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.16);
+}
+
 .upload-button {
   min-height: 38px;
   display: inline-flex;
@@ -378,10 +424,6 @@ label[role="button"] {
 
 .oss-book-panel {
   position: relative;
-}
-
-.header-oss-book-panel {
-  margin-left: auto;
 }
 
 .oss-book-summary {

@@ -160,7 +160,9 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('<details class="reviewer-session-panel"'), "reviewer login controls should be hidden behind a user menu");
   assert(!/<details class="reviewer-session-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "reviewer user menu should not default open");
   assert(ocrCompareHtml.includes('<summary class="reviewer-session-summary">用户</summary>'));
-  assert(ocrCompareHtml.includes('<details class="oss-book-panel header-oss-book-panel"'), "OSS book browser should be collapsed by default");
+  assert(ocrCompareHtml.includes('<details class="local-debug-panel"'), "local and manual loaders should be hidden behind a debug menu");
+  assert(!/<details class="local-debug-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "local debug menu should not default open");
+  assert(ocrCompareHtml.includes('<details class="oss-book-panel"'), "OSS book browser should remain available as an advanced fallback");
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
