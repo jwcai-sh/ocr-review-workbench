@@ -1372,7 +1372,12 @@
           const owner = String(book.owner_user_id || book.first_reviewer_id || "").trim();
           const firstReviewer = String(book.first_reviewer_id || owner).trim();
           const secondReviewer = String(book.second_reviewer_id || "").trim();
-          if (!bookTitle || existingBooks.has(bookTitle)) {
+          if (!bookTitle) {
+            return;
+          }
+          if (existingBooks.has(bookTitle)) {
+            const existingBook = category.books.find((item) => String(item.title || "") === bookTitle);
+            mergeOverviewAssignmentIntoBook(existingBook, { owner, firstReviewer, secondReviewer });
             return;
           }
           category.books.push({
@@ -1392,6 +1397,21 @@
         category.books.sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
       });
       return merged.sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
+    }
+
+    function mergeOverviewAssignmentIntoBook(book, assignment) {
+      if (!book) {
+        return;
+      }
+      const owner = String(assignment?.owner || "").trim();
+      const firstReviewer = String(assignment?.firstReviewer || owner || "").trim();
+      const secondReviewer = String(assignment?.secondReviewer || "").trim();
+      if (!owner && !firstReviewer && !secondReviewer) {
+        return;
+      }
+      book.owner_user_id = secondReviewer || owner || firstReviewer || String(book.owner_user_id || "").trim();
+      book.first_reviewer_id = firstReviewer || String(book.first_reviewer_id || "").trim();
+      book.second_reviewer_id = secondReviewer || String(book.second_reviewer_id || "").trim();
     }
 
     function deriveBookLocation(book) {
