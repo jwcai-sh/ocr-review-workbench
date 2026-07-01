@@ -460,12 +460,41 @@
       flex: 1;
     }
 
+    .folder-heading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
     .folder-title {
       display: block;
+      min-width: 0;
+      flex: 1;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
       font-size: 13px;
+      font-weight: 650;
+    }
+
+    .needs-extra-badge {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      min-height: 20px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: #fff3df;
+      color: #a15c00;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .needs-extra-badge.is-empty {
+      background: #eef1ed;
+      color: #66705f;
       font-weight: 650;
     }
 
@@ -599,6 +628,45 @@
 
     .mineru-actions .wide-action {
       grid-column: 1 / -1;
+    }
+
+    .stage-actions {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+
+    .stage-actions button {
+      width: 100%;
+      min-height: 34px;
+      height: auto;
+      white-space: normal;
+      line-height: 1.25;
+      background: #fff;
+      color: #506348;
+    }
+
+    .stage-actions button:not(:disabled) {
+      border-color: rgba(161, 92, 0, 0.28);
+      color: #8b5e00;
+      background: #fffaf0;
+    }
+
+    .folder-summary-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .folder-summary-row strong {
+      color: var(--ink);
     }
 
     .link-button {
@@ -1589,7 +1657,10 @@
           <input class="folder-select" type="checkbox" data-book-select="${escapeHtml(book.key)}" ${state.selectedBookKeys.has(book.key) ? "checked" : ""} aria-label="选择 ${escapeHtml(book.title)}">
           <span class="folder-icon" aria-hidden="true"></span>
           <span class="folder-main">
-            <span class="folder-title">${escapeHtml(book.title)}</span>
+            <span class="folder-heading">
+              <span class="folder-title">${escapeHtml(book.title)}</span>
+              ${renderNeedsExtraBadge(bookNeedsExtraCorrectionCount(book), book.fromOssOverview)}
+            </span>
             <span class="folder-meta">${escapeHtml(bookMetaLabel(book))}</span>
           </span>
           <span class="folder-arrow" aria-hidden="true">›</span>
@@ -1598,14 +1669,22 @@
     }
 
     function bookMetaLabel(book) {
-      const needsExtraCount = bookNeedsExtraCorrectionCount(book);
       const parts = [book.metaPath || ""];
       if (book.fromOssOverview) {
-        parts.push("需额外校正：待入库");
+        parts.push("需校正：待入库");
       } else {
-        parts.push(`需额外校正 ${needsExtraCount}`);
+        parts.push("需校正见右侧入口");
       }
       return parts.filter(Boolean).join(" / ");
+    }
+
+    function renderNeedsExtraBadge(count, pending) {
+      if (pending) {
+        return '<span class="needs-extra-badge is-empty">需校正待入库</span>';
+      }
+      const value = Number(count || 0);
+      const emptyClass = value ? "" : " is-empty";
+      return `<span class="needs-extra-badge${emptyClass}">需校正 ${escapeHtml(String(value))}</span>`;
     }
 
     function bookNeedsExtraCorrectionCount(book) {
@@ -1679,6 +1758,8 @@
       const statusInfo = summarizeStatus(folder.records);
       const primaryRecord = folder.records[0] || {};
       const openHref = `./ocr-compare.html?book_id=${encodeURIComponent(String(primaryRecord.id || ""))}`;
+      const needsExtraCount = folderNeedsExtraCorrectionCount(folder);
+      const needsExtraHref = `${openHref}&review_filter=needs_extra_correction`;
       return `
         <article class="mineru-card">
           <div class="mineru-top">
@@ -1694,12 +1775,24 @@
               ${renderReviewerStatus("二校", secondInfo.label)}
             </div>
           </div>
+          <div class="folder-summary-row">
+            <span>需要额外校正：<strong>${escapeHtml(String(needsExtraCount))}</strong> 个 block</span>
+            ${needsExtraCount ? `<a class="link-button" href="${needsExtraHref}">查看需校正</a>` : ""}
+          </div>
           <div class="mineru-actions">
-            <button class="wide-action" type="button" data-folder-second-stage="${escapeHtml(folder.key)}" ${canAssign() && firstInfo.value && statusInfo.value !== "second_review" && statusInfo.value !== "completed" ? "" : "disabled"}>一校完成，进入二校</button>
             <a class="link-button" href="${openHref}">${folder.records.length > 1 ? `打开首个分块 (${folder.records.length})` : "打开校对"}</a>
+          </div>
+          <div class="stage-actions">
+            <button type="button" data-folder-second-stage="${escapeHtml(folder.key)}" ${canAssign() && firstInfo.value && statusInfo.value !== "second_review" && statusInfo.value !== "completed" ? "" : "disabled"}>一校完成，进入二校</button>
           </div>
         </article>
       `;
+    }
+
+    function folderNeedsExtraCorrectionCount(folder) {
+      return (Array.isArray(folder.records) ? folder.records : []).reduce((sum, record) => {
+        return sum + Number(record.needs_extra_correction_count || 0);
+      }, 0);
     }
 
     function renderReviewerStatus(label, value) {
