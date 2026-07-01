@@ -502,6 +502,8 @@
     <section class="toolbar" aria-label="书库操作">
       <button id="syncOssButton" class="primary" type="button">同步 OSS 书籍</button>
       <button id="reloadButton" type="button">刷新列表</button>
+      <input id="syncCategoryInput" type="search" list="syncCategoryOptions" placeholder="同步分类（可选）">
+      <datalist id="syncCategoryOptions"></datalist>
       <input id="searchInput" type="search" placeholder="搜索分类、书名、文件夹">
       <form id="loginForm" class="login-form" autocomplete="off">
       <label class="pill" for="currentUserSelect">用户
@@ -591,6 +593,8 @@
       [
         "syncOssButton",
         "reloadButton",
+        "syncCategoryInput",
+        "syncCategoryOptions",
         "searchInput",
         "loginForm",
         "currentUserSelect",
@@ -744,13 +748,14 @@
     }
 
     async function syncOssBooks() {
-      setBusy(true, "正在扫描 OSS 并同步数据库...");
+      const prefix = syncOssPrefix();
+      setBusy(true, `正在同步 ${prefix} ...`);
       try {
         const response = await fetch("/api/books/sync-oss", {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prefix: "books-raw/", limit: 200000 }),
+          body: JSON.stringify({ prefix, limit: 200000 }),
         });
         const data = await readJsonResponse(response, "OSS 同步失败");
         if (!data.ok) {
@@ -767,6 +772,18 @@
       } finally {
         setBusy(false);
       }
+    }
+
+    function syncOssPrefix() {
+      const rawCategory = String(els.syncCategoryInput?.value || "");
+      if (!rawCategory.trim()) {
+        return "books-raw/";
+      }
+      const normalized = rawCategory.replace(/^\/+|\/+$/g, "");
+      if (normalized.startsWith("books-raw/")) {
+        return normalized.endsWith("/") ? normalized : `${normalized}/`;
+      }
+      return `books-raw/${normalized}/`;
     }
 
     async function pollOssSyncJob(jobId) {
@@ -798,10 +815,20 @@
       const tree = buildHierarchy(filteredBooks());
       const categories = tree.categories;
       ensureSelection(categories);
+      renderSyncCategoryOptions(buildHierarchy(state.books).categories);
       renderStats(categories);
       renderCategories(categories);
       renderBooks(categories);
       renderFolders(categories);
+    }
+
+    function renderSyncCategoryOptions(categories) {
+      if (!els.syncCategoryOptions) {
+        return;
+      }
+      els.syncCategoryOptions.innerHTML = categories
+        .map((category) => `<option value="${escapeHtml(category.title)}"></option>`)
+        .join("");
     }
 
     function filteredBooks() {
@@ -1181,6 +1208,7 @@
     function setBusy(busy, message = "") {
       els.syncOssButton.disabled = busy;
       els.reloadButton.disabled = busy;
+      els.syncCategoryInput.disabled = busy;
       els.searchInput.disabled = busy;
       els.loginButton.disabled = busy || state.authenticated;
       els.logoutButton.disabled = busy || !state.authenticated;
