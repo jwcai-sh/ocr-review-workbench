@@ -96,6 +96,18 @@ class OssStorageService:
             self.error = str(error)
         return keys
 
+    def list_child_prefixes(self, prefix: str = "", *, limit: int = 500) -> list[str]:
+        if not self.enabled or not self._bucket:
+            return []
+        prefixes: list[str] = []
+        try:
+            scan_prefix = str(prefix or "").strip().lstrip("/")
+            result = self._bucket.list_objects(prefix=scan_prefix, delimiter="/", max_keys=limit)
+            prefixes = [str(item) for item in getattr(result, "prefix_list", [])]
+        except Exception as error:  # noqa: BLE001
+            self.error = str(error)
+        return prefixes[:limit]
+
     def list_book_index_keys(
         self,
         prefix: str = "",

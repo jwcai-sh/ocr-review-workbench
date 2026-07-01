@@ -74,6 +74,9 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/auth/me":
             self._send_json(self._auth_me_payload())
             return
+        if parsed.path == "/api/oss/categories":
+            self._send_json(self._oss_categories())
+            return
         if parsed.path == "/api/books/sync-oss/status":
             query = parse_qs(parsed.query)
             job_id = str(query.get("jobId", [""])[0] or "")
@@ -277,6 +280,20 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         books = _build_oss_book_index(keys)
         sync_result = DB_SERVICE.upsert_oss_books(books, owner_user_id=str(payload.get("ownerUserId") or "")) if DB_SERVICE.enabled else {"ok": False, "count": 0, "error": DB_SERVICE.error}
         return {"ok": True, "books": books, "keyCount": len(keys), "booksFound": len(books), "dbSync": sync_result}
+
+    def _oss_categories(self) -> dict:
+        if not OSS_STORAGE_SERVICE.enabled:
+            return {"ok": False, "error": OSS_STORAGE_SERVICE.error or "OSS storage is not configured", "categories": []}
+        prefixes = OSS_STORAGE_SERVICE.list_child_prefixes(DEFAULT_OSS_BOOKS_PREFIX, limit=500)
+        categories = [
+            {
+                "title": prefix[len(DEFAULT_OSS_BOOKS_PREFIX) :].strip("/"),
+                "prefix": prefix,
+            }
+            for prefix in prefixes
+            if prefix.startswith(DEFAULT_OSS_BOOKS_PREFIX)
+        ]
+        return {"ok": True, "categories": categories, "count": len(categories)}
 
     def _sync_oss_books(self, payload: dict) -> dict:
         if not OSS_STORAGE_SERVICE.enabled:

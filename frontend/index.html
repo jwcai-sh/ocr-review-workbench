@@ -586,6 +586,7 @@
       authenticated: false,
       users: PARTICIPANTS.map((name) => ({ id: name, name })),
       adminUserId: "门",
+      ossCategories: [],
       savingFolderKeys: new Set(),
     };
     const els = {};
@@ -630,7 +631,10 @@
       els.categoryList.addEventListener("click", handleCategoryClick);
       els.bookList.addEventListener("click", handleBookClick);
       els.folderList.addEventListener("click", handleFolderClick);
-      initAuth().finally(loadBooks);
+      initAuth().finally(() => {
+        loadOssCategories();
+        loadBooks();
+      });
     });
 
     async function initAuth() {
@@ -747,6 +751,18 @@
       }
     }
 
+    async function loadOssCategories() {
+      try {
+        const response = await fetch("/api/oss/categories", { cache: "no-store", credentials: "include" });
+        const data = await readJsonResponse(response, "OSS 分类读取失败");
+        state.ossCategories = Array.isArray(data.categories) ? data.categories : [];
+        renderSyncCategoryOptions(buildHierarchy(state.books).categories);
+      } catch (error) {
+        state.ossCategories = [];
+        renderSyncCategoryOptions(buildHierarchy(state.books).categories);
+      }
+    }
+
     async function syncOssBooks() {
       const prefix = syncOssPrefix();
       setBusy(true, `正在同步 ${prefix} ...`);
@@ -827,8 +843,24 @@
         return;
       }
       const currentValue = els.syncCategorySelect.value;
+      const byValue = new Map();
+      state.ossCategories.forEach((category) => {
+        const title = String(category.title || "").trim();
+        const prefix = String(category.prefix || "");
+        if (title && prefix) {
+          byValue.set(prefix, title);
+        }
+      });
+      categories.forEach((category) => {
+        const title = String(category.title || "");
+        if (title) {
+          byValue.set(title, title);
+        }
+      });
       const options = ['<option value="">同步全部分类</option>'].concat(
-        categories.map((category) => `<option value="${escapeHtml(category.title)}">${escapeHtml(category.title)}</option>`),
+        Array.from(byValue.entries())
+          .sort((left, right) => left[1].localeCompare(right[1], "zh-Hans-CN"))
+          .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`),
       );
       els.syncCategorySelect.innerHTML = options.join("");
       if (Array.from(els.syncCategorySelect.options).some((option) => option.value === currentValue)) {
