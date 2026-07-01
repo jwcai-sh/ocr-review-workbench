@@ -1378,11 +1378,30 @@
           <span class="folder-icon" aria-hidden="true"></span>
           <span class="folder-main">
             <span class="folder-title">${escapeHtml(book.title)}</span>
-            <span class="folder-meta">${escapeHtml(book.metaPath || "")}</span>
+            <span class="folder-meta">${escapeHtml(bookMetaLabel(book))}</span>
           </span>
           <span class="folder-arrow" aria-hidden="true">›</span>
         </button>
       `).join("")}`;
+    }
+
+    function bookMetaLabel(book) {
+      const needsExtraCount = bookNeedsExtraCorrectionCount(book);
+      const parts = [book.metaPath || ""];
+      if (book.fromOssOverview) {
+        parts.push("需额外校正：待入库");
+      } else {
+        parts.push(`需额外校正 ${needsExtraCount}`);
+      }
+      return parts.filter(Boolean).join(" / ");
+    }
+
+    function bookNeedsExtraCorrectionCount(book) {
+      return (Array.isArray(book.folders) ? book.folders : []).reduce((sum, folder) => {
+        return sum + (Array.isArray(folder.records) ? folder.records : []).reduce((recordSum, record) => {
+          return recordSum + Number(record.needs_extra_correction_count || 0);
+        }, 0);
+      }, 0);
     }
 
     function renderBulkAssignBar(books) {
