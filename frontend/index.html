@@ -555,6 +555,11 @@
       </select>
       <button id="syncOssButton" class="primary" type="button">同步所选分类</button>
       <button id="syncAllCategoriesButton" type="button">一键同步所有分类</button>
+      <select id="ownerFilterSelect" aria-label="按分配人筛选">
+        <option value="all">全部</option>
+        <option value="mine">只看我的</option>
+        <option value="unassigned">未分配</option>
+      </select>
       <input id="searchInput" type="search" placeholder="搜索分类、书名、文件夹">
       <button id="reloadButton" type="button">刷新列表</button>
     </section>
@@ -627,6 +632,7 @@
       selectedBookKey: "",
       currentUser: "门",
       authenticated: false,
+      ownerFilter: "all",
       users: PARTICIPANTS.map((name) => ({ id: name, name })),
       adminUserId: "门",
       ossCategories: [],
@@ -642,6 +648,7 @@
         "syncAllCategoriesButton",
         "reloadButton",
         "syncCategorySelect",
+        "ownerFilterSelect",
         "searchInput",
         "loginForm",
         "currentUserSelect",
@@ -673,6 +680,10 @@
       els.syncAllCategoriesButton.addEventListener("click", syncAllCategories);
       els.reloadButton.addEventListener("click", loadBooks);
       els.syncCategorySelect.addEventListener("change", updateSyncSummary);
+      els.ownerFilterSelect.addEventListener("change", () => {
+        state.ownerFilter = String(els.ownerFilterSelect.value || "all");
+        renderExplorer();
+      });
       els.searchInput.addEventListener("input", renderExplorer);
       els.loginForm.addEventListener("submit", handleLoginSubmit);
       els.logoutButton.addEventListener("click", logout);
@@ -748,7 +759,11 @@
       state.adminUserId = String(data?.adminUserId || "门");
       state.authenticated = Boolean(data?.authenticated && data?.user?.id);
       state.currentUser = state.authenticated ? String(data.user.id) : state.adminUserId;
+      if (state.authenticated && state.ownerFilter === "all" && state.currentUser !== state.adminUserId) {
+        state.ownerFilter = "mine";
+      }
       renderUserOptions();
+      renderOwnerFilterOptions();
       updateAdminBadge();
     }
 
@@ -762,6 +777,21 @@
       els.loginPasswordInput.disabled = state.authenticated;
       els.loginButton.disabled = state.authenticated;
       els.logoutButton.disabled = !state.authenticated;
+    }
+
+    function renderOwnerFilterOptions() {
+      if (!els.ownerFilterSelect) {
+        return;
+      }
+      const options = [
+        { value: "all", label: "全部" },
+        { value: "mine", label: "只看我的" },
+        { value: "unassigned", label: "未分配" },
+      ].concat(PARTICIPANTS.map((name) => ({ value: `owner:${name}`, label: name })));
+      els.ownerFilterSelect.innerHTML = options.map((option) => `
+        <option value="${escapeHtml(option.value)}" ${state.ownerFilter === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>
+      `).join("");
+      els.ownerFilterSelect.value = options.some((option) => option.value === state.ownerFilter) ? state.ownerFilter : "all";
     }
 
     function updateAdminBadge() {
@@ -1045,10 +1075,20 @@
 
     function filteredBooks() {
       const keyword = normalize(els.searchInput.value);
-      if (!keyword) {
-        return state.books.slice();
-      }
-      return state.books.filter((book) => normalize([book.title, book.chunk_label, book.oss_middle_key, book.owner_user_id].join(" ")).includes(keyword));
+      const ownerFilter = String(state.ownerFilter || "all");
+      return state.books.filter((book) => {
+        const owner = String(book.owner_user_id || "").trim();
+        if (ownerFilter === "mine" && owner !== state.currentUser) {
+          return false;
+        }
+        if (ownerFilter === "unassigned" && owner) {
+          return false;
+        }
+        if (ownerFilter.startsWith("owner:") && owner !== ownerFilter.slice("owner:".length)) {
+          return false;
+        }
+        return !keyword || normalize([book.title, book.chunk_label, book.oss_middle_key, book.owner_user_id].join(" ")).includes(keyword);
+      });
     }
 
     function buildHierarchy(books) {
