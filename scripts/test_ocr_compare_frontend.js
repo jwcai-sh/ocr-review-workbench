@@ -166,7 +166,7 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260629-folder-upload"));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260701-equation-tags"));
   assert(ocrCompareHtml.includes("ocr-compare.css?v=20260629-folder-upload"));
   assert(source.includes('OCR_COMPARE_BUILD_ID = "20260629-folder-upload"'));
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -2249,7 +2249,8 @@ function assertOcrPatchShape(patch) {
   );
   assert.strictEqual(result.automaticCount, 2, "11.113 and 11.114 should receive automatic known-equation OCR cleanup patches");
   assert(result.patches.every((patch) => patch.status === "accepted"), "known equation cleanup patches should be accepted");
-  assert(result.patches.some((patch) => patch.autoCorrection === "equation_number_preservation"), "known equation cleanup should compose with equation-number preservation");
+  assert(result.patches.some((patch) => patch.newText.includes("\\tag{11.113}")), "known equation cleanup should preserve the 11.113 equation number");
+  assert(result.patches.some((patch) => patch.newText.includes("\\tag{11.114}")), "known equation cleanup should preserve the 11.114 equation number");
   assert(!result.previewMarkdown.includes("\\mathcal{N}"), "accepted preview should not keep mathcal N in equation 11.113");
   assert(!result.previewMarkdown.includes("\\mathcal N"), "accepted preview should not keep mathcal N in equation 11.114");
   assert(result.previewMarkdown.includes("(1+N\\cdot v_a+\\ldots)"), "equation 11.113 should use ordinary N");
@@ -2867,20 +2868,20 @@ function assertOcrPatchShape(patch) {
           }
         ]
       };
+      const segments = reviewSegmentsForPage(1);
       const automaticCount = applyAutomaticLocalCorrectionsForPage(1);
-      const patch = state.ocrPatches.find((item) => item.metadata?.autoCorrection === "equation_number_preservation");
       return JSON.stringify({
         automaticCount,
-        corrected: getBlockOverrides(1, false).get("0"),
-        patchText: patch?.newText || "",
-        preview: buildAcceptedPatchPreviewForPage(1)
+        segmentCount: segments.length,
+        markdown: segments[0]?.markdown || "",
+        rendered: renderBlockContent(segments[0]?.markdown || "", segments[0] || {})
       });
     })()`),
   );
-  assert.strictEqual(result.automaticCount, 1, "display formula should get an automatic equation-number patch when a nearby number block exists");
-  assert(/\\+tag\{2\.8\}/.test(result.corrected), "nearby equation number should be converted to a LaTeX tag");
-  assert(/\\+tag\{2\.8\}/.test(result.patchText), "equation-number patch should store the tag");
-  assert(/\\+tag\{2\.8\}/.test(result.preview.markdown), "accepted preview should include the preserved equation number tag");
+  assert.strictEqual(result.segmentCount, 1, "standalone equation-number block should merge into its display formula segment");
+  assert.strictEqual(result.automaticCount, 0, "display formula should not need an automatic patch once its nearby number is part of the source segment");
+  assert(/\\+tag\{2\.8\}/.test(result.markdown), "nearby equation number should be converted to a LaTeX tag in the source segment");
+  assert(result.rendered.includes("(2.8)"), "rendered source segment should show the preserved equation number");
 }
 
 {
@@ -2995,17 +2996,19 @@ function assertOcrPatchShape(patch) {
           }
         ]
       };
+      const segments = reviewSegmentsForPage(1);
       const automaticCount = applyAutomaticLocalCorrectionsForPage(1);
       const html = renderPageReviewCanvas(reviewEntriesForCurrentPage());
       return JSON.stringify({
         automaticCount,
-        corrected: getBlockOverrides(1, false).get("0"),
+        segmentCount: segments.length,
+        markdown: segments.find((segment) => String(segment.blockIndex) === "0")?.markdown || segments[0]?.markdown || "",
         html
       });
     })()`),
   );
-  assert.strictEqual(result.automaticCount, 1, "display formula should get equation number from same-row bbox even when block index is not adjacent");
-  assert(/\\+tag\{2\.10\}/.test(result.corrected), "same-row bbox equation number should be inserted as a LaTeX tag");
+  assert.strictEqual(result.automaticCount, 0, "same-row bbox equation number should be part of the source segment without creating a patch");
+  assert(/\\+tag\{2\.10\}/.test(result.markdown), "same-row bbox equation number should be inserted as a LaTeX tag");
   assert(result.html.includes("(2.10)"), "same-row bbox equation number should render visibly");
 }
 
@@ -3055,8 +3058,8 @@ function assertOcrPatchShape(patch) {
       });
     })()`),
   );
-  assert(!/\\+tag\{2\.11\}/.test(result.storedPatchText), "stored legacy accepted patch should remain unchanged");
-  assert(/\\+tag\{2\.11\}/.test(result.preview.markdown), "accepted preview/download should preserve nearby equation numbers for legacy accepted patches");
+  assert(/\\+tag\{2\.11\}/.test(result.storedPatchText), "new accepted formula patches should inherit source equation numbers");
+  assert(/\\+tag\{2\.11\}/.test(result.preview.markdown), "accepted preview/download should preserve nearby equation numbers for accepted patches");
 }
 
 {
@@ -7012,6 +7015,41 @@ assert(renderedNumberedAlignedDisplay.includes("is-singleline"), "single-row ali
 const renderedNumberedMultilineDisplay = call(`renderBlockContent("\\\\begin{aligned}\\na &= b \\\\\\\\\\nc &= d\\\\tag{2.13}\\n\\\\end{aligned}", { kind: "text", blockIndex: "aligned-multiline-numbered" })`);
 assert(renderedNumberedMultilineDisplay.includes("is-multiline"), "multi-row aligned math should position the label near the final formula row");
 assert(renderedNumberedMultilineDisplay.includes("(2.13)"), "multi-row aligned math should show the equation number");
+
+const rawMineruFormulaNumber = JSON.parse(
+  call(`(() => {
+    state.currentPage = 1;
+    state.mineruInfo = {
+      pdf_info: [
+        {
+          page_size: [600, 800],
+          para_blocks: [
+            {
+              type: "interline_equation",
+              bbox: [100, 240, 410, 280],
+              lines: [{ spans: [{ type: "interline_equation", content: "E^S=-15.75A+17.8A^{2/3}" }] }]
+            },
+            {
+              type: "text",
+              bbox: [500, 245, 545, 268],
+              lines: [{ spans: [{ content: "(2.8)" }] }]
+            }
+          ]
+        }
+      ]
+    };
+    const segments = reviewSegmentsForPage(1);
+    return JSON.stringify({
+      count: segments.length,
+      markdown: segments[0]?.markdown || "",
+      rendered: renderBlockContent(segments[0]?.markdown || "", segments[0] || {})
+    });
+  })()`),
+);
+assert.strictEqual(rawMineruFormulaNumber.count, 1, "standalone equation-number blocks should be merged into their formula block");
+assert(rawMineruFormulaNumber.markdown.includes("\\tag{2.8}"), "raw MinerU formula blocks should preserve nearby visible equation numbers as LaTeX tags");
+assert(rawMineruFormulaNumber.rendered.includes("math-display-equation-tag"), "raw MinerU formula numbers should render as visible equation labels");
+assert(rawMineruFormulaNumber.rendered.includes("(2.8)"), "raw MinerU formula rendering should show the original equation number");
 
 const preservedFromPriorPatch = JSON.parse(
   call(`(() => {

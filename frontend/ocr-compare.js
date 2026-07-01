@@ -6597,11 +6597,62 @@ function reviewBlockMarkdownsForPage(pageNumber) {
       };
     })
     .filter((entry) => !isLikelyPageHeaderEntry(entry));
-  return sortEntriesByVisualReadingOrder(augmentTableCaptionsForEntries(entries, pageNumber));
+  return attachEquationNumbersToReviewEntries(
+    sortEntriesByVisualReadingOrder(augmentTableCaptionsForEntries(entries, pageNumber)),
+    pageNumber,
+  );
 }
 
 function reviewSegmentsForPage(pageNumber) {
   return segmentEntries(mergeAdjacentPlainProseEntriesForReview(reviewBlockMarkdownsForPage(pageNumber), pageNumber));
+}
+
+function attachEquationNumbersToReviewEntries(entries, pageNumber = state.currentPage) {
+  const sourceEntries = Array.isArray(entries) ? entries : [];
+  const usedNumberBlockIndexes = new Set();
+  const taggedEntries = sourceEntries.map((entry) => {
+    const markdown = String(entry?.markdown || "").trim();
+    if (!markdown || extractLatexTags(markdown).length || !entryLooksLikeDisplayEquation(entry)) {
+      return entry;
+    }
+    const numberEntry = nearestEquationNumberSegmentsByBBox(
+      sourceEntries,
+      entry.bbox,
+      entry.pageSize,
+      entry.blockIndex,
+    )[0];
+    if (!numberEntry) {
+      return entry;
+    }
+    const taggedMarkdown = insertEquationNumberIntoDisplayMath(markdown, numberEntry.markdown);
+    if (taggedMarkdown === markdown) {
+      return entry;
+    }
+    usedNumberBlockIndexes.add(String(numberEntry.blockIndex));
+    return {
+      ...entry,
+      markdown: taggedMarkdown,
+      equationNumberSourceBlockIndex: numberEntry.blockIndex,
+    };
+  });
+  if (!usedNumberBlockIndexes.size) {
+    return taggedEntries;
+  }
+  return taggedEntries.filter((entry) => {
+    if (!usedNumberBlockIndexes.has(String(entry?.blockIndex))) {
+      return true;
+    }
+    return !isEquationNumberOnlyText(entry?.markdown);
+  });
+}
+
+function entryLooksLikeDisplayEquation(entry) {
+  const markdown = String(entry?.markdown || "").trim();
+  if (!markdown) {
+    return false;
+  }
+  const blockType = String(entry?.block?.type || entry?.kind || entry?.type || "").toLowerCase();
+  return blockType === "interline_equation" || hasDisplayMathBlock(markdown) || hasLatexMathEnvironment(markdown);
 }
 
 function mergeAdjacentPlainProseEntriesForReview(entries, pageNumber = state.currentPage) {
