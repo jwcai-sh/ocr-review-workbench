@@ -634,9 +634,15 @@
       display: grid;
       grid-template-columns: minmax(0, 1fr);
       gap: 8px;
-      margin-top: 8px;
-      padding-top: 8px;
+      margin-top: 16px;
+      padding-top: 12px;
       border-top: 1px solid var(--border);
+    }
+
+    .stage-actions-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
     }
 
     .stage-actions button {
@@ -1783,6 +1789,7 @@
             <a class="link-button" href="${openHref}">${folder.records.length > 1 ? `打开首个分块 (${folder.records.length})` : "打开校对"}</a>
           </div>
           <div class="stage-actions">
+            <span class="stage-actions-label">阶段管理</span>
             <button type="button" data-folder-second-stage="${escapeHtml(folder.key)}" ${canAssign() && firstInfo.value && statusInfo.value !== "second_review" && statusInfo.value !== "completed" ? "" : "disabled"}>一校完成，进入二校</button>
           </div>
         </article>
@@ -1955,6 +1962,11 @@
       if (secondStageButton) {
         if (!canAssign()) {
           setStatus(state.authenticated ? "只有管理员可以推进二校" : "请先登录管理员账号", true);
+          return;
+        }
+        const confirmed = window.confirm("确认将这本书从一校转入二校？\n\n确认后，二校者将开始处理一校标记的“需要额外校正”内容。");
+        if (!confirmed) {
+          setStatus("已取消进入二校");
           return;
         }
         await enterSecondReview(String(secondStageButton.dataset.folderSecondStage || ""));
