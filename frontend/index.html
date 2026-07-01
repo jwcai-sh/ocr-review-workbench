@@ -268,6 +268,27 @@
       color: #59645a;
     }
 
+    .bulk-assign-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .bulk-assign-bar select {
+      min-width: 96px;
+      height: 30px;
+    }
+
+    .bulk-assign-bar button {
+      min-height: 30px;
+    }
+
     .explorer {
       display: grid;
       grid-template-columns: 1.1fr 1.1fr 1.35fr;
@@ -337,6 +358,14 @@
       padding: 10px 12px;
       text-align: left;
       cursor: pointer;
+    }
+
+    .folder-select {
+      width: 18px;
+      height: 18px;
+      margin: 0 2px 0 0;
+      flex: 0 0 auto;
+      accent-color: var(--accent);
     }
 
     .folder-item:hover,
@@ -640,6 +669,9 @@
       ossOverview: [],
       savingFolderKeys: new Set(),
       savingOverviewBookKeys: new Set(),
+      selectedBookKeys: new Set(),
+      bulkAssignee: "",
+      savingBulkAssignment: false,
     };
     const els = {};
 
@@ -1340,8 +1372,9 @@
         els.bookList.innerHTML = '<div class="empty">先选择左侧分类。</div>';
         return;
       }
-      els.bookList.innerHTML = category.books.map((book) => `
+      els.bookList.innerHTML = `${renderBulkAssignBar(category.books)}${category.books.map((book) => `
         <button class="folder-item ${book.key === state.selectedBookKey ? "is-selected" : ""}" type="button" data-book-key="${escapeHtml(book.key)}">
+          <input class="folder-select" type="checkbox" data-book-select="${escapeHtml(book.key)}" ${state.selectedBookKeys.has(book.key) ? "checked" : ""} aria-label="选择 ${escapeHtml(book.title)}">
           <span class="folder-icon" aria-hidden="true"></span>
           <span class="folder-main">
             <span class="folder-title">${escapeHtml(book.title)}</span>
@@ -1349,7 +1382,22 @@
           </span>
           <span class="folder-arrow" aria-hidden="true">›</span>
         </button>
-      `).join("");
+      `).join("")}`;
+    }
+
+    function renderBulkAssignBar(books) {
+      const availableKeys = new Set(books.map((book) => book.key));
+      state.selectedBookKeys = new Set(Array.from(state.selectedBookKeys).filter((key) => availableKeys.has(key)));
+      const selectedCount = state.selectedBookKeys.size;
+      return `
+        <div class="bulk-assign-bar">
+          <span>已选 ${selectedCount} 本</span>
+          <select data-bulk-assignee ${canAssign() ? "" : "disabled"}>
+            ${participantOptions(state.bulkAssignee)}
+          </select>
+          <button class="primary" type="button" data-bulk-assign ${canAssign() && selectedCount && !state.savingBulkAssignment ? "" : "disabled"}>批量分配</button>
+        </div>
+      `;
     }
 
     function renderFolders(categories) {
@@ -1467,12 +1515,68 @@
     }
 
     function handleBookClick(event) {
+      const checkbox = event.target.closest("[data-book-select]");
+      if (checkbox) {
+        const key = String(checkbox.dataset.bookSelect || "");
+        if (checkbox.checked) {
+          state.selectedBookKeys.add(key);
+        } else {
+          state.selectedBookKeys.delete(key);
+        }
+        renderExplorer();
+        return;
+      }
+      const bulkSelect = event.target.closest("[data-bulk-assignee]");
+      if (bulkSelect) {
+        state.bulkAssignee = String(bulkSelect.value || "");
+        return;
+      }
+      const bulkButton = event.target.closest("[data-bulk-assign]");
+      if (bulkButton) {
+        assignSelectedBooks();
+        return;
+      }
       const button = event.target.closest("[data-book-key]");
       if (!button) {
         return;
       }
       state.selectedBookKey = String(button.dataset.bookKey || "");
       renderExplorer();
+    }
+
+    async function assignSelectedBooks() {
+      if (!canAssign()) {
+        setStatus(state.authenticated ? "只有管理员可以分配" : "请先登录管理员账号", true);
+        return;
+      }
+      const assignee = String(document.querySelector("[data-bulk-assignee]")?.value || state.bulkAssignee || "").trim();
+      state.bulkAssignee = assignee;
+      const tree = { categories: mergeOssOverviewCategories(buildHierarchy(filteredBooks()).categories) };
+      const books = Array.from(state.selectedBookKeys).map((key) => findBookByKey(tree.categories, key)).filter(Boolean);
+      if (!books.length) {
+        setStatus("请先勾选要分配的书籍", true);
+        return;
+      }
+      state.savingBulkAssignment = true;
+      applyLocalBookAssignments(books, assignee);
+      renderExplorer();
+      setStatus(`正在批量分配 ${books.length} 本书...`);
+      try {
+        for (const book of books) {
+          if (book.fromOssOverview) {
+            await saveOverviewBookAssignment(book, assignee);
+          } else {
+            await saveDbBookAssignment(book, assignee);
+          }
+        }
+        setStatus(`已将 ${books.length} 本书分配给 ${assignee || "未分配"}`);
+        state.selectedBookKeys.clear();
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      } finally {
+        state.savingBulkAssignment = false;
+        renderExplorer();
+      }
     }
 
     async function handleFolderClick(event) {
@@ -1510,25 +1614,11 @@
       }
       const assignee = String(select.value || "").trim();
       state.savingOverviewBookKeys.add(bookKey);
+      updateOverviewBookOwner(book.categoryTitle || state.selectedCategoryKey, book.title, assignee);
       renderExplorer();
       setStatus(`正在分配：${book.title}`);
       try {
-        const response = await fetch("/api/oss/book-assignment", {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            categoryTitle: book.categoryTitle || state.selectedCategoryKey,
-            bookTitle: book.title,
-            bookPrefix: book.bookPrefix || "",
-            ownerUserId: assignee,
-          }),
-        });
-        const data = await response.json();
-        if (!data.ok) {
-          throw new Error(data.error || "分配失败");
-        }
-        updateOverviewBookOwner(book.categoryTitle || state.selectedCategoryKey, book.title, assignee);
+        await saveOverviewBookAssignment(book, assignee);
         setStatus(`${book.title} 已分配给 ${assignee || "未分配"}`);
       } catch (error) {
         setStatus(error.message || String(error), true);
@@ -1536,6 +1626,26 @@
         state.savingOverviewBookKeys.delete(bookKey);
         renderExplorer();
       }
+    }
+
+    async function saveOverviewBookAssignment(book, assignee) {
+      const response = await fetch("/api/oss/book-assignment", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          categoryTitle: book.categoryTitle || state.selectedCategoryKey,
+          bookTitle: book.title,
+          bookPrefix: book.bookPrefix || "",
+          ownerUserId: assignee,
+        }),
+      });
+      const data = await response.json();
+      if (!data.ok) {
+        throw new Error(data.error || `分配失败：${book.title}`);
+      }
+      updateOverviewBookOwner(book.categoryTitle || state.selectedCategoryKey, book.title, assignee);
+      return data;
     }
 
     function updateOverviewBookOwner(categoryTitle, bookTitle, ownerUserId) {
@@ -1564,10 +1674,25 @@
       }
       const assignee = String(select.value || "").trim();
       state.savingFolderKeys.add(folderKey);
+      updateFolderOwner(folder, assignee);
       renderExplorer();
       setStatus(`正在分配：${folder.title}`);
       try {
-        for (const record of folder.records) {
+        await saveDbBookAssignment({ folders: [folder], title: folder.title }, assignee);
+        setStatus(`${folder.title} 已分配给 ${assignee || "未分配"}`);
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      } finally {
+        state.savingFolderKeys.delete(folderKey);
+        renderExplorer();
+      }
+    }
+
+    async function saveDbBookAssignment(book, assignee) {
+      const folders = Array.isArray(book.folders) ? book.folders : [];
+      for (const folder of folders) {
+        updateFolderOwner(folder, assignee);
+        for (const record of folder.records || []) {
           const response = await fetch(`/api/books/${encodeURIComponent(String(record.id || ""))}/update`, {
             method: "POST",
             credentials: "include",
@@ -1582,15 +1707,24 @@
             throw new Error(data.error || `分配失败：${record.title || record.id}`);
           }
           const updated = data.book || {};
-          state.books = state.books.map((book) => String(book.id || "") === String(updated.id || record.id || "") ? { ...book, ...updated } : book);
+          state.books = state.books.map((item) => String(item.id || "") === String(updated.id || record.id || "") ? { ...item, ...updated } : item);
         }
-        setStatus(`${folder.title} 已分配给 ${assignee || "未分配"}`);
-      } catch (error) {
-        setStatus(error.message || String(error), true);
-      } finally {
-        state.savingFolderKeys.delete(folderKey);
-        renderExplorer();
       }
+    }
+
+    function updateFolderOwner(folder, ownerUserId) {
+      const recordIds = new Set((folder.records || []).map((record) => String(record.id || "")));
+      state.books = state.books.map((book) => recordIds.has(String(book.id || "")) ? { ...book, owner_user_id: ownerUserId } : book);
+    }
+
+    function applyLocalBookAssignments(books, assignee) {
+      books.forEach((book) => {
+        if (book.fromOssOverview) {
+          updateOverviewBookOwner(book.categoryTitle || state.selectedCategoryKey, book.title, assignee);
+        } else {
+          (book.folders || []).forEach((folder) => updateFolderOwner(folder, assignee));
+        }
+      });
     }
 
     function findFolderByKey(categories, folderKey) {
