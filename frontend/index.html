@@ -893,18 +893,22 @@
       }
       const currentValue = els.syncCategorySelect.value;
       const byValue = new Map();
-      state.ossCategories.forEach((category) => {
-        const title = String(category.title || "");
-        const prefix = String(category.prefix || "");
-        if (title.trim() && prefix) {
-          byValue.set(prefix, title);
+      const visibleLabels = new Set();
+      const addOption = (value, title) => {
+        const normalizedValue = String(value || "");
+        const label = String(title || "");
+        const visibleLabel = syncCategoryLabel(label);
+        if (!normalizedValue || !label.trim() || visibleLabels.has(visibleLabel)) {
+          return;
         }
+        byValue.set(normalizedValue, label);
+        visibleLabels.add(visibleLabel);
+      };
+      state.ossCategories.forEach((category) => {
+        addOption(category.prefix, category.title);
       });
       categories.forEach((category) => {
-        const title = String(category.title || "");
-        if (title) {
-          byValue.set(title, title);
-        }
+        addOption(category.title, category.title);
       });
       const options = ['<option value="">同步全部分类</option>'].concat(
         Array.from(byValue.entries())
