@@ -631,6 +631,7 @@
       adminUserId: "门",
       ossCategories: [],
       syncRuns: [],
+      ossOverview: [],
       savingFolderKeys: new Set(),
     };
     const els = {};
@@ -853,42 +854,17 @@
         setStatus(state.authenticated ? "只有管理员可以同步书库" : "请先登录管理员账号", true);
         return;
       }
-      setBusy(true, "正在准备同步全部分类...");
+      setBusy(true, "正在读取 OSS 分类概览...");
       try {
-        if (!state.ossCategories.length) {
-          await loadOssCategories();
+        const response = await fetch("/api/oss/category-overview", { cache: "no-store", credentials: "include" });
+        const data = await readJsonResponse(response, "OSS 分类概览读取失败");
+        if (!data.ok) {
+          throw new Error(data.error || "OSS 分类概览读取失败");
         }
-        const categories = state.ossCategories
-          .map((category) => ({
-            title: String(category.title || "").trim() || String(category.title || ""),
-            prefix: normalizedOssPrefix(category.prefix || category.title || ""),
-          }))
-          .filter((category) => category.prefix && category.prefix !== "books-raw/");
-        if (!categories.length) {
-          throw new Error("没有找到可同步的 OSS 分类");
-        }
-        let totalBooksFound = 0;
-        let totalDbCount = 0;
-        let backgroundCount = 0;
-        for (let index = 0; index < categories.length; index += 1) {
-          const category = categories[index];
-          setStatus(`正在同步分类 ${index + 1}/${categories.length}：${category.title || category.prefix}`);
-          const result = await syncOssPrefixToDb(category.prefix, { tolerateStatusFailure: true });
-          if (result.statusReadFailed) {
-            backgroundCount += 1;
-            setStatus(`${category.title || category.prefix} 已启动后台同步，但状态暂时不可读。先刷新已入库书籍。`);
-            break;
-          }
-          totalBooksFound += Number(result.booksFound || 0);
-          totalDbCount += Number(result.dbSync?.count || 0);
-          await delay(600);
-        }
+        state.ossOverview = Array.isArray(data.categories) ? data.categories : [];
+        const totalBooks = state.ossOverview.reduce((sum, category) => sum + Number(category.bookCount || 0), 0);
         await loadBooks();
-        if (backgroundCount) {
-          setStatus(`部分分类已在后台同步。当前已刷新数据库列表；请稍后点“刷新列表”查看新增书籍。`);
-        } else {
-          setStatus(`全部分类同步完成：识别 ${totalBooksFound} 本，入库/更新 ${totalDbCount} 条`);
-        }
+        setStatus(`分类概览已更新：${state.ossOverview.length} 个分类，${totalBooks} 本书。分配前请先同步对应分类。`);
       } catch (error) {
         setStatus(error.message || String(error), true);
       } finally {
@@ -981,7 +957,7 @@
 
     function renderExplorer() {
       const tree = buildHierarchy(filteredBooks());
-      const categories = tree.categories;
+      const categories = mergeOssOverviewCategories(tree.categories);
       ensureSelection(categories);
       renderSyncCategoryOptions(buildHierarchy(state.books).categories);
       renderStats(categories);
@@ -1109,6 +1085,40 @@
         });
       });
       return { categories };
+    }
+
+    function mergeOssOverviewCategories(categories) {
+      const merged = categories.map((category) => ({ ...category, books: category.books.slice() }));
+      const byTitle = new Map(merged.map((category) => [String(category.title || ""), category]));
+      (Array.isArray(state.ossOverview) ? state.ossOverview : []).forEach((overview) => {
+        const title = String(overview.title || "").trim() || String(overview.title || "");
+        if (!title) {
+          return;
+        }
+        let category = byTitle.get(title);
+        if (!category) {
+          category = { key: title, title, books: [], fromOssOverview: true };
+          byTitle.set(title, category);
+          merged.push(category);
+        }
+        const existingBooks = new Set(category.books.map((book) => String(book.title || "")));
+        (Array.isArray(overview.books) ? overview.books : []).forEach((book) => {
+          const bookTitle = String(book.title || "").trim() || String(book.title || "");
+          if (!bookTitle || existingBooks.has(bookTitle)) {
+            return;
+          }
+          category.books.push({
+            key: `${title}::${bookTitle}`,
+            title: bookTitle,
+            folders: [],
+            metaPath: "OSS 分类概览，待同步入库",
+            fromOssOverview: true,
+          });
+          existingBooks.add(bookTitle);
+        });
+        category.books.sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
+      });
+      return merged.sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
     }
 
     function deriveBookLocation(book) {
@@ -1281,7 +1291,9 @@
       const category = categories.find((item) => item.key === state.selectedCategoryKey);
       const book = category?.books.find((item) => item.key === state.selectedBookKey);
       if (!book || !book.folders.length) {
-        els.folderList.innerHTML = '<div class="empty">先选择左侧书名。</div>';
+        els.folderList.innerHTML = book?.fromOssOverview
+          ? '<div class="empty">这是 OSS 两级概览。需要分配前，请先点击“同步所选分类”入库。</div>'
+          : '<div class="empty">先选择左侧书名。</div>';
         return;
       }
       els.folderList.innerHTML = book.folders.map((folder) => renderFolderCard(folder)).join("");

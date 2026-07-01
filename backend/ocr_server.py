@@ -77,6 +77,9 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/oss/categories":
             self._send_json(self._oss_categories())
             return
+        if parsed.path == "/api/oss/category-overview":
+            self._send_json(self._oss_category_overview())
+            return
         if parsed.path == "/api/books/sync-oss/status":
             query = parse_qs(parsed.query)
             job_id = str(query.get("jobId", [""])[0] or "")
@@ -294,6 +297,34 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             for prefix in prefixes
             if prefix.startswith(DEFAULT_OSS_BOOKS_PREFIX)
         ]
+        return {"ok": True, "categories": categories, "count": len(categories)}
+
+    def _oss_category_overview(self) -> dict:
+        if not OSS_STORAGE_SERVICE.enabled:
+            return {"ok": False, "error": OSS_STORAGE_SERVICE.error or "OSS storage is not configured", "categories": []}
+        category_prefixes = OSS_STORAGE_SERVICE.list_child_prefixes(DEFAULT_OSS_BOOKS_PREFIX, limit=500)
+        categories = []
+        for category_prefix in category_prefixes:
+            if not str(category_prefix).startswith(DEFAULT_OSS_BOOKS_PREFIX):
+                continue
+            title = str(category_prefix)[len(DEFAULT_OSS_BOOKS_PREFIX) :].strip("/")
+            book_prefixes = OSS_STORAGE_SERVICE.list_child_prefixes(str(category_prefix), limit=1000)
+            books = [
+                {
+                    "title": str(book_prefix)[len(str(category_prefix)) :].strip("/"),
+                    "prefix": str(book_prefix),
+                }
+                for book_prefix in book_prefixes
+                if str(book_prefix).startswith(str(category_prefix))
+            ]
+            categories.append(
+                {
+                    "title": title,
+                    "prefix": str(category_prefix),
+                    "bookCount": len(books),
+                    "books": books,
+                },
+            )
         return {"ok": True, "categories": categories, "count": len(categories)}
 
     def _sync_oss_books(self, payload: dict) -> dict:
