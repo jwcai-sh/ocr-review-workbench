@@ -36,6 +36,18 @@ Before editing code, output a short Preflight Plan covering:
 
 Unless the user explicitly says approval is required before execution, continue after the plan.
 
+## GitHub / Zeabur Release Rule
+
+For important functional changes, remember to complete the release path after local verification:
+
+1. Commit and push to both GitHub remotes:
+   - `origin/main`
+   - `mwbel/main`
+2. Redeploy or verify redeployment on Zeabur.
+3. Confirm the Zeabur online app is healthy before reporting completion.
+
+Small UI-only adjustments do not need to be committed, pushed, or redeployed every time unless the user explicitly asks.
+
 ## Top Figure/Table Ordering Debug Memo
 
 A recurring failure mode in this workbench is that pages containing a figure or table near the top render with later paragraphs in the wrong order. Typical symptoms:

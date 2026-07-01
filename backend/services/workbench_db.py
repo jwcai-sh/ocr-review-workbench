@@ -679,9 +679,10 @@ class WorkbenchDatabase:
             updates["status"] != str(book.get("status") or "").strip()
             or updates["current_page"] != int(book.get("current_page") or 1)
         )
-        if assignment_changed and user_id != SETTINGS.app_admin_user_id:
+        is_admin = user_id == SETTINGS.app_admin_user_id
+        if assignment_changed and not is_admin:
             return {"ok": False, "error": "permission_denied_admin_only"}
-        if progress_changed:
+        if progress_changed and not (is_admin and assignment_changed):
             permission = self._write_permission(book, user_id)
             if not permission["ok"]:
                 return permission
