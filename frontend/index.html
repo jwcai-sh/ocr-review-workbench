@@ -203,7 +203,7 @@
       display: grid;
       grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.6fr);
       gap: 12px;
-      margin-bottom: 16px;
+      margin-bottom: 12px;
     }
 
     .dashboard-main,
@@ -215,10 +215,10 @@
     }
 
     .dashboard-main {
-      padding: 16px;
+      padding: 10px 14px;
       display: grid;
       align-content: space-between;
-      gap: 14px;
+      gap: 8px;
     }
 
     .dashboard-kicker,
@@ -235,7 +235,7 @@
     }
 
     .dashboard-total strong {
-      font-size: 42px;
+      font-size: 34px;
       line-height: 1;
       font-weight: 780;
     }
@@ -253,7 +253,7 @@
 
     .progress-track {
       display: flex;
-      height: 12px;
+      height: 10px;
       overflow: hidden;
       border-radius: 999px;
       background: #e6ebe2;
@@ -285,12 +285,12 @@
     }
 
     .metric {
-      padding: 12px 14px;
+      padding: 10px 14px;
     }
 
     .metric strong {
       display: block;
-      font-size: 26px;
+      font-size: 22px;
       line-height: 1.08;
       font-weight: 760;
     }
@@ -311,12 +311,16 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      min-height: 42px;
-      padding: 8px 10px;
+      min-height: 38px;
+      padding: 6px 10px;
       border-bottom: 1px solid var(--border);
       background: rgba(255, 255, 255, 0.72);
       color: var(--muted);
       font-size: 13px;
+    }
+
+    .bulk-assign-bar .folder-select {
+      margin-right: 0;
     }
 
     .bulk-assign-bar select {
@@ -557,9 +561,21 @@
 
     .mineru-actions {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
       margin-top: 8px;
+    }
+
+    .mineru-actions button,
+    .mineru-actions .link-button {
+      min-height: 36px;
+      height: auto;
+      line-height: 1.25;
+      white-space: normal;
+    }
+
+    .mineru-actions .wide-action {
+      grid-column: 1 / -1;
     }
 
     .link-button {
@@ -890,7 +906,7 @@
       els.loginPasswordInput.disabled = state.authenticated;
       els.loginButton.disabled = state.authenticated;
       els.logoutButton.disabled = !state.authenticated;
-      els.userMenuButton.textContent = state.authenticated ? `用户 · ${state.currentUser}` : "用户";
+      els.userMenuButton.textContent = state.authenticated ? state.currentUser : "登录";
     }
 
     function renderOwnerFilterOptions() {
@@ -1516,8 +1532,10 @@
       const availableKeys = new Set(books.map((book) => book.key));
       state.selectedBookKeys = new Set(Array.from(state.selectedBookKeys).filter((key) => availableKeys.has(key)));
       const selectedCount = state.selectedBookKeys.size;
+      const allSelected = Boolean(books.length) && books.every((book) => state.selectedBookKeys.has(book.key));
       return `
         <div class="bulk-assign-bar">
+          <input class="folder-select" type="checkbox" data-select-all-books ${allSelected ? "checked" : ""} ${books.length ? "" : "disabled"} aria-label="全选当前书名列表">
           <span>已选 ${selectedCount} 本</span>
           <select data-bulk-assignee ${canAssign() ? "" : "disabled"}>
             ${participantOptions(state.bulkAssignee)}
@@ -1604,7 +1622,7 @@
           </div>
           <div class="mineru-actions">
             <button class="primary" type="button" data-folder-assign="${escapeHtml(folder.key)}" ${canAssign() && !state.savingFolderKeys.has(folder.key) ? "" : "disabled"}>保存分配</button>
-            <button type="button" data-folder-second-stage="${escapeHtml(folder.key)}" ${canAssign() && firstInfo.value && statusInfo.value !== "second_review" && statusInfo.value !== "completed" ? "" : "disabled"}>一校完成，进入二校</button>
+            <button class="wide-action" type="button" data-folder-second-stage="${escapeHtml(folder.key)}" ${canAssign() && firstInfo.value && statusInfo.value !== "second_review" && statusInfo.value !== "completed" ? "" : "disabled"}>一校完成，进入二校</button>
             <a class="link-button" href="${openHref}">${folder.records.length > 1 ? `打开首个分块 (${folder.records.length})` : "打开校对"}</a>
           </div>
         </article>
@@ -1664,6 +1682,19 @@
     }
 
     function handleBookClick(event) {
+      const selectAll = event.target.closest("[data-select-all-books]");
+      if (selectAll) {
+        const tree = { categories: mergeOssOverviewCategories(buildHierarchy(filteredBooks()).categories) };
+        const category = tree.categories.find((item) => item.key === state.selectedCategoryKey);
+        const books = category?.books || [];
+        if (selectAll.checked) {
+          books.forEach((book) => state.selectedBookKeys.add(book.key));
+        } else {
+          books.forEach((book) => state.selectedBookKeys.delete(book.key));
+        }
+        renderExplorer();
+        return;
+      }
       const checkbox = event.target.closest("[data-book-select]");
       if (checkbox) {
         const key = String(checkbox.dataset.bookSelect || "");
@@ -1814,24 +1845,31 @@
       if (!data.ok) {
         throw new Error(data.error || `分配失败：${book.title}`);
       }
-      updateOverviewBookAssignment(book.categoryTitle || state.selectedCategoryKey, book.title, { firstReviewerId, secondReviewerId });
+      const saved = data.assignment || {};
+      updateOverviewBookAssignment(book.categoryTitle || state.selectedCategoryKey, book.title, {
+        ownerUserId: String(saved.owner_user_id || secondReviewerId || firstReviewerId || "").trim(),
+        firstReviewerId: String(saved.first_reviewer_id || firstReviewerId || "").trim(),
+        secondReviewerId: String(saved.second_reviewer_id || secondReviewerId || "").trim(),
+      });
       return data;
     }
 
     function updateOverviewBookAssignment(categoryTitle, bookTitle, assignment) {
       const firstReviewerId = String(assignment?.firstReviewerId || "").trim();
       const secondReviewerId = String(assignment?.secondReviewerId || "").trim();
-      const ownerUserId = secondReviewerId || firstReviewerId;
+      const ownerUserId = String(assignment?.ownerUserId || secondReviewerId || firstReviewerId || "").trim();
+      const targetCategoryTitle = String(categoryTitle || "").trim();
+      const targetBookTitle = String(bookTitle || "").trim();
       state.ossOverview = state.ossOverview.map((category) => {
-        const title = String(category.title || "").trim() || String(category.title || "");
-        if (title !== String(categoryTitle || "").trim()) {
+        const title = String(category.title || "");
+        if (title.trim() !== targetCategoryTitle) {
           return category;
         }
         return {
           ...category,
           books: (Array.isArray(category.books) ? category.books : []).map((book) => {
-            const currentTitle = String(book.title || "").trim() || String(book.title || "");
-            return currentTitle === String(bookTitle || "").trim()
+            const currentTitle = String(book.title || "");
+            return currentTitle.trim() === targetBookTitle
               ? { ...book, owner_user_id: ownerUserId, first_reviewer_id: firstReviewerId, second_reviewer_id: secondReviewerId }
               : book;
           }),
