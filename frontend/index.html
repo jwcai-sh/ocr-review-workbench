@@ -756,13 +756,42 @@
         if (!data.ok) {
           throw new Error(data.error || data.dbSync?.error || "OSS 同步失败");
         }
-        setStatus(`OSS 同步完成：对象 ${data.keyCount || 0}，识别 ${data.booksFound || 0}，入库 ${data.dbSync?.count || 0}`);
+        if (data.jobId) {
+          await pollOssSyncJob(data.jobId);
+        } else {
+          setStatus(`OSS 同步完成：对象 ${data.keyCount || 0}，识别 ${data.booksFound || 0}，入库 ${data.dbSync?.count || 0}`);
+        }
         await loadBooks();
       } catch (error) {
         setStatus(error.message || String(error), true);
       } finally {
         setBusy(false);
       }
+    }
+
+    async function pollOssSyncJob(jobId) {
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 8 * 60 * 1000) {
+        await delay(2000);
+        const response = await fetch(`/api/books/sync-oss/status?jobId=${encodeURIComponent(jobId)}`, {
+          cache: "no-store",
+          credentials: "include",
+        });
+        const data = await readJsonResponse(response, "OSS 同步状态读取失败");
+        if (!data.ok && data.status !== "failed") {
+          throw new Error(data.error || "OSS 同步状态读取失败");
+        }
+        const progress = `对象 ${data.keyCount || 0}，识别 ${data.booksFound || 0}，入库 ${data.dbSync?.count || 0}`;
+        setStatus(`${data.message || "正在同步 OSS 书籍"}：${progress}`);
+        if (data.status === "completed") {
+          setStatus(`OSS 同步完成：${progress}`);
+          return data;
+        }
+        if (data.status === "failed") {
+          throw new Error(data.error || data.message || data.dbSync?.error || "OSS 同步失败");
+        }
+      }
+      throw new Error("OSS 同步仍在后台执行，请稍后点击刷新列表");
     }
 
     function renderExplorer() {
@@ -1180,6 +1209,10 @@
         throw new Error(data.error || `${fallbackMessage}：HTTP ${response.status}`);
       }
       return data;
+    }
+
+    function delay(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
     function normalize(value) {

@@ -6,7 +6,9 @@ import hmac
 import json
 import mimetypes
 import posixpath
+import threading
 import time
+import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -25,6 +27,8 @@ DEFAULT_OSS_SYNC_LIMIT = 200000
 DEFAULT_OSS_BOOKS_PREFIX = "books-raw/"
 SESSION_COOKIE_NAME = "ocr_workbench_session"
 SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 14
+OSS_SYNC_JOBS: dict[str, dict] = {}
+OSS_SYNC_JOBS_LOCK = threading.Lock()
 
 
 class OcrWorkbenchHandler(BaseHTTPRequestHandler):
@@ -69,6 +73,11 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/auth/me":
             self._send_json(self._auth_me_payload())
+            return
+        if parsed.path == "/api/books/sync-oss/status":
+            query = parse_qs(parsed.query)
+            job_id = str(query.get("jobId", [""])[0] or "")
+            self._send_json(_get_oss_sync_job(job_id))
             return
         if parsed.path == "/api/books":
             query = parse_qs(parsed.query)
@@ -273,10 +282,28 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         if not OSS_STORAGE_SERVICE.enabled:
             return {"ok": False, "error": OSS_STORAGE_SERVICE.error or "OSS storage is not configured", "books": []}
         prefix = str(payload.get("prefix") or DEFAULT_OSS_BOOKS_PREFIX).strip()
-        keys = OSS_STORAGE_SERVICE.list_keys(prefix=prefix, limit=int(payload.get("limit") or DEFAULT_OSS_SYNC_LIMIT))
-        books = _build_oss_book_index(keys)
-        sync_result = DB_SERVICE.upsert_oss_books(books, owner_user_id=str(payload.get("ownerUserId") or ""))
-        return {"ok": bool(sync_result.get("ok")), "books": books, "keyCount": len(keys), "booksFound": len(books), "dbSync": sync_result}
+        limit = int(payload.get("limit") or DEFAULT_OSS_SYNC_LIMIT)
+        owner_user_id = str(payload.get("ownerUserId") or "")
+        job_id = uuid.uuid4().hex
+        _set_oss_sync_job(
+            job_id,
+            {
+                "ok": True,
+                "jobId": job_id,
+                "status": "running",
+                "message": "OSS 同步任务已启动",
+                "prefix": prefix,
+                "limit": limit,
+                "startedAt": int(time.time()),
+            },
+        )
+        thread = threading.Thread(
+            target=_run_oss_sync_job,
+            args=(job_id, prefix, limit, owner_user_id),
+            daemon=True,
+        )
+        thread.start()
+        return {"ok": True, "jobId": job_id, "status": "running"}
 
     def _load_oss_book(self, payload: dict) -> dict:
         if not OSS_STORAGE_SERVICE.enabled:
@@ -508,6 +535,56 @@ def _workspace_id_for_oss_entry(middle_key: str, page_count: object) -> str:
     count = str(page_count or "").strip()
     suffix = f":{count}" if count else ""
     return f"oss:{middle_key}{suffix}"
+
+
+def _set_oss_sync_job(job_id: str, payload: dict) -> None:
+    if not job_id:
+        return
+    with OSS_SYNC_JOBS_LOCK:
+        current = OSS_SYNC_JOBS.get(job_id, {})
+        current.update(payload)
+        OSS_SYNC_JOBS[job_id] = current
+
+
+def _get_oss_sync_job(job_id: str) -> dict:
+    if not job_id:
+        return {"ok": False, "error": "missing_job_id"}
+    with OSS_SYNC_JOBS_LOCK:
+        job = dict(OSS_SYNC_JOBS.get(job_id) or {})
+    if not job:
+        return {"ok": False, "error": "sync_job_not_found", "jobId": job_id}
+    return job
+
+
+def _run_oss_sync_job(job_id: str, prefix: str, limit: int, owner_user_id: str) -> None:
+    try:
+        _set_oss_sync_job(job_id, {"message": "正在扫描 OSS 对象..."})
+        keys = OSS_STORAGE_SERVICE.list_keys(prefix=prefix, limit=limit)
+        _set_oss_sync_job(job_id, {"keyCount": len(keys), "message": "正在识别书籍结构..."})
+        books = _build_oss_book_index(keys)
+        _set_oss_sync_job(job_id, {"booksFound": len(books), "message": "正在写入数据库..."})
+        sync_result = DB_SERVICE.upsert_oss_books(books, owner_user_id=owner_user_id)
+        _set_oss_sync_job(
+            job_id,
+            {
+                "ok": bool(sync_result.get("ok")),
+                "status": "completed" if sync_result.get("ok") else "failed",
+                "message": "OSS 同步完成" if sync_result.get("ok") else sync_result.get("error") or "OSS 同步失败",
+                "dbSync": sync_result,
+                "completedAt": int(time.time()),
+            },
+        )
+    except Exception as error:  # noqa: BLE001
+        _set_oss_sync_job(
+            job_id,
+            {
+                "ok": False,
+                "status": "failed",
+                "error": str(error),
+                "message": str(error),
+                "completedAt": int(time.time()),
+            },
+        )
 
 
 def _sign_session_token(user_id: str) -> str:
