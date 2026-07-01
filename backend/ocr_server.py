@@ -460,14 +460,17 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
 
     def _send_json_with_cookie(self, payload: dict, status: HTTPStatus = HTTPStatus.OK, cookie: str = "") -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        if cookie:
-            self.send_header("Set-Cookie", cookie)
-        self._send_cors_headers()
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            if cookie:
+                self.send_header("Set-Cookie", cookie)
+            self._send_cors_headers()
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def _send_cors_headers(self) -> None:
         origin = str(self.headers.get("Origin") or "")
@@ -502,15 +505,18 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
 
         content = file_path.read_bytes()
         content_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
-        self.send_header("Content-Length", str(len(content)))
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Expires", "0")
-        self.end_headers()
-        if not head_only:
-            self.wfile.write(content)
+        try:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+            self.end_headers()
+            if not head_only:
+                self.wfile.write(content)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
 
 def run() -> None:
