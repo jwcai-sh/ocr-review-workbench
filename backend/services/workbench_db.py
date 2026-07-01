@@ -205,6 +205,8 @@ class WorkbenchDatabase:
                     book_title TEXT NOT NULL,
                     book_prefix TEXT NOT NULL DEFAULT '',
                     owner_user_id TEXT NOT NULL DEFAULT '',
+                    first_reviewer_id TEXT NOT NULL DEFAULT '',
+                    second_reviewer_id TEXT NOT NULL DEFAULT '',
                     created_by TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -223,6 +225,28 @@ class WorkbenchDatabase:
             ]
             for statement in statements:
                 cur.execute(statement)
+            self._ensure_column(cur, "books", "first_reviewer_id", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(cur, "books", "second_reviewer_id", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(cur, "oss_book_assignments", "first_reviewer_id", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(cur, "oss_book_assignments", "second_reviewer_id", "TEXT NOT NULL DEFAULT ''")
+
+    def _ensure_column(self, cur: Any, table: str, column: str, definition: str) -> None:
+        placeholder = self.placeholder
+        if self.backend == "postgres":
+            cur.execute(
+                f"""
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = {placeholder} AND column_name = {placeholder}
+                """,
+                [table, column],
+            )
+            exists = cur.fetchone() is not None
+        else:
+            cur.execute(f"PRAGMA table_info({table})")
+            exists = any(str(row[1]) == column for row in cur.fetchall())
+        if not exists:
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def health(self) -> dict[str, Any]:
         if not self.enabled:
@@ -253,6 +277,8 @@ class WorkbenchDatabase:
             "oss_middle_key",
             "oss_content_list_key",
             "owner_user_id",
+            "first_reviewer_id",
+            "second_reviewer_id",
             "status",
             "current_page",
             "created_at",
@@ -270,6 +296,14 @@ class WorkbenchDatabase:
             owner_user_id=CASE
                 WHEN excluded.owner_user_id <> '' THEN excluded.owner_user_id
                 ELSE books.owner_user_id
+            END,
+            first_reviewer_id=CASE
+                WHEN excluded.first_reviewer_id <> '' THEN excluded.first_reviewer_id
+                ELSE books.first_reviewer_id
+            END,
+            second_reviewer_id=CASE
+                WHEN excluded.second_reviewer_id <> '' THEN excluded.second_reviewer_id
+                ELSE books.second_reviewer_id
             END,
             status=CASE
                 WHEN books.status <> '' THEN books.status
@@ -292,6 +326,10 @@ class WorkbenchDatabase:
                 cur.execute(sql, [row[column] for column in columns])
                 if row["owner_user_id"]:
                     self._upsert_book_user(cur, row["id"], row["owner_user_id"], "owner", row["owner_user_id"], now)
+                if row["first_reviewer_id"]:
+                    self._upsert_book_user(cur, row["id"], row["first_reviewer_id"], "first_reviewer", row["first_reviewer_id"], now)
+                if row["second_reviewer_id"]:
+                    self._upsert_book_user(cur, row["id"], row["second_reviewer_id"], "second_reviewer", row["second_reviewer_id"], now)
         return {"ok": True, "count": len(rows)}
 
     def begin_oss_sync_run(self, *, prefix: str, mode: str = "incremental") -> dict[str, Any]:
@@ -447,6 +485,10 @@ class WorkbenchDatabase:
         book_title = str(payload.get("bookTitle") or payload.get("book_title") or "").strip()
         book_prefix = str(payload.get("bookPrefix") or payload.get("book_prefix") or "").strip()
         owner_user_id = str(payload.get("ownerUserId") or payload.get("owner_user_id") or "").strip()
+        first_reviewer_id = str(payload.get("firstReviewerId") or payload.get("first_reviewer_id") or "").strip()
+        second_reviewer_id = str(payload.get("secondReviewerId") or payload.get("second_reviewer_id") or "").strip()
+        if first_reviewer_id and not owner_user_id:
+            owner_user_id = first_reviewer_id
         if not category_title or not book_title:
             return {"ok": False, "error": "missing_category_or_book_title"}
         now = utc_now()
@@ -456,15 +498,30 @@ class WorkbenchDatabase:
             conn.cursor().execute(
                 f"""
                 INSERT INTO oss_book_assignments(
-                    id, category_title, book_title, book_prefix, owner_user_id, created_by, created_at, updated_at
+                    id, category_title, book_title, book_prefix,
+                    owner_user_id, first_reviewer_id, second_reviewer_id,
+                    created_by, created_at, updated_at
                 )
-                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
                 ON CONFLICT(category_title, book_title) DO UPDATE SET
                     book_prefix=excluded.book_prefix,
                     owner_user_id=excluded.owner_user_id,
+                    first_reviewer_id=excluded.first_reviewer_id,
+                    second_reviewer_id=excluded.second_reviewer_id,
                     updated_at=excluded.updated_at
                 """,
-                [assignment_id, category_title, book_title, book_prefix, owner_user_id, user_id, now, now],
+                [
+                    assignment_id,
+                    category_title,
+                    book_title,
+                    book_prefix,
+                    owner_user_id,
+                    first_reviewer_id,
+                    second_reviewer_id,
+                    user_id,
+                    now,
+                    now,
+                ],
             )
         return self.get_oss_book_assignment(category_title=category_title, book_title=book_title)
 
@@ -491,6 +548,12 @@ class WorkbenchDatabase:
             return ""
         return str((result.get("assignment") or {}).get("owner_user_id") or "").strip()
 
+    def assignment_for_oss_book(self, *, category_title: str, book_title: str) -> dict[str, Any]:
+        result = self.get_oss_book_assignment(category_title=category_title, book_title=book_title)
+        if not result.get("ok"):
+            return {}
+        return result.get("assignment") or {}
+
     def _book_row_from_oss(self, item: dict[str, Any], *, owner_user_id: str, now: str) -> dict[str, Any]:
         book_id = str(item.get("workspaceId") or item.get("id") or item.get("middleKey") or "").strip()
         title = str(item.get("title") or item.get("label") or book_id or "Untitled").strip()
@@ -506,6 +569,8 @@ class WorkbenchDatabase:
             "oss_middle_key": str(item.get("middleKey") or "").strip(),
             "oss_content_list_key": str(item.get("contentListKey") or "").strip(),
             "owner_user_id": str(owner_user_id or item.get("ownerUserId") or item.get("owner_user_id") or "").strip(),
+            "first_reviewer_id": str(item.get("firstReviewerId") or item.get("first_reviewer_id") or "").strip(),
+            "second_reviewer_id": str(item.get("secondReviewerId") or item.get("second_reviewer_id") or "").strip(),
             "status": str(item.get("status") or "unreviewed").strip() or "unreviewed",
             "current_page": int(item.get("currentPage") or 1),
             "created_at": now,

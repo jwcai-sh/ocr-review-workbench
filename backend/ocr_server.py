@@ -321,12 +321,11 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
                 {
                     "title": str(book_prefix)[len(str(category_prefix)) :].strip("/"),
                     "prefix": str(book_prefix),
-                    "owner_user_id": str(
+                    **_assignment_fields_for_overview(
                         assignment_by_key.get(
                             (title.strip(), str(book_prefix)[len(str(category_prefix)) :].strip("/").strip()),
                             {},
-                        ).get("owner_user_id")
-                        or ""
+                        )
                     ),
                 }
                 for book_prefix in book_prefixes
@@ -675,9 +674,19 @@ def _run_oss_sync_job(job_id: str, prefix: str, limit: int, owner_user_id: str, 
             if owner_user_id:
                 continue
             category_title, book_title = _category_and_book_title_for_oss_entry(book)
-            assigned_owner = DB_SERVICE.owner_for_oss_book(category_title=category_title, book_title=book_title) if DB_SERVICE.enabled else ""
+            assignment = DB_SERVICE.assignment_for_oss_book(category_title=category_title, book_title=book_title) if DB_SERVICE.enabled else {}
+            assigned_owner = str(assignment.get("owner_user_id") or assignment.get("first_reviewer_id") or "").strip()
             if assigned_owner:
                 book["ownerUserId"] = assigned_owner
+            first_reviewer = str(assignment.get("first_reviewer_id") or "").strip()
+            second_reviewer = str(assignment.get("second_reviewer_id") or "").strip()
+            if first_reviewer:
+                book["firstReviewerId"] = first_reviewer
+                book["status"] = "first_review"
+            if second_reviewer:
+                book["secondReviewerId"] = second_reviewer
+                book["ownerUserId"] = second_reviewer
+                book["status"] = "second_review"
         books_found = len(books)
         _set_oss_sync_job(job_id, {"booksFound": books_found, "message": "正在写入数据库..." if books else "正在记录同步结果..."})
         sync_result = DB_SERVICE.upsert_oss_books(books, owner_user_id=owner_user_id)
@@ -759,6 +768,17 @@ def _verify_session_token(token: str) -> str:
         return user_id
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _assignment_fields_for_overview(assignment: dict) -> dict:
+    first_reviewer_id = str(assignment.get("first_reviewer_id") or "").strip()
+    second_reviewer_id = str(assignment.get("second_reviewer_id") or "").strip()
+    owner_user_id = str(assignment.get("owner_user_id") or first_reviewer_id or "").strip()
+    return {
+        "owner_user_id": owner_user_id,
+        "first_reviewer_id": first_reviewer_id,
+        "second_reviewer_id": second_reviewer_id,
+    }
 
 
 def _book_state_id_from_path(path: str) -> str:

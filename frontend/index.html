@@ -86,11 +86,49 @@
       min-width: 320px;
     }
 
+    .user-menu {
+      position: relative;
+    }
+
+    .user-menu-trigger {
+      min-width: 118px;
+      border-radius: 999px;
+      font-weight: 680;
+    }
+
+    .user-menu-panel {
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      z-index: 30;
+      display: none;
+      width: 300px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.98);
+      box-shadow: var(--shadow);
+    }
+
+    .user-menu.is-open .user-menu-panel {
+      display: block;
+    }
+
     .login-form {
-      display: inline-flex;
-      align-items: center;
+      display: grid;
       gap: 8px;
-      flex-wrap: wrap;
+    }
+
+    .login-form .pill,
+    .login-form input,
+    .login-form button {
+      width: 100%;
+    }
+
+    .login-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
     }
 
     button,
@@ -154,6 +192,7 @@
     }
 
     .sync-summary {
+      display: none;
       min-height: 18px;
       margin: -6px 0 12px;
       color: var(--muted);
@@ -495,6 +534,17 @@
       gap: 8px;
     }
 
+    .review-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .review-field {
+      display: grid;
+      gap: 4px;
+    }
+
     .mineru-grid label {
       color: var(--muted);
       font-size: 12px;
@@ -507,7 +557,7 @@
 
     .mineru-actions {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
       gap: 8px;
       margin-top: 8px;
     }
@@ -542,6 +592,11 @@
         align-items: flex-start;
       }
 
+      .user-menu-panel {
+        left: 0;
+        right: auto;
+      }
+
       .toolbar select {
         min-width: min(100%, 320px);
       }
@@ -563,17 +618,23 @@
     <section class="topbar">
       <div class="topbar-title">
         <h1>OCR 校对书库</h1>
-        <p class="subtle">按本地书库层级浏览：分类、书名、MinerU 识别文件夹。分配动作只允许管理员“门”执行。</p>
       </div>
       <div class="topbar-user" aria-label="用户登录状态">
-        <form id="loginForm" class="login-form" autocomplete="off">
-          <label class="pill" for="currentUserSelect">用户
-            <select id="currentUserSelect" aria-label="当前用户"></select>
-          </label>
-          <input id="loginPasswordInput" type="password" placeholder="登录口令" autocomplete="current-password">
-          <button id="loginButton" type="submit">登录</button>
-          <button id="logoutButton" type="button" disabled>退出</button>
-        </form>
+        <div id="userMenu" class="user-menu">
+          <button id="userMenuButton" class="user-menu-trigger" type="button" aria-expanded="false" aria-haspopup="true">用户</button>
+          <div class="user-menu-panel">
+            <form id="loginForm" class="login-form" autocomplete="off">
+              <label class="pill" for="currentUserSelect">用户
+                <select id="currentUserSelect" aria-label="当前用户"></select>
+              </label>
+              <input id="loginPasswordInput" type="password" placeholder="登录口令" autocomplete="current-password">
+              <div class="login-actions">
+                <button id="loginButton" type="submit">登录</button>
+                <button id="logoutButton" type="button" disabled>退出</button>
+              </div>
+            </form>
+          </div>
+        </div>
         <span id="adminBadge" class="pill admin-badge">请先登录</span>
       </div>
     </section>
@@ -683,6 +744,8 @@
         "syncCategorySelect",
         "ownerFilterSelect",
         "searchInput",
+        "userMenu",
+        "userMenuButton",
         "loginForm",
         "currentUserSelect",
         "loginPasswordInput",
@@ -712,6 +775,8 @@
       els.syncOssButton.addEventListener("click", syncOssBooks);
       els.syncAllCategoriesButton.addEventListener("click", syncAllCategories);
       els.reloadButton.addEventListener("click", loadBooks);
+      els.userMenuButton.addEventListener("click", toggleUserMenu);
+      document.addEventListener("click", closeUserMenuOnOutsideClick);
       els.syncCategorySelect.addEventListener("change", updateSyncSummary);
       els.ownerFilterSelect.addEventListener("change", () => {
         state.ownerFilter = String(els.ownerFilterSelect.value || "all");
@@ -729,6 +794,21 @@
         loadBooks().finally(() => loadOssOverview({ silent: true }));
       });
     });
+
+    function toggleUserMenu(event) {
+      event.stopPropagation();
+      const isOpen = !els.userMenu.classList.contains("is-open");
+      els.userMenu.classList.toggle("is-open", isOpen);
+      els.userMenuButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    }
+
+    function closeUserMenuOnOutsideClick(event) {
+      if (!els.userMenu || els.userMenu.contains(event.target)) {
+        return;
+      }
+      els.userMenu.classList.remove("is-open");
+      els.userMenuButton.setAttribute("aria-expanded", "false");
+    }
 
     async function initAuth() {
       try {
@@ -810,6 +890,7 @@
       els.loginPasswordInput.disabled = state.authenticated;
       els.loginButton.disabled = state.authenticated;
       els.logoutButton.disabled = !state.authenticated;
+      els.userMenuButton.textContent = state.authenticated ? `用户 · ${state.currentUser}` : "用户";
     }
 
     function renderOwnerFilterOptions() {
@@ -1129,18 +1210,26 @@
       const keyword = normalize(els.searchInput.value);
       const ownerFilter = String(state.ownerFilter || "all");
       return state.books.filter((book) => {
-        const owner = String(book.owner_user_id || "").trim();
-        if (ownerFilter === "mine" && owner !== state.currentUser) {
+        const assignees = bookAssignees(book);
+        if (ownerFilter === "mine" && !assignees.includes(state.currentUser)) {
           return false;
         }
-        if (ownerFilter === "unassigned" && owner) {
+        if (ownerFilter === "unassigned" && assignees.length) {
           return false;
         }
-        if (ownerFilter.startsWith("owner:") && owner !== ownerFilter.slice("owner:".length)) {
+        if (ownerFilter.startsWith("owner:") && !assignees.includes(ownerFilter.slice("owner:".length))) {
           return false;
         }
-        return !keyword || normalize([book.title, book.chunk_label, book.oss_middle_key, book.owner_user_id].join(" ")).includes(keyword);
+        return !keyword || normalize([book.title, book.chunk_label, book.oss_middle_key, book.owner_user_id, book.first_reviewer_id, book.second_reviewer_id].join(" ")).includes(keyword);
       });
+    }
+
+    function bookAssignees(book) {
+      return Array.from(new Set([
+        book.owner_user_id,
+        book.first_reviewer_id,
+        book.second_reviewer_id,
+      ].map((value) => String(value || "").trim()).filter(Boolean)));
     }
 
     function buildHierarchy(books) {
@@ -1196,8 +1285,10 @@
         const existingBooks = new Set(category.books.map((book) => String(book.title || "")));
         (Array.isArray(overview.books) ? overview.books : []).forEach((book) => {
           const bookTitle = String(book.title || "").trim() || String(book.title || "");
-          const owner = String(book.owner_user_id || "").trim();
-          if (!bookTitle || existingBooks.has(bookTitle) || !overviewBookPassesFilters({ title: bookTitle, owner })) {
+          const owner = String(book.owner_user_id || book.first_reviewer_id || "").trim();
+          const firstReviewer = String(book.first_reviewer_id || owner).trim();
+          const secondReviewer = String(book.second_reviewer_id || "").trim();
+          if (!bookTitle || existingBooks.has(bookTitle) || !overviewBookPassesFilters({ title: bookTitle, owner_user_id: owner, first_reviewer_id: firstReviewer, second_reviewer_id: secondReviewer })) {
             return;
           }
           category.books.push({
@@ -1209,6 +1300,8 @@
             categoryTitle: title,
             bookPrefix: String(book.prefix || ""),
             owner_user_id: owner,
+            first_reviewer_id: firstReviewer,
+            second_reviewer_id: secondReviewer,
           });
           existingBooks.add(bookTitle);
         });
@@ -1218,19 +1311,19 @@
     }
 
     function overviewBookPassesFilters(book) {
-      const owner = String(book.owner || book.owner_user_id || "").trim();
+      const assignees = bookAssignees(book);
       const ownerFilter = String(state.ownerFilter || "all");
-      if (ownerFilter === "mine" && owner !== state.currentUser) {
+      if (ownerFilter === "mine" && !assignees.includes(state.currentUser)) {
         return false;
       }
-      if (ownerFilter === "unassigned" && owner) {
+      if (ownerFilter === "unassigned" && assignees.length) {
         return false;
       }
-      if (ownerFilter.startsWith("owner:") && owner !== ownerFilter.slice("owner:".length)) {
+      if (ownerFilter.startsWith("owner:") && !assignees.includes(ownerFilter.slice("owner:".length))) {
         return false;
       }
       const keyword = normalize(els.searchInput.value);
-      return !keyword || normalize([book.title, owner].join(" ")).includes(keyword);
+      return !keyword || normalize([book.title].concat(assignees).join(" ")).includes(keyword);
     }
 
     function deriveBookLocation(book) {
@@ -1446,7 +1539,8 @@
 
     function renderOverviewBookAssignmentCard(book) {
       const key = String(book.key || "");
-      const owner = String(book.owner_user_id || "").trim();
+      const firstReviewer = String(book.first_reviewer_id || book.owner_user_id || "").trim();
+      const secondReviewer = String(book.second_reviewer_id || "").trim();
       return `
         <article class="mineru-card">
           <div class="mineru-top">
@@ -1457,13 +1551,21 @@
             <span class="badge">待入库</span>
           </div>
           <div class="mineru-grid">
-            <label>当前分配：${escapeHtml(owner || "未分配")}</label>
-            <select data-overview-book-assignee="${escapeHtml(key)}" ${canAssign() ? "" : "disabled"}>
-              ${participantOptions(owner)}
-            </select>
+            <div class="review-grid">
+              <label class="review-field">一校
+                <select data-overview-book-first="${escapeHtml(key)}" ${canAssign() ? "" : "disabled"}>
+                  ${participantOptions(firstReviewer)}
+                </select>
+              </label>
+              <label class="review-field">二校
+                <select data-overview-book-second="${escapeHtml(key)}" ${canAssign() && firstReviewer ? "" : "disabled"}>
+                  ${participantOptions(secondReviewer)}
+                </select>
+              </label>
+            </div>
           </div>
           <div class="mineru-actions">
-            <button class="primary" type="button" data-overview-book-assign="${escapeHtml(key)}" ${canAssign() && !state.savingOverviewBookKeys.has(key) ? "" : "disabled"}>分配</button>
+            <button class="primary" type="button" data-overview-book-assign="${escapeHtml(key)}" ${canAssign() && !state.savingOverviewBookKeys.has(key) ? "" : "disabled"}>保存分配</button>
             <span class="muted-action">校对前再同步所选分类入库</span>
           </div>
         </article>
@@ -1471,8 +1573,10 @@
     }
 
     function renderFolderCard(folder) {
-      const ownerInfo = summarizeOwner(folder.records);
+      const firstInfo = summarizeReviewer(folder.records, "first_reviewer_id", "owner_user_id");
+      const secondInfo = summarizeReviewer(folder.records, "second_reviewer_id");
       const statusInfo = summarizeStatus(folder.records);
+      const canAssignSecond = statusInfo.value === "second_review" || statusInfo.value === "completed" || Boolean(secondInfo.value);
       const primaryRecord = folder.records[0] || {};
       const openHref = `./ocr-compare.html?book_id=${encodeURIComponent(String(primaryRecord.id || ""))}`;
       return `
@@ -1485,13 +1589,22 @@
             <span class="badge ${statusInfo.tone}">${escapeHtml(statusInfo.label)}</span>
           </div>
           <div class="mineru-grid">
-            <label>当前分配：${escapeHtml(ownerInfo.label)}</label>
-            <select data-folder-assignee="${escapeHtml(folder.key)}" ${canAssign() ? "" : "disabled"}>
-              ${participantOptions(ownerInfo.value)}
-            </select>
+            <div class="review-grid">
+              <label class="review-field">一校
+                <select data-folder-first="${escapeHtml(folder.key)}" ${canAssign() ? "" : "disabled"}>
+                  ${participantOptions(firstInfo.value)}
+                </select>
+              </label>
+              <label class="review-field">二校
+                <select data-folder-second="${escapeHtml(folder.key)}" ${canAssign() && canAssignSecond ? "" : "disabled"}>
+                  ${participantOptions(secondInfo.value)}
+                </select>
+              </label>
+            </div>
           </div>
           <div class="mineru-actions">
-            <button class="primary" type="button" data-folder-assign="${escapeHtml(folder.key)}" ${canAssign() && !state.savingFolderKeys.has(folder.key) ? "" : "disabled"}>分配</button>
+            <button class="primary" type="button" data-folder-assign="${escapeHtml(folder.key)}" ${canAssign() && !state.savingFolderKeys.has(folder.key) ? "" : "disabled"}>保存分配</button>
+            <button type="button" data-folder-second-stage="${escapeHtml(folder.key)}" ${canAssign() && firstInfo.value && statusInfo.value !== "second_review" && statusInfo.value !== "completed" ? "" : "disabled"}>一校完成，进入二校</button>
             <a class="link-button" href="${openHref}">${folder.records.length > 1 ? `打开首个分块 (${folder.records.length})` : "打开校对"}</a>
           </div>
         </article>
@@ -1507,8 +1620,10 @@
       }).join("");
     }
 
-    function summarizeOwner(records) {
-      const values = Array.from(new Set(records.map((record) => String(record.owner_user_id || "").trim()).filter(Boolean)));
+    function summarizeReviewer(records, primaryKey, fallbackKey = "") {
+      const values = Array.from(new Set(records.map((record) => {
+        return String(record[primaryKey] || (fallbackKey ? record[fallbackKey] : "") || "").trim();
+      }).filter(Boolean)));
       if (!values.length) {
         return { value: "", label: "未分配" };
       }
@@ -1592,18 +1707,18 @@
         return;
       }
       state.savingBulkAssignment = true;
-      applyLocalBookAssignments(books, assignee);
+      applyLocalBookAssignments(books, { firstReviewerId: assignee, secondReviewerId: "" });
       renderExplorer();
       setStatus(`正在批量分配 ${books.length} 本书...`);
       try {
         for (const book of books) {
           if (book.fromOssOverview) {
-            await saveOverviewBookAssignment(book, assignee);
+            await saveOverviewBookAssignment(book, { firstReviewerId: assignee, secondReviewerId: "" });
           } else {
-            await saveDbBookAssignment(book, assignee);
+            await saveDbBookAssignment(book, { firstReviewerId: assignee, secondReviewerId: "", status: "first_review" });
           }
         }
-        setStatus(`已将 ${books.length} 本书分配给 ${assignee || "未分配"}`);
+        setStatus(`已将 ${books.length} 本书的一校分配给 ${assignee || "未分配"}`);
         state.selectedBookKeys.clear();
       } catch (error) {
         setStatus(error.message || String(error), true);
@@ -1615,6 +1730,7 @@
 
     async function handleFolderClick(event) {
       const button = event.target.closest("[data-folder-assign]");
+      const secondStageButton = event.target.closest("[data-folder-second-stage]");
       const overviewButton = event.target.closest("[data-overview-book-assign]");
       if (overviewButton) {
         if (!canAssign()) {
@@ -1622,6 +1738,14 @@
           return;
         }
         await assignOverviewBook(String(overviewButton.dataset.overviewBookAssign || ""));
+        return;
+      }
+      if (secondStageButton) {
+        if (!canAssign()) {
+          setStatus(state.authenticated ? "只有管理员可以推进二校" : "请先登录管理员账号", true);
+          return;
+        }
+        await enterSecondReview(String(secondStageButton.dataset.folderSecondStage || ""));
         return;
       }
       if (!button) {
@@ -1641,19 +1765,27 @@
     async function assignOverviewBook(bookKey) {
       const tree = { categories: mergeOssOverviewCategories(buildHierarchy(filteredBooks()).categories) };
       const book = findBookByKey(tree.categories, bookKey);
-      const select = document.querySelector(`[data-overview-book-assignee="${cssEscape(bookKey)}"]`);
-      if (!book || !select) {
+      const firstSelect = document.querySelector(`[data-overview-book-first="${cssEscape(bookKey)}"]`);
+      const secondSelect = document.querySelector(`[data-overview-book-second="${cssEscape(bookKey)}"]`);
+      if (!book || !firstSelect || !secondSelect) {
         setStatus("未找到目标书籍", true);
         return;
       }
-      const assignee = String(select.value || "").trim();
+      const assignment = {
+        firstReviewerId: String(firstSelect.value || "").trim(),
+        secondReviewerId: String(secondSelect.value || "").trim(),
+      };
+      if (assignment.secondReviewerId && !assignment.firstReviewerId) {
+        setStatus("请先分配一校，再分配二校", true);
+        return;
+      }
       state.savingOverviewBookKeys.add(bookKey);
-      updateOverviewBookOwner(book.categoryTitle || state.selectedCategoryKey, book.title, assignee);
+      updateOverviewBookAssignment(book.categoryTitle || state.selectedCategoryKey, book.title, assignment);
       renderExplorer();
       setStatus(`正在分配：${book.title}`);
       try {
-        await saveOverviewBookAssignment(book, assignee);
-        setStatus(`${book.title} 已分配给 ${assignee || "未分配"}`);
+        await saveOverviewBookAssignment(book, assignment);
+        setStatus(`${book.title} 分配已保存`);
       } catch (error) {
         setStatus(error.message || String(error), true);
       } finally {
@@ -1662,7 +1794,9 @@
       }
     }
 
-    async function saveOverviewBookAssignment(book, assignee) {
+    async function saveOverviewBookAssignment(book, assignment) {
+      const firstReviewerId = String(assignment?.firstReviewerId || "").trim();
+      const secondReviewerId = String(assignment?.secondReviewerId || "").trim();
       const response = await fetch("/api/oss/book-assignment", {
         method: "POST",
         credentials: "include",
@@ -1671,18 +1805,23 @@
           categoryTitle: book.categoryTitle || state.selectedCategoryKey,
           bookTitle: book.title,
           bookPrefix: book.bookPrefix || "",
-          ownerUserId: assignee,
+          ownerUserId: secondReviewerId || firstReviewerId,
+          firstReviewerId,
+          secondReviewerId,
         }),
       });
       const data = await response.json();
       if (!data.ok) {
         throw new Error(data.error || `分配失败：${book.title}`);
       }
-      updateOverviewBookOwner(book.categoryTitle || state.selectedCategoryKey, book.title, assignee);
+      updateOverviewBookAssignment(book.categoryTitle || state.selectedCategoryKey, book.title, { firstReviewerId, secondReviewerId });
       return data;
     }
 
-    function updateOverviewBookOwner(categoryTitle, bookTitle, ownerUserId) {
+    function updateOverviewBookAssignment(categoryTitle, bookTitle, assignment) {
+      const firstReviewerId = String(assignment?.firstReviewerId || "").trim();
+      const secondReviewerId = String(assignment?.secondReviewerId || "").trim();
+      const ownerUserId = secondReviewerId || firstReviewerId;
       state.ossOverview = state.ossOverview.map((category) => {
         const title = String(category.title || "").trim() || String(category.title || "");
         if (title !== String(categoryTitle || "").trim()) {
@@ -1692,7 +1831,9 @@
           ...category,
           books: (Array.isArray(category.books) ? category.books : []).map((book) => {
             const currentTitle = String(book.title || "").trim() || String(book.title || "");
-            return currentTitle === String(bookTitle || "").trim() ? { ...book, owner_user_id: ownerUserId } : book;
+            return currentTitle === String(bookTitle || "").trim()
+              ? { ...book, owner_user_id: ownerUserId, first_reviewer_id: firstReviewerId, second_reviewer_id: secondReviewerId }
+              : book;
           }),
         };
       });
@@ -1701,19 +1842,26 @@
     async function assignFolder(folderKey) {
       const tree = buildHierarchy(filteredBooks());
       const folder = findFolderByKey(tree.categories, folderKey);
-      const select = document.querySelector(`[data-folder-assignee="${cssEscape(folderKey)}"]`);
-      if (!folder || !select) {
+      const firstSelect = document.querySelector(`[data-folder-first="${cssEscape(folderKey)}"]`);
+      const secondSelect = document.querySelector(`[data-folder-second="${cssEscape(folderKey)}"]`);
+      if (!folder || !firstSelect || !secondSelect) {
         setStatus("未找到目标文件夹", true);
         return;
       }
-      const assignee = String(select.value || "").trim();
+      const firstReviewerId = String(firstSelect.value || "").trim();
+      const secondReviewerId = String(secondSelect.value || "").trim();
+      const statusInfo = summarizeStatus(folder.records);
+      if (secondReviewerId && statusInfo.value !== "second_review" && statusInfo.value !== "completed") {
+        setStatus("一校完成并进入二校后，才能分配二校", true);
+        return;
+      }
       state.savingFolderKeys.add(folderKey);
-      updateFolderOwner(folder, assignee);
+      updateFolderAssignment(folder, { firstReviewerId, secondReviewerId });
       renderExplorer();
       setStatus(`正在分配：${folder.title}`);
       try {
-        await saveDbBookAssignment({ folders: [folder], title: folder.title }, assignee);
-        setStatus(`${folder.title} 已分配给 ${assignee || "未分配"}`);
+        await saveDbBookAssignment({ folders: [folder], title: folder.title }, { firstReviewerId, secondReviewerId });
+        setStatus(`${folder.title} 分配已保存`);
       } catch (error) {
         setStatus(error.message || String(error), true);
       } finally {
@@ -1722,18 +1870,54 @@
       }
     }
 
-    async function saveDbBookAssignment(book, assignee) {
+    async function enterSecondReview(folderKey) {
+      const tree = buildHierarchy(filteredBooks());
+      const folder = findFolderByKey(tree.categories, folderKey);
+      const secondSelect = document.querySelector(`[data-folder-second="${cssEscape(folderKey)}"]`);
+      if (!folder) {
+        setStatus("未找到目标文件夹", true);
+        return;
+      }
+      const firstInfo = summarizeReviewer(folder.records, "first_reviewer_id", "owner_user_id");
+      if (!firstInfo.value) {
+        setStatus("请先分配一校，再进入二校", true);
+        return;
+      }
+      const secondReviewerId = String(secondSelect?.value || "").trim();
+      const assignment = { firstReviewerId: firstInfo.value, secondReviewerId };
+      state.savingFolderKeys.add(folderKey);
+      updateFolderAssignment(folder, assignment, "second_review");
+      renderExplorer();
+      setStatus(`正在进入二校：${folder.title}`);
+      try {
+        await saveDbBookAssignment({ folders: [folder], title: folder.title }, { ...assignment, status: "second_review" });
+        setStatus(`${folder.title} 已进入二校`);
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      } finally {
+        state.savingFolderKeys.delete(folderKey);
+        renderExplorer();
+      }
+    }
+
+    async function saveDbBookAssignment(book, assignment) {
+      const firstReviewerId = String(assignment?.firstReviewerId || "").trim();
+      const secondReviewerId = String(assignment?.secondReviewerId || "").trim();
+      const requestedStatus = String(assignment?.status || "").trim();
       const folders = Array.isArray(book.folders) ? book.folders : [];
       for (const folder of folders) {
-        updateFolderOwner(folder, assignee);
+        updateFolderAssignment(folder, { firstReviewerId, secondReviewerId }, requestedStatus);
         for (const record of folder.records || []) {
+          const nextStatus = requestedStatus || nextStatusForAssignment(record.status, firstReviewerId, secondReviewerId);
           const response = await fetch(`/api/books/${encodeURIComponent(String(record.id || ""))}/update`, {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              ownerUserId: assignee,
-              status: record.status || "unreviewed",
+              ownerUserId: secondReviewerId || firstReviewerId,
+              firstReviewerId,
+              secondReviewerId,
+              status: nextStatus,
             }),
           });
           const data = await response.json();
@@ -1746,17 +1930,40 @@
       }
     }
 
-    function updateFolderOwner(folder, ownerUserId) {
-      const recordIds = new Set((folder.records || []).map((record) => String(record.id || "")));
-      state.books = state.books.map((book) => recordIds.has(String(book.id || "")) ? { ...book, owner_user_id: ownerUserId } : book);
+    function nextStatusForAssignment(currentStatus, firstReviewerId, secondReviewerId) {
+      const status = String(currentStatus || "unreviewed").trim() || "unreviewed";
+      if (status === "completed" || status === "needs_extra_correction") {
+        return status;
+      }
+      if (secondReviewerId) {
+        return "second_review";
+      }
+      if (firstReviewerId) {
+        return status === "second_review" ? "second_review" : "first_review";
+      }
+      return "unreviewed";
     }
 
-    function applyLocalBookAssignments(books, assignee) {
+    function updateFolderAssignment(folder, assignment, status = "") {
+      const firstReviewerId = String(assignment?.firstReviewerId || "").trim();
+      const secondReviewerId = String(assignment?.secondReviewerId || "").trim();
+      const ownerUserId = secondReviewerId || firstReviewerId;
+      const recordIds = new Set((folder.records || []).map((record) => String(record.id || "")));
+      state.books = state.books.map((book) => recordIds.has(String(book.id || "")) ? {
+        ...book,
+        owner_user_id: ownerUserId,
+        first_reviewer_id: firstReviewerId,
+        second_reviewer_id: secondReviewerId,
+        status: status || nextStatusForAssignment(book.status, firstReviewerId, secondReviewerId),
+      } : book);
+    }
+
+    function applyLocalBookAssignments(books, assignment) {
       books.forEach((book) => {
         if (book.fromOssOverview) {
-          updateOverviewBookOwner(book.categoryTitle || state.selectedCategoryKey, book.title, assignee);
+          updateOverviewBookAssignment(book.categoryTitle || state.selectedCategoryKey, book.title, assignment);
         } else {
-          (book.folders || []).forEach((folder) => updateFolderOwner(folder, assignee));
+          (book.folders || []).forEach((folder) => updateFolderAssignment(folder, assignment));
         }
       });
     }
