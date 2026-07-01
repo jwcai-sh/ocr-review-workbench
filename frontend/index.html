@@ -502,8 +502,9 @@
     <section class="toolbar" aria-label="书库操作">
       <button id="syncOssButton" class="primary" type="button">同步 OSS 书籍</button>
       <button id="reloadButton" type="button">刷新列表</button>
-      <input id="syncCategoryInput" type="search" list="syncCategoryOptions" placeholder="同步分类（可选）">
-      <datalist id="syncCategoryOptions"></datalist>
+      <select id="syncCategorySelect" aria-label="选择要同步的 OSS 分类">
+        <option value="">同步全部分类</option>
+      </select>
       <input id="searchInput" type="search" placeholder="搜索分类、书名、文件夹">
       <form id="loginForm" class="login-form" autocomplete="off">
       <label class="pill" for="currentUserSelect">用户
@@ -593,8 +594,7 @@
       [
         "syncOssButton",
         "reloadButton",
-        "syncCategoryInput",
-        "syncCategoryOptions",
+        "syncCategorySelect",
         "searchInput",
         "loginForm",
         "currentUserSelect",
@@ -775,8 +775,8 @@
     }
 
     function syncOssPrefix() {
-      const rawCategory = String(els.syncCategoryInput?.value || "");
-      if (!rawCategory.trim()) {
+      const rawCategory = String(els.syncCategorySelect?.value || "");
+      if (!rawCategory) {
         return "books-raw/";
       }
       const normalized = rawCategory.replace(/^\/+|\/+$/g, "");
@@ -823,12 +823,17 @@
     }
 
     function renderSyncCategoryOptions(categories) {
-      if (!els.syncCategoryOptions) {
+      if (!els.syncCategorySelect) {
         return;
       }
-      els.syncCategoryOptions.innerHTML = categories
-        .map((category) => `<option value="${escapeHtml(category.title)}"></option>`)
-        .join("");
+      const currentValue = els.syncCategorySelect.value;
+      const options = ['<option value="">同步全部分类</option>'].concat(
+        categories.map((category) => `<option value="${escapeHtml(category.title)}">${escapeHtml(category.title)}</option>`),
+      );
+      els.syncCategorySelect.innerHTML = options.join("");
+      if (Array.from(els.syncCategorySelect.options).some((option) => option.value === currentValue)) {
+        els.syncCategorySelect.value = currentValue;
+      }
     }
 
     function filteredBooks() {
@@ -1208,7 +1213,7 @@
     function setBusy(busy, message = "") {
       els.syncOssButton.disabled = busy;
       els.reloadButton.disabled = busy;
-      els.syncCategoryInput.disabled = busy;
+      els.syncCategorySelect.disabled = busy;
       els.searchInput.disabled = busy;
       els.loginButton.disabled = busy || state.authenticated;
       els.logoutButton.disabled = busy || !state.authenticated;
