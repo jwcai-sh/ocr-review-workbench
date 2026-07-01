@@ -875,6 +875,7 @@
           const result = await syncOssPrefixToDb(category.prefix);
           totalBooksFound += Number(result.booksFound || 0);
           totalDbCount += Number(result.dbSync?.count || 0);
+          await delay(600);
         }
         await loadBooks();
         setStatus(`全部分类同步完成：识别 ${totalBooksFound} 本，入库/更新 ${totalDbCount} 条`);
@@ -924,13 +925,25 @@
 
     async function pollOssSyncJob(jobId) {
       const startedAt = Date.now();
+      let consecutiveReadFailures = 0;
       while (Date.now() - startedAt < 8 * 60 * 1000) {
         await delay(2000);
-        const response = await fetch(`/api/books/sync-oss/status?jobId=${encodeURIComponent(jobId)}`, {
-          cache: "no-store",
-          credentials: "include",
-        });
-        const data = await readJsonResponse(response, "OSS 同步状态读取失败");
+        let data = null;
+        try {
+          const response = await fetch(`/api/books/sync-oss/status?jobId=${encodeURIComponent(jobId)}`, {
+            cache: "no-store",
+            credentials: "include",
+          });
+          data = await readJsonResponse(response, "OSS 同步状态读取失败");
+          consecutiveReadFailures = 0;
+        } catch (error) {
+          consecutiveReadFailures += 1;
+          if (consecutiveReadFailures >= 5) {
+            throw error;
+          }
+          setStatus(`OSS 同步状态暂时不可读，正在重试 ${consecutiveReadFailures}/5：${error.message || String(error)}`);
+          continue;
+        }
         if (!data.ok && data.status !== "failed") {
           throw new Error(data.error || "OSS 同步状态读取失败");
         }
