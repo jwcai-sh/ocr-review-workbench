@@ -559,8 +559,19 @@ def _get_oss_sync_job(job_id: str) -> dict:
 def _run_oss_sync_job(job_id: str, prefix: str, limit: int, owner_user_id: str) -> None:
     try:
         _set_oss_sync_job(job_id, {"message": "正在扫描 OSS 对象..."})
-        keys = OSS_STORAGE_SERVICE.list_keys(prefix=prefix, limit=limit)
-        _set_oss_sync_job(job_id, {"keyCount": len(keys), "message": "正在识别书籍结构..."})
+        keys, scanned_count = OSS_STORAGE_SERVICE.list_book_index_keys(
+            prefix=prefix,
+            limit=limit,
+            progress=lambda scanned, kept: _set_oss_sync_job(
+                job_id,
+                {
+                    "scannedCount": scanned,
+                    "keyCount": kept,
+                    "message": "正在扫描 OSS 对象...",
+                },
+            ),
+        )
+        _set_oss_sync_job(job_id, {"scannedCount": scanned_count, "keyCount": len(keys), "message": "正在识别书籍结构..."})
         books = _build_oss_book_index(keys)
         _set_oss_sync_job(job_id, {"booksFound": len(books), "message": "正在写入数据库..."})
         sync_result = DB_SERVICE.upsert_oss_books(books, owner_user_id=owner_user_id)

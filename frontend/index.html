@@ -781,7 +781,7 @@
         if (!data.ok && data.status !== "failed") {
           throw new Error(data.error || "OSS 同步状态读取失败");
         }
-        const progress = `对象 ${data.keyCount || 0}，识别 ${data.booksFound || 0}，入库 ${data.dbSync?.count || 0}`;
+        const progress = `已扫描 ${data.scannedCount || 0}，有效文件 ${data.keyCount || 0}，识别 ${data.booksFound || 0}，入库 ${data.dbSync?.count || 0}`;
         setStatus(`${data.message || "正在同步 OSS 书籍"}：${progress}`);
         if (data.status === "completed") {
           setStatus(`OSS 同步完成：${progress}`);
