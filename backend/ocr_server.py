@@ -22,6 +22,7 @@ from backend.services.workbench_db import DB_SERVICE
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
 DEFAULT_OSS_SYNC_LIMIT = 200000
+DEFAULT_OSS_BOOKS_PREFIX = "books-raw/"
 SESSION_COOKIE_NAME = "ocr_workbench_session"
 SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 14
 
@@ -262,7 +263,7 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
     def _oss_books(self, payload: dict) -> dict:
         if not OSS_STORAGE_SERVICE.enabled:
             return {"ok": False, "error": OSS_STORAGE_SERVICE.error or "OSS storage is not configured", "books": []}
-        prefix = str(payload.get("prefix") or "").strip()
+        prefix = str(payload.get("prefix") or DEFAULT_OSS_BOOKS_PREFIX).strip()
         keys = OSS_STORAGE_SERVICE.list_keys(prefix=prefix, limit=int(payload.get("limit") or DEFAULT_OSS_SYNC_LIMIT))
         books = _build_oss_book_index(keys)
         sync_result = DB_SERVICE.upsert_oss_books(books, owner_user_id=str(payload.get("ownerUserId") or "")) if DB_SERVICE.enabled else {"ok": False, "count": 0, "error": DB_SERVICE.error}
@@ -271,7 +272,7 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
     def _sync_oss_books(self, payload: dict) -> dict:
         if not OSS_STORAGE_SERVICE.enabled:
             return {"ok": False, "error": OSS_STORAGE_SERVICE.error or "OSS storage is not configured", "books": []}
-        prefix = str(payload.get("prefix") or "").strip()
+        prefix = str(payload.get("prefix") or DEFAULT_OSS_BOOKS_PREFIX).strip()
         keys = OSS_STORAGE_SERVICE.list_keys(prefix=prefix, limit=int(payload.get("limit") or DEFAULT_OSS_SYNC_LIMIT))
         books = _build_oss_book_index(keys)
         sync_result = DB_SERVICE.upsert_oss_books(books, owner_user_id=str(payload.get("ownerUserId") or ""))

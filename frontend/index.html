@@ -726,7 +726,7 @@
       setBusy(true, "正在加载书籍列表...");
       try {
         const response = await fetch("/api/books?limit=5000", { cache: "no-store", credentials: "include" });
-        const data = await response.json();
+        const data = await readJsonResponse(response, "书籍列表读取失败");
         if (!data.ok) {
           throw new Error(data.error || "书籍列表读取失败");
         }
@@ -750,9 +750,9 @@
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ limit: 200000 }),
+          body: JSON.stringify({ prefix: "books-raw/", limit: 200000 }),
         });
-        const data = await response.json();
+        const data = await readJsonResponse(response, "OSS 同步失败");
         if (!data.ok) {
           throw new Error(data.error || data.dbSync?.error || "OSS 同步失败");
         }
@@ -1165,6 +1165,21 @@
     function setStatus(message, isError = false) {
       els.statusLine.textContent = message;
       els.statusLine.style.color = isError ? "#9c2d2d" : "";
+    }
+
+    async function readJsonResponse(response, fallbackMessage) {
+      const text = await response.text();
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        const summary = text.trim().slice(0, 160) || `HTTP ${response.status}`;
+        throw new Error(`${fallbackMessage}：${summary}`);
+      }
+      if (!response.ok) {
+        throw new Error(data.error || `${fallbackMessage}：HTTP ${response.status}`);
+      }
+      return data;
     }
 
     function normalize(value) {
