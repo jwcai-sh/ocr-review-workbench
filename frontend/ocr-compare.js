@@ -590,12 +590,12 @@ function prepareFilePickerInput(input, waitingLabel = "") {
 }
 
 function topDropdownPanels() {
-  return Array.from(document.querySelectorAll?.(".manual-upload-panel, .oss-book-panel") || []);
+  return Array.from(document.querySelectorAll?.(".manual-upload-panel, .oss-book-panel, .reviewer-session-panel") || []);
 }
 
 function handleTopDropdownToggle(event) {
   const panel = event.target;
-  if (!panel?.matches?.(".manual-upload-panel, .oss-book-panel") || !panel.open) {
+  if (!panel?.matches?.(".manual-upload-panel, .oss-book-panel, .reviewer-session-panel") || !panel.open) {
     return;
   }
   topDropdownPanels().forEach((item) => {
@@ -606,7 +606,7 @@ function handleTopDropdownToggle(event) {
 }
 
 function handleTopDropdownOutsidePointerDown(event) {
-  if (event.target?.closest?.(".manual-upload-panel, .oss-book-panel")) {
+  if (event.target?.closest?.(".manual-upload-panel, .oss-book-panel, .reviewer-session-panel")) {
     return;
   }
   closeTopDropdownPanels();

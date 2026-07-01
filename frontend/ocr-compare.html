@@ -10,8 +10,9 @@
   <div class="ocr-shell">
     <header class="ocr-header">
       <a class="back-link" href="./index.html" aria-label="返回智能体首页">←</a>
-      <div>
+      <div class="ocr-title-wrap">
         <h1>OCR 三栏对照</h1>
+        <span id="statusBadge" class="status-badge">Ready</span>
       </div>
       <details class="oss-book-panel header-oss-book-panel" aria-label="从 OSS 选择已有书籍">
         <summary class="secondary-button oss-book-summary">加载 OSS 书籍</summary>
@@ -35,7 +36,18 @@
           <button id="loadOssBookButton" class="primary-button oss-book-button" type="button" disabled>加载 OSS 书籍</button>
         </div>
       </details>
-      <span id="statusBadge" class="status-badge">Ready</span>
+      <details class="reviewer-session-panel">
+        <summary class="reviewer-session-summary">用户</summary>
+        <form id="reviewerLoginForm" class="reviewer-session-pill" autocomplete="off">
+          <label for="currentUserSelect">当前用户</label>
+          <select id="currentUserSelect" aria-label="当前用户"></select>
+          <input id="loginPasswordInput" type="password" placeholder="口令" autocomplete="current-password">
+          <div class="reviewer-session-actions">
+            <button id="loginButton" type="submit">登录</button>
+            <button id="logoutButton" type="button" disabled>退出</button>
+          </div>
+        </form>
+      </details>
     </header>
 
     <section class="control-band">
@@ -89,13 +101,6 @@
             </label>
           </div>
         </details>
-      <form id="reviewerLoginForm" class="reviewer-session-pill" autocomplete="off">
-        <span>用户</span>
-        <select id="currentUserSelect" aria-label="当前用户"></select>
-        <input id="loginPasswordInput" type="password" placeholder="口令" autocomplete="current-password">
-        <button id="loginButton" type="submit">登录</button>
-        <button id="logoutButton" type="button" disabled>退出</button>
-      </form>
       <span id="reviewerAccessBadge" class="reviewer-access-badge">本地模式</span>
         <div class="accepted-top-actions" aria-label="accepted 校正稿操作">
           <button id="previewAcceptedBookButton" class="secondary-button accepted-action-button" type="button" data-preview-accepted-book-patches disabled hidden>

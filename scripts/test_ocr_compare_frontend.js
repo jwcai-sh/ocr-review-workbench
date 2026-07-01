@@ -157,6 +157,9 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('id="ossBookSelectedSummary"'));
   assert(ocrCompareHtml.includes('id="currentUserSelect"'));
   assert(ocrCompareHtml.includes('id="reviewerAccessBadge"'));
+  assert(ocrCompareHtml.includes('<details class="reviewer-session-panel"'), "reviewer login controls should be hidden behind a user menu");
+  assert(!/<details class="reviewer-session-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "reviewer user menu should not default open");
+  assert(ocrCompareHtml.includes('<summary class="reviewer-session-summary">用户</summary>'));
   assert(ocrCompareHtml.includes('<details class="oss-book-panel header-oss-book-panel"'), "OSS book browser should be collapsed by default");
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
@@ -275,24 +278,30 @@ function runOcrCompareInContext(testContext) {
           return selector.includes(".oss-book-panel");
         }
       };
-      document.querySelectorAll = () => [manual, oss];
+      const reviewer = {
+        open: true,
+        matches(selector) {
+          return selector.includes(".reviewer-session-panel");
+        }
+      };
+      document.querySelectorAll = () => [manual, oss, reviewer];
       handleTopDropdownToggle({ target: oss });
-      const afterMutualExclusion = { manual: manual.open, oss: oss.open };
+      const afterMutualExclusion = { manual: manual.open, oss: oss.open, reviewer: reviewer.open };
       handleTopDropdownOutsidePointerDown({ target: { closest: () => manual } });
-      const afterInsideClick = { manual: manual.open, oss: oss.open };
+      const afterInsideClick = { manual: manual.open, oss: oss.open, reviewer: reviewer.open };
       handleTopDropdownOutsidePointerDown({ target: { closest: () => null } });
       return JSON.stringify({
         afterMutualExclusion,
         afterInsideClick,
-        afterOutsideClick: { manual: manual.open, oss: oss.open }
+        afterOutsideClick: { manual: manual.open, oss: oss.open, reviewer: reviewer.open }
       });
     })()`,
       dropdownContext,
     ),
   );
-  assert.deepStrictEqual(dropdownResult.afterMutualExclusion, { manual: false, oss: true }, "opening one top dropdown should close the other");
-  assert.deepStrictEqual(dropdownResult.afterInsideClick, { manual: false, oss: true }, "clicking inside a top dropdown should keep it open");
-  assert.deepStrictEqual(dropdownResult.afterOutsideClick, { manual: false, oss: false }, "clicking outside top dropdowns should close them");
+  assert.deepStrictEqual(dropdownResult.afterMutualExclusion, { manual: false, oss: true, reviewer: false }, "opening one top dropdown should close the other");
+  assert.deepStrictEqual(dropdownResult.afterInsideClick, { manual: false, oss: true, reviewer: false }, "clicking inside a top dropdown should keep it open");
+  assert.deepStrictEqual(dropdownResult.afterOutsideClick, { manual: false, oss: false, reviewer: false }, "clicking outside top dropdowns should close them");
 }
 
 {

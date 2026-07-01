@@ -68,6 +68,12 @@ label[role="button"] {
   font-size: 24px;
 }
 
+.ocr-title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+}
+
 .back-link {
   width: 38px;
   height: 38px;
@@ -95,17 +101,60 @@ label[role="button"] {
 }
 
 .reviewer-session-pill {
-  display: inline-flex;
-  align-items: center;
+  min-width: 220px;
+  display: grid;
+  align-items: stretch;
   gap: 8px;
-  min-height: 38px;
-  padding: 0 12px;
+  padding: 10px;
   border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--panel-muted);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.14);
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
+}
+
+.reviewer-session-panel {
+  position: relative;
+  margin-left: 0;
+}
+
+.reviewer-session-summary {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  list-style: none;
+  background: var(--panel-muted);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.reviewer-session-summary::-webkit-details-marker {
+  display: none;
+}
+
+.reviewer-session-summary::after {
+  content: "⌄";
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.reviewer-session-panel[open] .reviewer-session-summary::after {
+  content: "⌃";
+}
+
+.reviewer-session-panel .reviewer-session-pill {
+  position: absolute;
+  z-index: 21;
+  top: calc(100% + 6px);
+  right: 0;
 }
 
 .reviewer-session-pill select,
@@ -120,11 +169,17 @@ label[role="button"] {
 }
 
 .reviewer-session-pill input {
-  width: 92px;
+  width: 100%;
 }
 
 .reviewer-session-pill button {
   cursor: pointer;
+}
+
+.reviewer-session-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .reviewer-session-pill button:disabled,
