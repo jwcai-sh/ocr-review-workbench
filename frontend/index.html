@@ -869,16 +869,26 @@
         }
         let totalBooksFound = 0;
         let totalDbCount = 0;
+        let backgroundCount = 0;
         for (let index = 0; index < categories.length; index += 1) {
           const category = categories[index];
           setStatus(`正在同步分类 ${index + 1}/${categories.length}：${category.title || category.prefix}`);
-          const result = await syncOssPrefixToDb(category.prefix);
+          const result = await syncOssPrefixToDb(category.prefix, { tolerateStatusFailure: true });
+          if (result.statusReadFailed) {
+            backgroundCount += 1;
+            setStatus(`${category.title || category.prefix} 已启动后台同步，但状态暂时不可读。先刷新已入库书籍。`);
+            break;
+          }
           totalBooksFound += Number(result.booksFound || 0);
           totalDbCount += Number(result.dbSync?.count || 0);
           await delay(600);
         }
         await loadBooks();
-        setStatus(`全部分类同步完成：识别 ${totalBooksFound} 本，入库/更新 ${totalDbCount} 条`);
+        if (backgroundCount) {
+          setStatus(`部分分类已在后台同步。当前已刷新数据库列表；请稍后点“刷新列表”查看新增书籍。`);
+        } else {
+          setStatus(`全部分类同步完成：识别 ${totalBooksFound} 本，入库/更新 ${totalDbCount} 条`);
+        }
       } catch (error) {
         setStatus(error.message || String(error), true);
       } finally {
@@ -886,7 +896,7 @@
       }
     }
 
-    async function syncOssPrefixToDb(prefix) {
+    async function syncOssPrefixToDb(prefix, options = {}) {
       const response = await fetch("/api/books/sync-oss", {
         method: "POST",
         credentials: "include",
@@ -898,7 +908,7 @@
         throw new Error(data.error || data.dbSync?.error || "OSS 同步失败");
       }
       if (data.jobId) {
-        return pollOssSyncJob(data.jobId);
+        return pollOssSyncJob(data.jobId, options);
       }
       return data;
     }
@@ -923,7 +933,7 @@
       return `books-raw/${normalized}/`;
     }
 
-    async function pollOssSyncJob(jobId) {
+    async function pollOssSyncJob(jobId, options = {}) {
       const startedAt = Date.now();
       let consecutiveReadFailures = 0;
       while (Date.now() - startedAt < 8 * 60 * 1000) {
@@ -939,6 +949,15 @@
         } catch (error) {
           consecutiveReadFailures += 1;
           if (consecutiveReadFailures >= 5) {
+            if (options.tolerateStatusFailure) {
+              return {
+                ok: true,
+                status: "unknown",
+                statusReadFailed: true,
+                error: error.message || String(error),
+                jobId,
+              };
+            }
             throw error;
           }
           setStatus(`OSS 同步状态暂时不可读，正在重试 ${consecutiveReadFailures}/5：${error.message || String(error)}`);
