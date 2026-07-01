@@ -923,11 +923,7 @@
 
     function syncCategoryLabel(title) {
       const value = String(title || "");
-      const markers = [];
-      if (/^\s/.test(value)) markers.push("前导空格");
-      if (/\s$/.test(value)) markers.push("尾随空格");
-      const visible = value.trim() || value;
-      return markers.length ? `[${markers.join("、")}] ${visible}` : visible;
+      return value.trim() || value;
     }
 
     function updateSyncSummary() {
