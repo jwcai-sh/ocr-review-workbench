@@ -156,6 +156,9 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/oss/load-book":
             self._send_json(self._load_oss_book(payload))
             return
+        if parsed.path == "/api/books/bulk-update":
+            self._send_json(self._bulk_update_books(payload))
+            return
         book_update_id = _book_update_id_from_path(parsed.path)
         if book_update_id:
             self._send_json(
@@ -278,6 +281,31 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             "storage": "oss",
             "error": None if ok else OSS_STORAGE_SERVICE.error or "OSS workspace save failed",
         }
+
+    def _bulk_update_books(self, payload: dict) -> dict:
+        updates = payload.get("updates") if isinstance(payload.get("updates"), list) else []
+        if not updates:
+            return {"ok": False, "error": "missing_updates"}
+        if len(updates) > 300:
+            return {"ok": False, "error": "too_many_updates"}
+        user_id = self._current_user_id()
+        books = []
+        for item in updates:
+            if not isinstance(item, dict):
+                return {"ok": False, "error": "invalid_update_item"}
+            book_id = str(item.get("bookId") or item.get("book_id") or item.get("id") or "").strip()
+            if not book_id:
+                return {"ok": False, "error": "missing_book_id"}
+            result = DB_SERVICE.update_book(book_id, item, user_id=user_id)
+            if not result.get("ok"):
+                return {
+                    "ok": False,
+                    "error": result.get("error") or "bulk_update_failed",
+                    "bookId": book_id,
+                    "updatedCount": len(books),
+                }
+            books.append(result.get("book") or {})
+        return {"ok": True, "books": books, "count": len(books)}
 
     def _oss_books(self, payload: dict) -> dict:
         if not OSS_STORAGE_SERVICE.enabled:

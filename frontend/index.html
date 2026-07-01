@@ -2013,29 +2013,36 @@
       const secondReviewerId = String(assignment?.secondReviewerId || "").trim();
       const requestedStatus = String(assignment?.status || "").trim();
       const folders = Array.isArray(book.folders) ? book.folders : [];
+      const updates = [];
       for (const folder of folders) {
         updateFolderAssignment(folder, { firstReviewerId, secondReviewerId }, requestedStatus);
         for (const record of folder.records || []) {
           const nextStatus = requestedStatus || nextStatusForAssignment(record.status, firstReviewerId, secondReviewerId);
-          const response = await fetch(`/api/books/${encodeURIComponent(String(record.id || ""))}/update`, {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ownerUserId: secondReviewerId || firstReviewerId,
-              firstReviewerId,
-              secondReviewerId,
-              status: nextStatus,
-            }),
+          updates.push({
+            bookId: String(record.id || ""),
+            ownerUserId: secondReviewerId || firstReviewerId,
+            firstReviewerId,
+            secondReviewerId,
+            status: nextStatus,
           });
-          const data = await response.json();
-          if (!data.ok) {
-            throw new Error(data.error || `分配失败：${record.title || record.id}`);
-          }
-          const updated = data.book || {};
-          state.books = state.books.map((item) => String(item.id || "") === String(updated.id || record.id || "") ? { ...item, ...updated } : item);
         }
       }
+      if (!updates.length) {
+        return;
+      }
+      const response = await fetch("/api/books/bulk-update", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ updates }),
+      });
+      const data = await readJsonResponse(response, "批量分配失败");
+      if (!data.ok) {
+        throw new Error(data.error || "批量分配失败");
+      }
+      (data.books || []).forEach((updated) => {
+        state.books = state.books.map((item) => String(item.id || "") === String(updated.id || "") ? { ...item, ...updated } : item);
+      });
     }
 
     function nextStatusForAssignment(currentStatus, firstReviewerId, secondReviewerId) {
