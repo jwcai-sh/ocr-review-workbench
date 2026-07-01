@@ -554,6 +554,7 @@
         <option value="">同步全部分类</option>
       </select>
       <button id="syncOssButton" class="primary" type="button">同步所选分类</button>
+      <button id="syncAllCategoriesButton" type="button">一键同步所有分类</button>
       <input id="searchInput" type="search" placeholder="搜索分类、书名、文件夹">
       <button id="reloadButton" type="button">刷新列表</button>
     </section>
@@ -637,6 +638,7 @@
     document.addEventListener("DOMContentLoaded", () => {
       [
         "syncOssButton",
+        "syncAllCategoriesButton",
         "reloadButton",
         "syncCategorySelect",
         "searchInput",
@@ -667,6 +669,7 @@
         els[id] = document.getElementById(id);
       });
       els.syncOssButton.addEventListener("click", syncOssBooks);
+      els.syncAllCategoriesButton.addEventListener("click", syncAllCategories);
       els.reloadButton.addEventListener("click", loadBooks);
       els.syncCategorySelect.addEventListener("change", updateSyncSummary);
       els.searchInput.addEventListener("input", renderExplorer);
@@ -762,6 +765,9 @@
 
     function updateAdminBadge() {
       const isAdmin = canAssign();
+      if (els.syncAllCategoriesButton) {
+        els.syncAllCategoriesButton.disabled = !isAdmin;
+      }
       if (!state.authenticated) {
         els.adminBadge.textContent = "未登录，只可浏览";
         els.adminBadge.style.color = "#8b6d12";
@@ -811,6 +817,10 @@
     }
 
     async function syncOssBooks() {
+      if (!canAssign()) {
+        setStatus(state.authenticated ? "只有管理员可以同步书库" : "请先登录管理员账号", true);
+        return;
+      }
       const prefix = syncOssPrefix();
       setBusy(true, `正在同步 ${prefix} ...`);
       try {
@@ -838,8 +848,70 @@
       }
     }
 
+    async function syncAllCategories() {
+      if (!canAssign()) {
+        setStatus(state.authenticated ? "只有管理员可以同步书库" : "请先登录管理员账号", true);
+        return;
+      }
+      setBusy(true, "正在准备同步全部分类...");
+      try {
+        if (!state.ossCategories.length) {
+          await loadOssCategories();
+        }
+        const categories = state.ossCategories
+          .map((category) => ({
+            title: String(category.title || "").trim() || String(category.title || ""),
+            prefix: normalizedOssPrefix(category.prefix || category.title || ""),
+          }))
+          .filter((category) => category.prefix && category.prefix !== "books-raw/");
+        if (!categories.length) {
+          throw new Error("没有找到可同步的 OSS 分类");
+        }
+        let totalBooksFound = 0;
+        let totalDbCount = 0;
+        for (let index = 0; index < categories.length; index += 1) {
+          const category = categories[index];
+          setStatus(`正在同步分类 ${index + 1}/${categories.length}：${category.title || category.prefix}`);
+          const result = await syncOssPrefixToDb(category.prefix);
+          totalBooksFound += Number(result.booksFound || 0);
+          totalDbCount += Number(result.dbSync?.count || 0);
+        }
+        await loadBooks();
+        setStatus(`全部分类同步完成：识别 ${totalBooksFound} 本，入库/更新 ${totalDbCount} 条`);
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function syncOssPrefixToDb(prefix) {
+      const response = await fetch("/api/books/sync-oss", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prefix, limit: 200000 }),
+      });
+      const data = await readJsonResponse(response, "OSS 同步失败");
+      if (!data.ok) {
+        throw new Error(data.error || data.dbSync?.error || "OSS 同步失败");
+      }
+      if (data.jobId) {
+        return pollOssSyncJob(data.jobId);
+      }
+      return data;
+    }
+
     function syncOssPrefix() {
       const rawCategory = String(els.syncCategorySelect?.value || "");
+      if (!rawCategory) {
+        return "books-raw/";
+      }
+      return normalizedOssPrefix(rawCategory);
+    }
+
+    function normalizedOssPrefix(rawPrefix) {
+      const rawCategory = String(rawPrefix || "");
       if (!rawCategory) {
         return "books-raw/";
       }
@@ -1340,6 +1412,7 @@
 
     function setBusy(busy, message = "") {
       els.syncOssButton.disabled = busy;
+      els.syncAllCategoriesButton.disabled = busy || !canAssign();
       els.reloadButton.disabled = busy;
       els.syncCategorySelect.disabled = busy;
       els.searchInput.disabled = busy;
