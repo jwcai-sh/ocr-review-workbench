@@ -201,9 +201,9 @@
 
     .dashboard-overview {
       display: grid;
-      grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.6fr);
-      gap: 12px;
-      margin-bottom: 12px;
+      grid-template-columns: minmax(250px, 0.85fr) minmax(0, 1.7fr);
+      gap: 10px;
+      margin-bottom: 10px;
     }
 
     .dashboard-main,
@@ -215,27 +215,27 @@
     }
 
     .dashboard-main {
-      padding: 10px 14px;
+      padding: 8px 12px;
       display: grid;
       align-content: space-between;
-      gap: 8px;
+      gap: 6px;
     }
 
     .dashboard-kicker,
     .metric span {
       color: var(--muted);
-      font-size: 13px;
+      font-size: 12px;
     }
 
     .dashboard-total {
       display: flex;
       align-items: baseline;
-      gap: 10px;
+      gap: 8px;
       min-width: 0;
     }
 
     .dashboard-total strong {
-      font-size: 34px;
+      font-size: 30px;
       line-height: 1;
       font-weight: 780;
     }
@@ -248,12 +248,12 @@
 
     .dashboard-meta {
       color: var(--muted);
-      font-size: 13px;
+      font-size: 12px;
     }
 
     .progress-track {
       display: flex;
-      height: 10px;
+      height: 8px;
       overflow: hidden;
       border-radius: 999px;
       background: #e6ebe2;
@@ -281,16 +281,17 @@
     .dashboard-metrics {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
+      gap: 8px;
     }
 
     .metric {
-      padding: 10px 14px;
+      min-height: 70px;
+      padding: 8px 12px;
     }
 
     .metric strong {
       display: block;
-      font-size: 22px;
+      font-size: 20px;
       line-height: 1.08;
       font-weight: 760;
     }
@@ -919,11 +920,17 @@
       if (!els.ownerFilterSelect) {
         return;
       }
+      if (state.authenticated && state.ownerFilter === `owner:${state.currentUser}`) {
+        state.ownerFilter = "mine";
+      }
+      const participantOptions = PARTICIPANTS
+        .filter((name) => !(state.authenticated && name === state.currentUser))
+        .map((name) => ({ value: `owner:${name}`, label: `筛选：${name}` }));
       const options = [
         { value: "all", label: "筛选：全部" },
-        { value: "mine", label: "筛选：只看我的" },
+        { value: "mine", label: state.authenticated ? `筛选：我的（${state.currentUser}）` : "筛选：只看我的" },
         { value: "unassigned", label: "筛选：未分配" },
-      ].concat(PARTICIPANTS.map((name) => ({ value: `owner:${name}`, label: `筛选：${name}` })));
+      ].concat(participantOptions);
       els.ownerFilterSelect.innerHTML = options.map((option) => `
         <option value="${escapeHtml(option.value)}" ${state.ownerFilter === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>
       `).join("");
@@ -1161,8 +1168,7 @@
     }
 
     function renderExplorer() {
-      const tree = buildHierarchy(filteredBooks());
-      const categories = mergeOssOverviewCategories(tree.categories);
+      const categories = visibleCategories();
       ensureSelection(categories);
       renderSyncCategoryOptions(buildHierarchy(state.books).categories);
       renderStats(categories);
@@ -1248,30 +1254,66 @@
       return date.toLocaleString("zh-CN", { hour12: false });
     }
 
-    function filteredBooks() {
-      const keyword = normalize(els.searchInput.value);
-      const ownerFilter = String(state.ownerFilter || "all");
-      return state.books.filter((book) => {
-        const assignees = bookAssignees(book);
-        if (ownerFilter === "mine" && !assignees.includes(state.currentUser)) {
-          return false;
-        }
-        if (ownerFilter === "unassigned" && assignees.length) {
-          return false;
-        }
-        if (ownerFilter.startsWith("owner:") && !assignees.includes(ownerFilter.slice("owner:".length))) {
-          return false;
-        }
-        return !keyword || normalize([book.title, book.chunk_label, book.oss_middle_key, book.owner_user_id, book.first_reviewer_id, book.second_reviewer_id].join(" ")).includes(keyword);
-      });
+    function visibleCategories() {
+      return filterCategories(mergeOssOverviewCategories(buildHierarchy(state.books).categories));
     }
 
-    function bookAssignees(book) {
-      return Array.from(new Set([
+    function filterCategories(categories) {
+      return categories.map((category) => {
+        const books = category.books.filter((book) => bookPassesFilters(book));
+        return { ...category, books };
+      }).filter((category) => category.books.length);
+    }
+
+    function bookPassesFilters(book) {
+      const ownerFilter = String(state.ownerFilter || "all");
+      const assignees = bookAssignees(book);
+      if (ownerFilter === "mine" && !assignees.includes(state.currentUser)) {
+        return false;
+      }
+      if (ownerFilter === "unassigned" && assignees.length) {
+        return false;
+      }
+      if (ownerFilter.startsWith("owner:") && !assignees.includes(ownerFilter.slice("owner:".length))) {
+        return false;
+      }
+      const keyword = normalize(els.searchInput.value);
+      return !keyword || normalize(bookSearchText(book)).includes(keyword);
+    }
+
+    function bookSearchText(book) {
+      const records = bookRecords(book);
+      return [
+        book.title,
+        book.metaPath,
         book.owner_user_id,
         book.first_reviewer_id,
         book.second_reviewer_id,
-      ].map((value) => String(value || "").trim()).filter(Boolean)));
+        ...records.flatMap((record) => [
+          record.title,
+          record.chunk_label,
+          record.oss_middle_key,
+          record.owner_user_id,
+          record.first_reviewer_id,
+          record.second_reviewer_id,
+        ]),
+      ].join(" ");
+    }
+
+    function bookRecords(book) {
+      return (Array.isArray(book.folders) ? book.folders : []).flatMap((folder) => Array.isArray(folder.records) ? folder.records : []);
+    }
+
+    function bookAssignees(book) {
+      const values = [
+        book.owner_user_id,
+        book.first_reviewer_id,
+        book.second_reviewer_id,
+      ];
+      bookRecords(book).forEach((record) => {
+        values.push(record.owner_user_id, record.first_reviewer_id, record.second_reviewer_id);
+      });
+      return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
     }
 
     function buildHierarchy(books) {
@@ -1330,7 +1372,7 @@
           const owner = String(book.owner_user_id || book.first_reviewer_id || "").trim();
           const firstReviewer = String(book.first_reviewer_id || owner).trim();
           const secondReviewer = String(book.second_reviewer_id || "").trim();
-          if (!bookTitle || existingBooks.has(bookTitle) || !overviewBookPassesFilters({ title: bookTitle, owner_user_id: owner, first_reviewer_id: firstReviewer, second_reviewer_id: secondReviewer })) {
+          if (!bookTitle || existingBooks.has(bookTitle)) {
             return;
           }
           category.books.push({
@@ -1350,22 +1392,6 @@
         category.books.sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
       });
       return merged.sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
-    }
-
-    function overviewBookPassesFilters(book) {
-      const assignees = bookAssignees(book);
-      const ownerFilter = String(state.ownerFilter || "all");
-      if (ownerFilter === "mine" && !assignees.includes(state.currentUser)) {
-        return false;
-      }
-      if (ownerFilter === "unassigned" && assignees.length) {
-        return false;
-      }
-      if (ownerFilter.startsWith("owner:") && !assignees.includes(ownerFilter.slice("owner:".length))) {
-        return false;
-      }
-      const keyword = normalize(els.searchInput.value);
-      return !keyword || normalize([book.title].concat(assignees).join(" ")).includes(keyword);
     }
 
     function deriveBookLocation(book) {
@@ -1417,7 +1443,7 @@
       return parts.slice(folderIndex).join(" / ");
     }
 
-    function ensureSelection(categories = buildHierarchy(filteredBooks()).categories) {
+    function ensureSelection(categories = visibleCategories()) {
       if (!categories.length) {
         state.selectedCategoryKey = "";
         state.selectedBookKey = "";
@@ -1711,8 +1737,7 @@
     function handleBookClick(event) {
       const selectAll = event.target.closest("[data-select-all-books]");
       if (selectAll) {
-        const tree = { categories: mergeOssOverviewCategories(buildHierarchy(filteredBooks()).categories) };
-        const category = tree.categories.find((item) => item.key === state.selectedCategoryKey);
+        const category = visibleCategories().find((item) => item.key === state.selectedCategoryKey);
         const books = category?.books || [];
         if (selectAll.checked) {
           books.forEach((book) => state.selectedBookKeys.add(book.key));
@@ -1758,8 +1783,8 @@
       }
       const assignee = String(document.querySelector("[data-bulk-assignee]")?.value || state.bulkAssignee || "").trim();
       state.bulkAssignee = assignee;
-      const tree = { categories: mergeOssOverviewCategories(buildHierarchy(filteredBooks()).categories) };
-      const books = Array.from(state.selectedBookKeys).map((key) => findBookByKey(tree.categories, key)).filter(Boolean);
+      const categories = visibleCategories();
+      const books = Array.from(state.selectedBookKeys).map((key) => findBookByKey(categories, key)).filter(Boolean);
       if (!books.length) {
         setStatus("请先勾选要分配的书籍", true);
         return;
@@ -1821,8 +1846,7 @@
     }
 
     async function assignOverviewBook(bookKey) {
-      const tree = { categories: mergeOssOverviewCategories(buildHierarchy(filteredBooks()).categories) };
-      const book = findBookByKey(tree.categories, bookKey);
+      const book = findBookByKey(visibleCategories(), bookKey);
       const firstSelect = document.querySelector(`[data-overview-book-first="${cssEscape(bookKey)}"]`);
       const secondSelect = document.querySelector(`[data-overview-book-second="${cssEscape(bookKey)}"]`);
       if (!book || !firstSelect || !secondSelect) {
@@ -1906,8 +1930,7 @@
     }
 
     async function assignFolder(folderKey) {
-      const tree = buildHierarchy(filteredBooks());
-      const folder = findFolderByKey(tree.categories, folderKey);
+      const folder = findFolderByKey(visibleCategories(), folderKey);
       const firstSelect = document.querySelector(`[data-folder-first="${cssEscape(folderKey)}"]`);
       const secondSelect = document.querySelector(`[data-folder-second="${cssEscape(folderKey)}"]`);
       if (!folder || !firstSelect || !secondSelect) {
@@ -1937,8 +1960,7 @@
     }
 
     async function enterSecondReview(folderKey) {
-      const tree = buildHierarchy(filteredBooks());
-      const folder = findFolderByKey(tree.categories, folderKey);
+      const folder = findFolderByKey(visibleCategories(), folderKey);
       const secondSelect = document.querySelector(`[data-folder-second="${cssEscape(folderKey)}"]`);
       if (!folder) {
         setStatus("未找到目标文件夹", true);
