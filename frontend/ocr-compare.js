@@ -1180,6 +1180,10 @@ function placeholderPreviewPage(pageNumber) {
   };
 }
 
+function isDeferredPreviewPage(page) {
+  return Boolean(page?.deferred && !page?.image);
+}
+
 function hydrateCurrentPagePreviewInBackground(pageNumber) {
   const targetPage = Number(pageNumber) || state.currentPage;
   loadPagePreview(targetPage)
@@ -1908,7 +1912,8 @@ function restoreNestedMap(entries) {
 async function goToPage(pageNumber) {
   const total = getReviewPageCount();
   const nextPage = Math.max(1, Math.min(pageNumber, total));
-  if (nextPage === state.currentPage && state.pageCache.has(nextPage)) {
+  const cachedNextPage = state.pageCache.get(nextPage);
+  if (nextPage === state.currentPage && cachedNextPage && !isDeferredPreviewPage(cachedNextPage)) {
     return;
   }
   state.currentPage = nextPage;
@@ -1918,8 +1923,10 @@ async function goToPage(pageNumber) {
   state.reviewCorrectionOpen.clear();
   updatePager();
   scheduleCurrentBookProgressSave();
-  if (hasPdfSource() && !state.pageCache.has(nextPage)) {
-    state.pageCache.set(nextPage, placeholderPreviewPage(nextPage));
+  if (hasPdfSource() && (!cachedNextPage || isDeferredPreviewPage(cachedNextPage))) {
+    if (!cachedNextPage) {
+      state.pageCache.set(nextPage, placeholderPreviewPage(nextPage));
+    }
     await renderCurrentPage();
     hydrateCurrentPagePreviewInBackground(nextPage);
     return;
@@ -2168,6 +2175,9 @@ async function ensureCurrentPagePreview() {
   if (state.pageCache.has(state.currentPage)) {
     const cachedPage = state.pageCache.get(state.currentPage);
     cachePdfTextPage(cachedPage);
+    if (isDeferredPreviewPage(cachedPage) && hasPdfSource()) {
+      hydrateCurrentPagePreviewInBackground(state.currentPage);
+    }
     return cachedPage;
   }
   if (!hasPdfSource()) {
