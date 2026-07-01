@@ -525,6 +525,71 @@ class WorkbenchDatabase:
             )
         return self.get_oss_book_assignment(category_title=category_title, book_title=book_title)
 
+    def bulk_upsert_oss_book_assignments(self, assignments: list[dict[str, Any]], *, user_id: str = "") -> dict[str, Any]:
+        if not self.enabled:
+            return {"ok": False, "error": self.error}
+        if user_id != SETTINGS.app_admin_user_id:
+            return {"ok": False, "error": "permission_denied_admin_only"}
+        now = utc_now()
+        placeholder = self.placeholder
+        rows: list[dict[str, str]] = []
+        for payload in assignments:
+            if not isinstance(payload, dict):
+                return {"ok": False, "error": "invalid_assignment_item"}
+            category_title = str(payload.get("categoryTitle") or payload.get("category_title") or "").strip()
+            book_title = str(payload.get("bookTitle") or payload.get("book_title") or "").strip()
+            book_prefix = str(payload.get("bookPrefix") or payload.get("book_prefix") or "").strip()
+            owner_user_id = str(payload.get("ownerUserId") or payload.get("owner_user_id") or "").strip()
+            first_reviewer_id = str(payload.get("firstReviewerId") or payload.get("first_reviewer_id") or "").strip()
+            second_reviewer_id = str(payload.get("secondReviewerId") or payload.get("second_reviewer_id") or "").strip()
+            if first_reviewer_id and not owner_user_id:
+                owner_user_id = first_reviewer_id
+            if not category_title or not book_title:
+                return {"ok": False, "error": "missing_category_or_book_title"}
+            rows.append(
+                {
+                    "id": f"oss-book:{category_title}:{book_title}",
+                    "category_title": category_title,
+                    "book_title": book_title,
+                    "book_prefix": book_prefix,
+                    "owner_user_id": owner_user_id,
+                    "first_reviewer_id": first_reviewer_id,
+                    "second_reviewer_id": second_reviewer_id,
+                },
+            )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            for row in rows:
+                cur.execute(
+                    f"""
+                    INSERT INTO oss_book_assignments(
+                        id, category_title, book_title, book_prefix,
+                        owner_user_id, first_reviewer_id, second_reviewer_id,
+                        created_by, created_at, updated_at
+                    )
+                    VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                    ON CONFLICT(category_title, book_title) DO UPDATE SET
+                        book_prefix=excluded.book_prefix,
+                        owner_user_id=excluded.owner_user_id,
+                        first_reviewer_id=excluded.first_reviewer_id,
+                        second_reviewer_id=excluded.second_reviewer_id,
+                        updated_at=excluded.updated_at
+                    """,
+                    [
+                        row["id"],
+                        row["category_title"],
+                        row["book_title"],
+                        row["book_prefix"],
+                        row["owner_user_id"],
+                        row["first_reviewer_id"],
+                        row["second_reviewer_id"],
+                        user_id,
+                        now,
+                        now,
+                    ],
+                )
+        return {"ok": True, "assignments": rows, "count": len(rows)}
+
     def get_oss_book_assignment(self, *, category_title: str, book_title: str) -> dict[str, Any]:
         if not self.enabled:
             return {"ok": False, "error": self.error}
@@ -723,6 +788,119 @@ class WorkbenchDatabase:
                 now=now,
             )
         return self.get_book(book_id)
+
+    def bulk_update_books(self, updates_payload: list[dict[str, Any]], *, user_id: str = "") -> dict[str, Any]:
+        if not self.enabled:
+            return {"ok": False, "error": self.error}
+        normalized_payloads: list[tuple[str, dict[str, Any]]] = []
+        for payload in updates_payload:
+            if not isinstance(payload, dict):
+                return {"ok": False, "error": "invalid_update_item"}
+            book_id = str(payload.get("bookId") or payload.get("book_id") or payload.get("id") or "").strip()
+            if not book_id:
+                return {"ok": False, "error": "missing_book_id"}
+            normalized_payloads.append((book_id, payload))
+        if not normalized_payloads:
+            return {"ok": False, "error": "missing_updates"}
+        placeholder = self.placeholder
+        ids = [book_id for book_id, _payload in normalized_payloads]
+        unique_ids = list(dict.fromkeys(ids))
+        placeholders = ", ".join([placeholder] * len(unique_ids))
+        with self.connect() as conn:
+            cur = conn.cursor()
+            rows = cur.execute(f"SELECT * FROM books WHERE id IN ({placeholders})", unique_ids).fetchall()
+            books_by_id = {str(row["id"]): self._normalize_row(row) for row in rows}
+            missing_ids = [book_id for book_id in unique_ids if book_id not in books_by_id]
+            if missing_ids:
+                return {"ok": False, "error": "book_not_found", "bookId": missing_ids[0]}
+            is_admin = user_id == SETTINGS.app_admin_user_id
+            now = utc_now()
+            changed_ids: list[str] = []
+            for book_id, payload in normalized_payloads:
+                book = books_by_id[book_id]
+                updates = self._book_updates_from_payload(book, payload)
+                permission_error = self._validate_book_update_permission(book, updates, user_id=user_id, is_admin=is_admin)
+                if permission_error:
+                    return {**permission_error, "bookId": book_id, "updatedCount": len(changed_ids)}
+                cur.execute(
+                    f"""
+                    UPDATE books
+                    SET owner_user_id = {placeholder},
+                        first_reviewer_id = {placeholder},
+                        second_reviewer_id = {placeholder},
+                        status = {placeholder},
+                        current_page = {placeholder},
+                        updated_at = {placeholder}
+                    WHERE id = {placeholder}
+                    """,
+                    [
+                        updates["owner_user_id"],
+                        updates["first_reviewer_id"],
+                        updates["second_reviewer_id"],
+                        updates["status"],
+                        updates["current_page"],
+                        now,
+                        book_id,
+                    ],
+                )
+                self._sync_book_users(
+                    cur,
+                    book_id,
+                    {
+                        "owner": updates["owner_user_id"],
+                        "first_reviewer": updates["first_reviewer_id"],
+                        "second_reviewer": updates["second_reviewer_id"],
+                    },
+                    created_by=user_id,
+                    now=now,
+                )
+                books_by_id[book_id] = {**book, **updates, "updated_at": now}
+                changed_ids.append(book_id)
+            changed_unique_ids = list(dict.fromkeys(changed_ids))
+            changed_placeholders = ", ".join([placeholder] * len(changed_unique_ids))
+            updated_rows = cur.execute(f"SELECT * FROM books WHERE id IN ({changed_placeholders})", changed_unique_ids).fetchall()
+        books = [self._normalize_row(row) for row in updated_rows]
+        return {"ok": True, "books": books, "count": len(books)}
+
+    def _book_updates_from_payload(self, book: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        owner_user_id = str(payload.get("ownerUserId") or payload.get("owner_user_id") or book.get("owner_user_id") or "").strip()
+        first_reviewer_id = str(payload.get("firstReviewerId") or payload.get("first_reviewer_id") or book.get("first_reviewer_id") or "").strip()
+        second_reviewer_id = str(payload.get("secondReviewerId") or payload.get("second_reviewer_id") or book.get("second_reviewer_id") or "").strip()
+        if first_reviewer_id and not owner_user_id:
+            owner_user_id = first_reviewer_id
+        return {
+            "owner_user_id": owner_user_id,
+            "first_reviewer_id": first_reviewer_id,
+            "second_reviewer_id": second_reviewer_id,
+            "status": str(payload.get("status") or book.get("status") or "unreviewed").strip() or "unreviewed",
+            "current_page": int(payload.get("currentPage") or payload.get("current_page") or book.get("current_page") or 1),
+        }
+
+    def _validate_book_update_permission(
+        self,
+        book: dict[str, Any],
+        updates: dict[str, Any],
+        *,
+        user_id: str,
+        is_admin: bool,
+    ) -> dict[str, Any]:
+        if updates["status"] not in BOOK_STATUS_VALUES:
+            return {"ok": False, "error": "unsupported_book_status"}
+        assignment_changed = any(
+            updates[key] != str(book.get(key) or "").strip()
+            for key in ("owner_user_id", "first_reviewer_id", "second_reviewer_id")
+        )
+        progress_changed = (
+            updates["status"] != str(book.get("status") or "").strip()
+            or updates["current_page"] != int(book.get("current_page") or 1)
+        )
+        if assignment_changed and not is_admin:
+            return {"ok": False, "error": "permission_denied_admin_only"}
+        if progress_changed and not (is_admin and assignment_changed):
+            permission = self._write_permission(book, user_id)
+            if not permission["ok"]:
+                return permission
+        return {}
 
     def save_patch(self, book_id: str, patch: dict[str, Any], *, user_id: str = "") -> dict[str, Any]:
         if not self.enabled:

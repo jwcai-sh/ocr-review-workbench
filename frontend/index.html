@@ -1814,15 +1814,17 @@
       renderExplorer();
       setStatus(`正在批量分配 ${books.length} 本书...`);
       try {
-        for (const book of books) {
-          if (book.fromOssOverview) {
-            await saveOverviewBookAssignment(book, { firstReviewerId: assignee, secondReviewerId: "" });
-          } else {
-            await saveDbBookAssignment(book, { firstReviewerId: assignee, secondReviewerId: "", status: "first_review" });
-          }
+        const overviewBooks = books.filter((book) => book.fromOssOverview);
+        const dbBooks = books.filter((book) => !book.fromOssOverview);
+        if (dbBooks.length) {
+          await saveDbBookAssignments(dbBooks, { firstReviewerId: assignee, secondReviewerId: "", status: "first_review" });
         }
-        setStatus(`已将 ${books.length} 本书的一校分配给 ${assignee || "未分配"}`);
+        if (overviewBooks.length) {
+          await saveOverviewBookAssignments(overviewBooks, { firstReviewerId: assignee, secondReviewerId: "" });
+        }
         state.selectedBookKeys.clear();
+        await refreshAssignmentData();
+        setStatus(`已将 ${books.length} 本书的一校分配给 ${assignee || "未分配"}`);
       } catch (error) {
         setStatus(error.message || String(error), true);
       } finally {
@@ -1887,7 +1889,7 @@
       setStatus(`正在分配：${book.title}`);
       try {
         await saveOverviewBookAssignment(book, assignment);
-        await loadOssOverview({ silent: true });
+        await refreshAssignmentData();
         setStatus(`${book.title} 分配已保存`);
       } catch (error) {
         setStatus(error.message || String(error), true);
@@ -1900,28 +1902,40 @@
     async function saveOverviewBookAssignment(book, assignment) {
       const firstReviewerId = String(assignment?.firstReviewerId || "").trim();
       const secondReviewerId = String(assignment?.secondReviewerId || "").trim();
-      const response = await fetch("/api/oss/book-assignment", {
+      const data = await saveOverviewBookAssignments([book], assignment);
+      return {
+        ok: true,
+        assignment: (data.assignments || [])[0] || {},
+      };
+    }
+
+    async function saveOverviewBookAssignments(books, assignment) {
+      const firstReviewerId = String(assignment?.firstReviewerId || "").trim();
+      const secondReviewerId = String(assignment?.secondReviewerId || "").trim();
+      const assignments = books.map((book) => ({
+        categoryTitle: book.categoryTitle || state.selectedCategoryKey,
+        bookTitle: book.title,
+        bookPrefix: book.bookPrefix || "",
+        ownerUserId: secondReviewerId || firstReviewerId,
+        firstReviewerId,
+        secondReviewerId,
+      }));
+      const response = await fetch("/api/oss/book-assignments/bulk", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          categoryTitle: book.categoryTitle || state.selectedCategoryKey,
-          bookTitle: book.title,
-          bookPrefix: book.bookPrefix || "",
-          ownerUserId: secondReviewerId || firstReviewerId,
-          firstReviewerId,
-          secondReviewerId,
-        }),
+        body: JSON.stringify({ assignments }),
       });
-      const data = await response.json();
+      const data = await readJsonResponse(response, "分配失败");
       if (!data.ok) {
-        throw new Error(data.error || `分配失败：${book.title}`);
+        throw new Error(data.error || "分配失败");
       }
-      const saved = data.assignment || {};
-      updateOverviewBookAssignment(book.categoryTitle || state.selectedCategoryKey, book.title, {
-        ownerUserId: String(saved.owner_user_id || secondReviewerId || firstReviewerId || "").trim(),
-        firstReviewerId: String(saved.first_reviewer_id || firstReviewerId || "").trim(),
-        secondReviewerId: String(saved.second_reviewer_id || secondReviewerId || "").trim(),
+      (data.assignments || []).forEach((saved) => {
+        updateOverviewBookAssignment(saved.category_title, saved.book_title, {
+          ownerUserId: String(saved.owner_user_id || secondReviewerId || firstReviewerId || "").trim(),
+          firstReviewerId: String(saved.first_reviewer_id || firstReviewerId || "").trim(),
+          secondReviewerId: String(saved.second_reviewer_id || secondReviewerId || "").trim(),
+        });
       });
       return data;
     }
@@ -1970,6 +1984,7 @@
       setStatus(`正在分配：${folder.title}`);
       try {
         await saveDbBookAssignment({ folders: [folder], title: folder.title }, { firstReviewerId, secondReviewerId });
+        await refreshAssignmentData();
         setStatus(`${folder.title} 分配已保存`);
       } catch (error) {
         setStatus(error.message || String(error), true);
@@ -1999,6 +2014,7 @@
       setStatus(`正在进入二校：${folder.title}`);
       try {
         await saveDbBookAssignment({ folders: [folder], title: folder.title }, { ...assignment, status: "second_review" });
+        await refreshAssignmentData();
         setStatus(`${folder.title} 已进入二校`);
       } catch (error) {
         setStatus(error.message || String(error), true);
@@ -2009,22 +2025,28 @@
     }
 
     async function saveDbBookAssignment(book, assignment) {
+      return saveDbBookAssignments([book], assignment);
+    }
+
+    async function saveDbBookAssignments(books, assignment) {
       const firstReviewerId = String(assignment?.firstReviewerId || "").trim();
       const secondReviewerId = String(assignment?.secondReviewerId || "").trim();
       const requestedStatus = String(assignment?.status || "").trim();
-      const folders = Array.isArray(book.folders) ? book.folders : [];
       const updates = [];
-      for (const folder of folders) {
-        updateFolderAssignment(folder, { firstReviewerId, secondReviewerId }, requestedStatus);
-        for (const record of folder.records || []) {
-          const nextStatus = requestedStatus || nextStatusForAssignment(record.status, firstReviewerId, secondReviewerId);
-          updates.push({
-            bookId: String(record.id || ""),
-            ownerUserId: secondReviewerId || firstReviewerId,
-            firstReviewerId,
-            secondReviewerId,
-            status: nextStatus,
-          });
+      for (const book of books) {
+        const folders = Array.isArray(book.folders) ? book.folders : [];
+        for (const folder of folders) {
+          updateFolderAssignment(folder, { firstReviewerId, secondReviewerId }, requestedStatus);
+          for (const record of folder.records || []) {
+            const nextStatus = requestedStatus || nextStatusForAssignment(record.status, firstReviewerId, secondReviewerId);
+            updates.push({
+              bookId: String(record.id || ""),
+              ownerUserId: secondReviewerId || firstReviewerId,
+              firstReviewerId,
+              secondReviewerId,
+              status: nextStatus,
+            });
+          }
         }
       }
       if (!updates.length) {
@@ -2043,6 +2065,19 @@
       (data.books || []).forEach((updated) => {
         state.books = state.books.map((item) => String(item.id || "") === String(updated.id || "") ? { ...item, ...updated } : item);
       });
+    }
+
+    async function refreshAssignmentData() {
+      const response = await fetch("/api/books?limit=5000", { cache: "no-store", credentials: "include" });
+      const data = await readJsonResponse(response, "书籍列表读取失败");
+      if (!data.ok) {
+        throw new Error(data.error || "书籍列表读取失败");
+      }
+      state.books = Array.isArray(data.books) ? data.books : [];
+      state.syncRuns = Array.isArray(data.syncRuns) ? data.syncRuns : [];
+      await loadOssOverview({ silent: true });
+      ensureSelection();
+      renderExplorer();
     }
 
     function nextStatusForAssignment(currentStatus, firstReviewerId, secondReviewerId) {

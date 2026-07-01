@@ -153,6 +153,9 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/oss/book-assignment":
             self._send_json(DB_SERVICE.upsert_oss_book_assignment(payload, user_id=self._current_user_id()))
             return
+        if parsed.path == "/api/oss/book-assignments/bulk":
+            self._send_json(self._bulk_upsert_oss_book_assignments(payload))
+            return
         if parsed.path == "/api/oss/load-book":
             self._send_json(self._load_oss_book(payload))
             return
@@ -288,24 +291,15 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             return {"ok": False, "error": "missing_updates"}
         if len(updates) > 300:
             return {"ok": False, "error": "too_many_updates"}
-        user_id = self._current_user_id()
-        books = []
-        for item in updates:
-            if not isinstance(item, dict):
-                return {"ok": False, "error": "invalid_update_item"}
-            book_id = str(item.get("bookId") or item.get("book_id") or item.get("id") or "").strip()
-            if not book_id:
-                return {"ok": False, "error": "missing_book_id"}
-            result = DB_SERVICE.update_book(book_id, item, user_id=user_id)
-            if not result.get("ok"):
-                return {
-                    "ok": False,
-                    "error": result.get("error") or "bulk_update_failed",
-                    "bookId": book_id,
-                    "updatedCount": len(books),
-                }
-            books.append(result.get("book") or {})
-        return {"ok": True, "books": books, "count": len(books)}
+        return DB_SERVICE.bulk_update_books(updates, user_id=self._current_user_id())
+
+    def _bulk_upsert_oss_book_assignments(self, payload: dict) -> dict:
+        assignments = payload.get("assignments") if isinstance(payload.get("assignments"), list) else []
+        if not assignments:
+            return {"ok": False, "error": "missing_assignments"}
+        if len(assignments) > 300:
+            return {"ok": False, "error": "too_many_assignments"}
+        return DB_SERVICE.bulk_upsert_oss_book_assignments(assignments, user_id=self._current_user_id())
 
     def _oss_books(self, payload: dict) -> dict:
         if not OSS_STORAGE_SERVICE.enabled:
