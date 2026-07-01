@@ -198,6 +198,19 @@ class WorkbenchDatabase:
                     PRIMARY KEY (prefix, object_key)
                 )
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS oss_book_assignments (
+                    id TEXT PRIMARY KEY,
+                    category_title TEXT NOT NULL,
+                    book_title TEXT NOT NULL,
+                    book_prefix TEXT NOT NULL DEFAULT '',
+                    owner_user_id TEXT NOT NULL DEFAULT '',
+                    created_by TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (category_title, book_title)
+                )
+                """,
                 "CREATE INDEX IF NOT EXISTS idx_books_status ON books(status)",
                 "CREATE INDEX IF NOT EXISTS idx_books_reviewer ON books(first_reviewer_id, second_reviewer_id)",
                 "CREATE INDEX IF NOT EXISTS idx_books_oss_middle ON books(oss_middle_key)",
@@ -206,6 +219,7 @@ class WorkbenchDatabase:
                 "CREATE INDEX IF NOT EXISTS idx_exports_book ON exports(book_id)",
                 "CREATE INDEX IF NOT EXISTS idx_oss_sync_runs_prefix ON oss_sync_runs(prefix, started_at)",
                 "CREATE INDEX IF NOT EXISTS idx_oss_sync_objects_seen ON oss_sync_objects(prefix, seen_at)",
+                "CREATE INDEX IF NOT EXISTS idx_oss_book_assignments_owner ON oss_book_assignments(owner_user_id)",
             ]
             for statement in statements:
                 cur.execute(statement)
@@ -411,6 +425,72 @@ class WorkbenchDatabase:
             ).fetchall()
         return {"ok": True, "runs": [self._sync_run_from_row(row) for row in rows], "count": len(rows)}
 
+    def list_oss_book_assignments(self) -> dict[str, Any]:
+        if not self.enabled:
+            return {"ok": False, "error": self.error, "assignments": []}
+        with self.connect() as conn:
+            rows = conn.cursor().execute(
+                """
+                SELECT *
+                FROM oss_book_assignments
+                ORDER BY category_title ASC, book_title ASC
+                """
+            ).fetchall()
+        return {"ok": True, "assignments": [self._normalize_row(row) for row in rows], "count": len(rows)}
+
+    def upsert_oss_book_assignment(self, payload: dict[str, Any], *, user_id: str = "") -> dict[str, Any]:
+        if not self.enabled:
+            return {"ok": False, "error": self.error}
+        if user_id != SETTINGS.app_admin_user_id:
+            return {"ok": False, "error": "permission_denied_admin_only"}
+        category_title = str(payload.get("categoryTitle") or payload.get("category_title") or "").strip()
+        book_title = str(payload.get("bookTitle") or payload.get("book_title") or "").strip()
+        book_prefix = str(payload.get("bookPrefix") or payload.get("book_prefix") or "").strip()
+        owner_user_id = str(payload.get("ownerUserId") or payload.get("owner_user_id") or "").strip()
+        if not category_title or not book_title:
+            return {"ok": False, "error": "missing_category_or_book_title"}
+        now = utc_now()
+        assignment_id = f"oss-book:{category_title}:{book_title}"
+        placeholder = self.placeholder
+        with self.connect() as conn:
+            conn.cursor().execute(
+                f"""
+                INSERT INTO oss_book_assignments(
+                    id, category_title, book_title, book_prefix, owner_user_id, created_by, created_at, updated_at
+                )
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                ON CONFLICT(category_title, book_title) DO UPDATE SET
+                    book_prefix=excluded.book_prefix,
+                    owner_user_id=excluded.owner_user_id,
+                    updated_at=excluded.updated_at
+                """,
+                [assignment_id, category_title, book_title, book_prefix, owner_user_id, user_id, now, now],
+            )
+        return self.get_oss_book_assignment(category_title=category_title, book_title=book_title)
+
+    def get_oss_book_assignment(self, *, category_title: str, book_title: str) -> dict[str, Any]:
+        if not self.enabled:
+            return {"ok": False, "error": self.error}
+        placeholder = self.placeholder
+        with self.connect() as conn:
+            row = conn.cursor().execute(
+                f"""
+                SELECT *
+                FROM oss_book_assignments
+                WHERE category_title = {placeholder} AND book_title = {placeholder}
+                """,
+                [str(category_title or "").strip(), str(book_title or "").strip()],
+            ).fetchone()
+        if not row:
+            return {"ok": False, "error": "assignment_not_found"}
+        return {"ok": True, "assignment": self._normalize_row(row)}
+
+    def owner_for_oss_book(self, *, category_title: str, book_title: str) -> str:
+        result = self.get_oss_book_assignment(category_title=category_title, book_title=book_title)
+        if not result.get("ok"):
+            return ""
+        return str((result.get("assignment") or {}).get("owner_user_id") or "").strip()
+
     def _book_row_from_oss(self, item: dict[str, Any], *, owner_user_id: str, now: str) -> dict[str, Any]:
         book_id = str(item.get("workspaceId") or item.get("id") or item.get("middleKey") or "").strip()
         title = str(item.get("title") or item.get("label") or book_id or "Untitled").strip()
@@ -425,7 +505,7 @@ class WorkbenchDatabase:
             "oss_pdf_key": str(item.get("pdfKey") or "").strip(),
             "oss_middle_key": str(item.get("middleKey") or "").strip(),
             "oss_content_list_key": str(item.get("contentListKey") or "").strip(),
-            "owner_user_id": str(owner_user_id or "").strip(),
+            "owner_user_id": str(owner_user_id or item.get("ownerUserId") or item.get("owner_user_id") or "").strip(),
             "status": str(item.get("status") or "unreviewed").strip() or "unreviewed",
             "current_page": int(item.get("currentPage") or 1),
             "created_at": now,

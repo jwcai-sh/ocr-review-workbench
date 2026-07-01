@@ -639,6 +639,7 @@
       syncRuns: [],
       ossOverview: [],
       savingFolderKeys: new Set(),
+      savingOverviewBookKeys: new Set(),
     };
     const els = {};
 
@@ -866,7 +867,11 @@
           throw new Error(data.error || data.dbSync?.error || "OSS 同步失败");
         }
         if (data.jobId) {
-          await pollOssSyncJob(data.jobId);
+          const result = await pollOssSyncJob(data.jobId, { tolerateStatusFailure: true });
+          if (result.statusReadFailed) {
+            setStatus("分类已启动后台入库，但状态暂时不可读。请稍后点击“刷新列表”查看新增书籍。");
+            return;
+          }
         } else {
           const changedCount = data.changedKeyCount == null ? data.keyCount || 0 : data.changedKeyCount;
           setStatus(`OSS 同步完成：对象 ${data.keyCount || 0}，变化 ${changedCount}，识别 ${data.booksFound || 0}，入库 ${data.dbSync?.count || 0}`);
@@ -1144,7 +1149,8 @@
         const existingBooks = new Set(category.books.map((book) => String(book.title || "")));
         (Array.isArray(overview.books) ? overview.books : []).forEach((book) => {
           const bookTitle = String(book.title || "").trim() || String(book.title || "");
-          if (!bookTitle || existingBooks.has(bookTitle)) {
+          const owner = String(book.owner_user_id || "").trim();
+          if (!bookTitle || existingBooks.has(bookTitle) || !overviewBookPassesFilters({ title: bookTitle, owner })) {
             return;
           }
           category.books.push({
@@ -1153,12 +1159,31 @@
             folders: [],
             metaPath: "OSS 分类概览，待同步入库",
             fromOssOverview: true,
+            categoryTitle: title,
+            bookPrefix: String(book.prefix || ""),
+            owner_user_id: owner,
           });
           existingBooks.add(bookTitle);
         });
         category.books.sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
       });
       return merged.sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
+    }
+
+    function overviewBookPassesFilters(book) {
+      const owner = String(book.owner || book.owner_user_id || "").trim();
+      const ownerFilter = String(state.ownerFilter || "all");
+      if (ownerFilter === "mine" && owner !== state.currentUser) {
+        return false;
+      }
+      if (ownerFilter === "unassigned" && owner) {
+        return false;
+      }
+      if (ownerFilter.startsWith("owner:") && owner !== ownerFilter.slice("owner:".length)) {
+        return false;
+      }
+      const keyword = normalize(els.searchInput.value);
+      return !keyword || normalize([book.title, owner].join(" ")).includes(keyword);
     }
 
     function deriveBookLocation(book) {
@@ -1331,12 +1356,36 @@
       const category = categories.find((item) => item.key === state.selectedCategoryKey);
       const book = category?.books.find((item) => item.key === state.selectedBookKey);
       if (!book || !book.folders.length) {
-        els.folderList.innerHTML = book?.fromOssOverview
-          ? '<div class="empty">这是 OSS 两级概览。需要分配前，请先点击“同步所选分类”入库。</div>'
-          : '<div class="empty">先选择左侧书名。</div>';
+        els.folderList.innerHTML = book?.fromOssOverview ? renderOverviewBookAssignmentCard(book) : '<div class="empty">先选择左侧书名。</div>';
         return;
       }
       els.folderList.innerHTML = book.folders.map((folder) => renderFolderCard(folder)).join("");
+    }
+
+    function renderOverviewBookAssignmentCard(book) {
+      const key = String(book.key || "");
+      const owner = String(book.owner_user_id || "").trim();
+      return `
+        <article class="mineru-card">
+          <div class="mineru-top">
+            <div>
+              <strong>${escapeHtml(book.title)}</strong>
+              <span>OSS 两级概览，尚未同步 MinerU 文件夹</span>
+            </div>
+            <span class="badge">待入库</span>
+          </div>
+          <div class="mineru-grid">
+            <label>当前分配：${escapeHtml(owner || "未分配")}</label>
+            <select data-overview-book-assignee="${escapeHtml(key)}" ${canAssign() ? "" : "disabled"}>
+              ${participantOptions(owner)}
+            </select>
+          </div>
+          <div class="mineru-actions">
+            <button class="primary" type="button" data-overview-book-assign="${escapeHtml(key)}" ${canAssign() && !state.savingOverviewBookKeys.has(key) ? "" : "disabled"}>分配</button>
+            <span class="muted-action">校对前再同步所选分类入库</span>
+          </div>
+        </article>
+      `;
     }
 
     function renderFolderCard(folder) {
@@ -1428,6 +1477,15 @@
 
     async function handleFolderClick(event) {
       const button = event.target.closest("[data-folder-assign]");
+      const overviewButton = event.target.closest("[data-overview-book-assign]");
+      if (overviewButton) {
+        if (!canAssign()) {
+          setStatus(state.authenticated ? "只有管理员可以分配" : "请先登录管理员账号", true);
+          return;
+        }
+        await assignOverviewBook(String(overviewButton.dataset.overviewBookAssign || ""));
+        return;
+      }
       if (!button) {
         return;
       }
@@ -1440,6 +1498,60 @@
         return;
       }
       await assignFolder(folderKey);
+    }
+
+    async function assignOverviewBook(bookKey) {
+      const tree = { categories: mergeOssOverviewCategories(buildHierarchy(filteredBooks()).categories) };
+      const book = findBookByKey(tree.categories, bookKey);
+      const select = document.querySelector(`[data-overview-book-assignee="${cssEscape(bookKey)}"]`);
+      if (!book || !select) {
+        setStatus("未找到目标书籍", true);
+        return;
+      }
+      const assignee = String(select.value || "").trim();
+      state.savingOverviewBookKeys.add(bookKey);
+      renderExplorer();
+      setStatus(`正在分配：${book.title}`);
+      try {
+        const response = await fetch("/api/oss/book-assignment", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            categoryTitle: book.categoryTitle || state.selectedCategoryKey,
+            bookTitle: book.title,
+            bookPrefix: book.bookPrefix || "",
+            ownerUserId: assignee,
+          }),
+        });
+        const data = await response.json();
+        if (!data.ok) {
+          throw new Error(data.error || "分配失败");
+        }
+        updateOverviewBookOwner(book.categoryTitle || state.selectedCategoryKey, book.title, assignee);
+        setStatus(`${book.title} 已分配给 ${assignee || "未分配"}`);
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      } finally {
+        state.savingOverviewBookKeys.delete(bookKey);
+        renderExplorer();
+      }
+    }
+
+    function updateOverviewBookOwner(categoryTitle, bookTitle, ownerUserId) {
+      state.ossOverview = state.ossOverview.map((category) => {
+        const title = String(category.title || "").trim() || String(category.title || "");
+        if (title !== String(categoryTitle || "").trim()) {
+          return category;
+        }
+        return {
+          ...category,
+          books: (Array.isArray(category.books) ? category.books : []).map((book) => {
+            const currentTitle = String(book.title || "").trim() || String(book.title || "");
+            return currentTitle === String(bookTitle || "").trim() ? { ...book, owner_user_id: ownerUserId } : book;
+          }),
+        };
+      });
     }
 
     async function assignFolder(folderKey) {
@@ -1488,6 +1600,17 @@
             if (folder.key === folderKey) {
               return folder;
             }
+          }
+        }
+      }
+      return null;
+    }
+
+    function findBookByKey(categories, bookKey) {
+      for (const category of categories) {
+        for (const book of category.books) {
+          if (book.key === bookKey) {
+            return book;
           }
         }
       }

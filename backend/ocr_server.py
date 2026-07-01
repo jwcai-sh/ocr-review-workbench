@@ -150,6 +150,9 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/books/sync-oss":
             self._send_json(self._sync_oss_books(payload))
             return
+        if parsed.path == "/api/oss/book-assignment":
+            self._send_json(DB_SERVICE.upsert_oss_book_assignment(payload, user_id=self._current_user_id()))
+            return
         if parsed.path == "/api/oss/load-book":
             self._send_json(self._load_oss_book(payload))
             return
@@ -303,6 +306,11 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         if not OSS_STORAGE_SERVICE.enabled:
             return {"ok": False, "error": OSS_STORAGE_SERVICE.error or "OSS storage is not configured", "categories": []}
         category_prefixes = OSS_STORAGE_SERVICE.list_child_prefixes(DEFAULT_OSS_BOOKS_PREFIX, limit=500)
+        assignment_rows = DB_SERVICE.list_oss_book_assignments().get("assignments", []) if DB_SERVICE.enabled else []
+        assignment_by_key = {
+            (str(row.get("category_title") or "").strip(), str(row.get("book_title") or "").strip()): row
+            for row in assignment_rows
+        }
         categories = []
         for category_prefix in category_prefixes:
             if not str(category_prefix).startswith(DEFAULT_OSS_BOOKS_PREFIX):
@@ -313,6 +321,13 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
                 {
                     "title": str(book_prefix)[len(str(category_prefix)) :].strip("/"),
                     "prefix": str(book_prefix),
+                    "owner_user_id": str(
+                        assignment_by_key.get(
+                            (title.strip(), str(book_prefix)[len(str(category_prefix)) :].strip("/").strip()),
+                            {},
+                        ).get("owner_user_id")
+                        or ""
+                    ),
                 }
                 for book_prefix in book_prefixes
                 if str(book_prefix).startswith(str(category_prefix))
@@ -575,6 +590,15 @@ def _classify_oss_book_dir(directory: str) -> tuple[str, str, str]:
     return directory, "whole-book", ""
 
 
+def _category_and_book_title_for_oss_entry(book: dict) -> tuple[str, str]:
+    directory = str(book.get("directory") or book.get("middleKey") or "").replace("\\", "/")
+    parts = [part for part in directory.split("/") if part]
+    root_index = 1 if parts and parts[0] == "books-raw" else 0
+    category_title = parts[root_index] if len(parts) > root_index else ""
+    book_title = parts[root_index + 1] if len(parts) > root_index + 1 else str(book.get("title") or "")
+    return category_title.strip(), book_title.strip()
+
+
 def _readable_title(path: str) -> str:
     title = posixpath.basename(path.rstrip("/")) or path
     return title.replace("_解析结果", "").replace("_", " ").strip() or title
@@ -647,6 +671,13 @@ def _run_oss_sync_job(job_id: str, prefix: str, limit: int, owner_user_id: str, 
             },
         )
         books = _build_oss_book_index(keys) if changed_entries else []
+        for book in books:
+            if owner_user_id:
+                continue
+            category_title, book_title = _category_and_book_title_for_oss_entry(book)
+            assigned_owner = DB_SERVICE.owner_for_oss_book(category_title=category_title, book_title=book_title) if DB_SERVICE.enabled else ""
+            if assigned_owner:
+                book["ownerUserId"] = assigned_owner
         books_found = len(books)
         _set_oss_sync_job(job_id, {"booksFound": books_found, "message": "正在写入数据库..." if books else "正在记录同步结果..."})
         sync_result = DB_SERVICE.upsert_oss_books(books, owner_user_id=owner_user_id)
