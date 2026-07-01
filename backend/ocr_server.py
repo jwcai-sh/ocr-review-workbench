@@ -348,11 +348,8 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
                 "bookId": book_id,
             }
 
-        pdf_bytes = OSS_STORAGE_SERVICE.get_bytes(pdf_key)
         middle_bytes = OSS_STORAGE_SERVICE.get_bytes(middle_key)
         content_list_bytes = OSS_STORAGE_SERVICE.get_bytes(content_list_key) if content_list_key else None
-        if not pdf_bytes:
-            return {"ok": False, "error": f"Cannot read PDF from OSS: {pdf_key}"}
         if not middle_bytes:
             return {"ok": False, "error": f"Cannot read middle.json from OSS: {middle_key}"}
 
@@ -362,12 +359,13 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         except Exception as error:  # noqa: BLE001
             return {"ok": False, "error": f"Invalid JSON from OSS: {error}"}
 
-        document = OCR_PREVIEW_SERVICE.load_document_bytes(
-            content=pdf_bytes,
+        pdf_info = middle_json.get("pdf_info") if isinstance(middle_json, dict) else None
+        page_count = len(pdf_info) if isinstance(pdf_info, list) else 0
+        document = OCR_PREVIEW_SERVICE.load_document_reference(
             mime_type="application/pdf",
             name=posixpath.basename(pdf_key) or "origin.pdf",
             oss_key=pdf_key,
-            persist_to_oss=False,
+            page_count=page_count,
         )
         if not document.get("ok"):
             return document

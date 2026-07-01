@@ -157,9 +157,9 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('id="ossBookSelectedSummary"'));
   assert(ocrCompareHtml.includes('id="currentUserSelect"'));
   assert(ocrCompareHtml.includes('id="reviewerAccessBadge"'));
-  assert(ocrCompareHtml.includes('<details class="oss-book-panel"'), "OSS book browser should be collapsed by default");
+  assert(ocrCompareHtml.includes('<details class="oss-book-panel header-oss-book-panel"'), "OSS book browser should be collapsed by default");
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
-  assert(ocrCompareHtml.includes("从 OSS 加载"));
+  assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
   assert(ocrCompareHtml.includes("ocr-compare.js?v=20260629-folder-upload"));
   assert(ocrCompareHtml.includes("ocr-compare.css?v=20260629-folder-upload"));
@@ -1817,6 +1817,22 @@ function assertOcrPatchShape(patch) {
 }
 
 {
+  const footnoteMarkerSource = "finite precision arithmetic on numerical algorithms$^2$, particularly those in numerical linear algebra.";
+  const result = JSON.parse(
+    call(`(() => {
+      const source = ${JSON.stringify(footnoteMarkerSource)};
+      return JSON.stringify({
+        editable: cleanMathpixEditableMarkdown(source),
+        renderNormalized: normalizeInlineMathSpacingForRender(source)
+      });
+    })()`),
+  );
+  assert(result.editable.includes("algorithms$^2$, particularly"), "single-dollar footnote markers should not be forced away from the previous word when saving");
+  assert(result.renderNormalized.includes("algorithms$^2$, particularly"), "single-dollar footnote markers should not be treated as inline math delimiters during render normalization");
+  assert(!result.editable.includes("algorithms $^2$"), "cleanup must not reintroduce a space before footnote-style dollar superscripts");
+}
+
+{
   const hardWrappedProse = [
     "companion that were considered early on were a helium main-sequence star, a white dwarf,",
     "a neutron star and a black hole. Any of these would be consistent with the evolutionary",
@@ -2678,6 +2694,28 @@ function assertOcrPatchShape(patch) {
   assert(!repairedRendered.includes("\\begin{array}\n}{l}"), "render path should not leak split invalid array arguments");
   assert(!repairedRendered.includes("\\begin{array}}{l}"), "render path should not leak single-line invalid array arguments");
   assert(!repairedRendered.includes("<p>$$"), "repaired persisted array formulas should not render display delimiters as paragraph text");
+}
+
+{
+  const spacedTextArray = [
+    "$$",
+    "\\begin{array}{ccc}",
+    "\\text{capital letters} & A, B, C, \\varDelta, \\varLambda & \\text{for matrices}, \\\\",
+    "\\text{subscrip t e d l o w e r c a s e letters} & a_{i j}, b_{i j} & \\text{f o r m a t r i x e l e m e n t s}, \\\\",
+    "\\text{l o w e r c a s e letters} & x, y, z, c, g, h & \\text{f o r v e c t o r s}, \\\\",
+    "\\text{low e r c a s e G r e k l e t t e r s} & \\alpha, \\beta, \\gamma, \\theta, \\pi & \\text{f o r s c a l a r s},",
+    "\\end{array}",
+    "$$"
+  ].join("\n");
+  const cleaned = call(`cleanMathpixEditableMarkdown(${JSON.stringify(spacedTextArray)})`);
+  assert(cleaned.includes("\\text{subscripted lower case letters}"), "known OCR split text phrases should be restored with real word spaces");
+  assert(cleaned.includes("\\text{lower case letters}"), "known lower-case table labels should preserve word boundaries");
+  assert(cleaned.includes("\\text{lower case Greek letters}"), "misspelled split Greek table labels should preserve word boundaries");
+  assert(cleaned.includes("\\text{for matrix elements}"), "right column split descriptions should be restored");
+  assert(cleaned.includes("\\text{for vectors}"), "right column vector descriptions should be restored");
+  assert(cleaned.includes("\\text{for scalars}"), "right column scalar descriptions should be restored");
+  assert(!cleaned.includes("lowercaseGreekletters"), "cleanup must not merge true words inside text commands");
+  assert(!cleaned.includes("formatrixelements"), "cleanup must not leave compacted right-column labels");
 }
 
 {
@@ -6865,6 +6903,26 @@ assert(compactedMathpixSource.includes("\\operatorname*{lim}_{R \\to \\infty}"),
 assert(!compactedMathpixSource.includes("\\frac {"), "editable Mathpix source should not keep spaced command braces");
 assert(!compactedMathpixSource.includes("\\mathrm {"), "editable Mathpix source should not keep spaced roman command braces");
 assert(!compactedMathpixSource.includes("{{\\frac"), "editable Mathpix source should remove redundant whole-expression double braces");
+
+const compactedTextArraySource = call(`cleanMathpixEditableMarkdown(${JSON.stringify(
+  "$$\n\\begin{array}{ccc}\n\\text{l o w e r c a s e G r e e k l e t t e r s} & \\alpha, \\beta, \\gamma, \\theta, \\pi & \\text{f o r s c a l a r s}, \\\\\n\\mbox{capitalletters} & A, B, C, \\Delta, \\Lambda & \\mbox{for matrices}\n\\end{array}\n$$",
+)})`);
+assert(compactedTextArraySource.includes("\\text{lower case Greek letters}"), "editable cleanup should repair character-spaced text inside LaTeX text commands");
+assert(compactedTextArraySource.includes("\\text{for scalars}"), "editable cleanup should repair character-spaced short prose inside LaTeX text commands");
+assert(compactedTextArraySource.includes("\\mbox{capital letters}"), "editable cleanup should repair compacted table labels inside mbox commands");
+assert(compactedTextArraySource.includes("\\mbox{for matrices}"), "normal spaced text command content should remain readable");
+assert(!compactedTextArraySource.includes("l o w e r c a s e"), "character-spaced text should not remain in editable LaTeX arrays");
+assert(!compactedTextArraySource.includes("f o r s c a l a r s"), "character-spaced table prose should not remain in editable LaTeX arrays");
+
+const persistedTextArrayRender = call(`renderBlockContent(${JSON.stringify(
+  "$$\n\\begin{array}{ccc}\n\\text{capitalletters} & A, B, C, \\Delta, \\Lambda & \\text{for matrices}, \\\\\n\\text{subscriptedlowercase letters} & a_{ij}, b_{ij} & \\text{for matrix elements}, \\\\\n\\text{lowercaseletters} & x, y, z & \\text{for vectors}, \\\\\n\\text{low e r c a s e G r e k l e t t e r s} & \\alpha, \\beta, \\gamma, \\theta, \\pi & \\text{for scalars}\n\\end{array}\n$$",
+)}, { kind: "text", blockIndex: "persisted-spaced-text-array" })`);
+assert(persistedTextArrayRender.includes("capital letters"), "persisted table labels should render with restored word spaces");
+assert(persistedTextArrayRender.includes("subscripted lower case letters"), "persisted subscripted label should render with restored word spaces");
+assert(persistedTextArrayRender.includes("lower case letters"), "persisted lower-case label should render with restored word spaces");
+assert(persistedTextArrayRender.includes("lower case Greek letters"), "persisted Greek label should render with restored word spaces");
+assert(!persistedTextArrayRender.includes("capitalletters"), "persisted compact labels should not leak into rendered HTML");
+assert(!persistedTextArrayRender.includes("lowercaseletters"), "persisted compact lower-case labels should not leak into rendered HTML");
 
 const hoistedStandaloneTagSource = call(`cleanMathpixEditableMarkdown(${JSON.stringify(
   "$$\n\\begin{array}{l}\nS_{-} \\equiv \\mathcal{G}^{-1 / 2} \\big( s_{2} - s_{1} \\big), \\\\\nS_{+} \\equiv \\mathcal{G}^{-1 / 2} \\big( 1 - s_{1} - s_{2} \\big).\n\\end{array}\n$$\n\\tag{11.118}\n$$\n$$",

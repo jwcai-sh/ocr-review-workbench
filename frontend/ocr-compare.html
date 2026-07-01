@@ -13,14 +13,28 @@
       <div>
         <h1>OCR 三栏对照</h1>
       </div>
-      <form id="reviewerLoginForm" class="reviewer-session-pill" autocomplete="off">
-        <span>用户</span>
-        <select id="currentUserSelect" aria-label="当前用户"></select>
-        <input id="loginPasswordInput" type="password" placeholder="口令" autocomplete="current-password">
-        <button id="loginButton" type="submit">登录</button>
-        <button id="logoutButton" type="button" disabled>退出</button>
-      </form>
-      <span id="reviewerAccessBadge" class="reviewer-access-badge">本地模式</span>
+      <details class="oss-book-panel header-oss-book-panel" aria-label="从 OSS 选择已有书籍">
+        <summary class="secondary-button oss-book-summary">加载 OSS 书籍</summary>
+        <div class="oss-book-picker">
+          <button id="refreshOssBooksButton" class="secondary-button oss-book-button" type="button">刷新 OSS 书籍</button>
+          <div id="ossBookBrowser" class="oss-book-browser" aria-label="选择 OSS 书籍或分块">
+            <div class="oss-book-browser-column" aria-label="书籍目录">
+              <div class="oss-book-browser-title">书籍</div>
+              <div id="ossBookGroupList" class="oss-book-list" role="listbox" aria-label="OSS 书籍目录">
+                <div class="oss-book-empty">未加载 OSS 书籍</div>
+              </div>
+            </div>
+            <div class="oss-book-browser-column" aria-label="分块列表">
+              <div class="oss-book-browser-title">分块</div>
+              <div id="ossBookEntryList" class="oss-book-list" role="listbox" aria-label="OSS 分块列表">
+                <div class="oss-book-empty">先选择左侧书籍</div>
+              </div>
+            </div>
+          </div>
+          <div id="ossBookSelectedSummary" class="oss-book-selected-summary">未选择 OSS 书籍</div>
+          <button id="loadOssBookButton" class="primary-button oss-book-button" type="button" disabled>加载 OSS 书籍</button>
+        </div>
+      </details>
       <span id="statusBadge" class="status-badge">Ready</span>
     </header>
 
@@ -75,28 +89,14 @@
             </label>
           </div>
         </details>
-        <details class="oss-book-panel" aria-label="从 OSS 选择已有书籍">
-          <summary class="secondary-button oss-book-summary">从 OSS 加载</summary>
-          <div class="oss-book-picker">
-            <button id="refreshOssBooksButton" class="secondary-button oss-book-button" type="button">刷新 OSS 书籍</button>
-            <div id="ossBookBrowser" class="oss-book-browser" aria-label="选择 OSS 书籍或分块">
-              <div class="oss-book-browser-column" aria-label="书籍目录">
-                <div class="oss-book-browser-title">书籍</div>
-                <div id="ossBookGroupList" class="oss-book-list" role="listbox" aria-label="OSS 书籍目录">
-                  <div class="oss-book-empty">未加载 OSS 书籍</div>
-                </div>
-              </div>
-              <div class="oss-book-browser-column" aria-label="分块列表">
-                <div class="oss-book-browser-title">分块</div>
-                <div id="ossBookEntryList" class="oss-book-list" role="listbox" aria-label="OSS 分块列表">
-                  <div class="oss-book-empty">先选择左侧书籍</div>
-                </div>
-              </div>
-            </div>
-            <div id="ossBookSelectedSummary" class="oss-book-selected-summary">未选择 OSS 书籍</div>
-            <button id="loadOssBookButton" class="primary-button oss-book-button" type="button" disabled>加载 OSS 书籍</button>
-          </div>
-        </details>
+      <form id="reviewerLoginForm" class="reviewer-session-pill" autocomplete="off">
+        <span>用户</span>
+        <select id="currentUserSelect" aria-label="当前用户"></select>
+        <input id="loginPasswordInput" type="password" placeholder="口令" autocomplete="current-password">
+        <button id="loginButton" type="submit">登录</button>
+        <button id="logoutButton" type="button" disabled>退出</button>
+      </form>
+      <span id="reviewerAccessBadge" class="reviewer-access-badge">本地模式</span>
         <div class="accepted-top-actions" aria-label="accepted 校正稿操作">
           <button id="previewAcceptedBookButton" class="secondary-button accepted-action-button" type="button" data-preview-accepted-book-patches disabled hidden>
             预览整书 accepted 校正稿

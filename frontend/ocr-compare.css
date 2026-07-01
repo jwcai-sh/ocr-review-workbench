@@ -81,7 +81,6 @@ label[role="button"] {
 }
 
 .status-badge {
-  margin-left: auto;
   min-width: 84px;
   min-height: 34px;
   display: grid;
@@ -96,7 +95,6 @@ label[role="button"] {
 }
 
 .reviewer-session-pill {
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -327,6 +325,10 @@ label[role="button"] {
   position: relative;
 }
 
+.header-oss-book-panel {
+  margin-left: auto;
+}
+
 .oss-book-summary {
   min-height: 38px;
   display: inline-flex;
@@ -354,8 +356,8 @@ label[role="button"] {
   position: absolute;
   z-index: 19;
   top: calc(100% + 6px);
-  left: 0;
-  min-width: min(780px, 100%);
+  right: 0;
+  width: min(780px, calc(100vw - 44px));
   display: grid;
   grid-template-columns: auto minmax(360px, 1fr) minmax(180px, 260px) auto;
   align-items: stretch;

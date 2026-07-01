@@ -118,6 +118,7 @@ class OcrPreviewService:
     def __init__(self) -> None:
         self._documents: dict[str, dict[str, Any]] = {}
         self._uploads: dict[str, dict[str, Any]] = {}
+        self._page_cache: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
     def preview_pages(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -136,6 +137,18 @@ class OcrPreviewService:
         max_pages = max(1, min(int(payload.get("maxPages") or 20), max_page_cap))
         zoom = max(1.0, min(float(payload.get("zoom") or 1.8), 3.0))
         page_number = int(payload["pageNumber"]) if payload.get("pageNumber") else None
+        cache_key = self._page_cache_key(
+            document_id=document_id,
+            page_number=page_number,
+            max_pages=max_pages,
+            zoom=zoom,
+            include_text=include_text,
+            render_images=render_images,
+        )
+        if cache_key:
+            cached = self._get_cached_page_preview(cache_key)
+            if cached:
+                return cached
 
         try:
             if mime_type == "application/pdf" or name.lower().endswith(".pdf"):
@@ -155,10 +168,10 @@ class OcrPreviewService:
         except Exception as error:  # noqa: BLE001
             return {"ok": False, "error": str(error)}
 
-        if OSS_STORAGE_SERVICE.enabled:
+        if OSS_STORAGE_SERVICE.enabled and document.get("persistRenderedPages") is not False:
             self._persist_rendered_pages(document_id, pages)
 
-        return {
+        result = {
             "ok": True,
             "documentId": document_id,
             "name": name,
@@ -167,6 +180,9 @@ class OcrPreviewService:
             "pageCount": total_pages,
             "renderedCount": len(pages),
         }
+        if cache_key:
+            self._set_cached_page_preview(cache_key, result)
+        return result
 
     def upload_document(self, *, content: bytes, mime_type: str, name: str) -> dict[str, Any]:
         if not content:
@@ -209,6 +225,35 @@ class OcrPreviewService:
             "mimeType": document["mimeType"],
             "pageCount": self._document_page_count(document),
             "ossKey": document.get("ossKey") or "",
+        }
+
+    def load_document_reference(
+        self,
+        *,
+        mime_type: str,
+        name: str,
+        oss_key: str,
+        page_count: int = 0,
+    ) -> dict[str, Any]:
+        if not oss_key:
+            return {"ok": False, "error": "Missing OSS document key"}
+        document = self._store_document(
+            mime_type=mime_type or "application/pdf",
+            content=b"",
+            name=name or "origin.pdf",
+            oss_key=oss_key,
+            persist_to_oss=False,
+            page_count=page_count,
+            persist_rendered_pages=False,
+        )
+        return {
+            "ok": True,
+            "documentId": document["id"],
+            "name": document["name"],
+            "mimeType": document["mimeType"],
+            "pageCount": self._document_page_count(document),
+            "ossKey": document.get("ossKey") or "",
+            "deferred": True,
         }
 
     def upload_document_chunk(
@@ -268,7 +313,7 @@ class OcrPreviewService:
         if document_id:
             document = self._get_document(document_id)
             if document:
-                return document
+                return self._materialize_document_content(document)
         parsed = _parse_data_url(str(payload.get("dataUrl") or payload.get("image") or ""))
         if not parsed:
             return None
@@ -294,6 +339,8 @@ class OcrPreviewService:
         name: str,
         oss_key: str = "",
         persist_to_oss: bool = True,
+        page_count: int = 0,
+        persist_rendered_pages: bool = True,
     ) -> dict[str, Any]:
         self._prune_documents()
         document_id = uuid.uuid4().hex
@@ -306,10 +353,31 @@ class OcrPreviewService:
             "content": content,
             "name": name,
             "ossKey": oss_key,
+            "pageCount": int(page_count or 0),
+            "persistRenderedPages": persist_rendered_pages,
             "lastAccessedAt": time.monotonic(),
         }
         with self._lock:
             self._documents[document_id] = document
+        return document
+
+    def _materialize_document_content(self, document: dict[str, Any]) -> dict[str, Any] | None:
+        if bytes(document.get("content") or b""):
+            return document
+        oss_key = str(document.get("ossKey") or "")
+        if not oss_key or not OSS_STORAGE_SERVICE.enabled:
+            return document
+        content = OSS_STORAGE_SERVICE.get_bytes(oss_key)
+        if not content:
+            return None
+        with self._lock:
+            stored = self._documents.get(str(document.get("id") or ""))
+            if stored is not None:
+                stored["content"] = content
+                stored["lastAccessedAt"] = time.monotonic()
+                return stored
+        document["content"] = content
+        document["lastAccessedAt"] = time.monotonic()
         return document
 
     def _persist_rendered_pages(self, document_id: str, pages: list[dict[str, Any]]) -> None:
@@ -324,6 +392,9 @@ class OcrPreviewService:
                 page["ossKey"] = key
 
     def _document_page_count(self, document: dict[str, Any]) -> int:
+        known_page_count = int(document.get("pageCount") or 0)
+        if known_page_count:
+            return known_page_count
         mime_type = str(document.get("mimeType") or "")
         name = str(document.get("name") or "")
         content = bytes(document.get("content") or b"")
@@ -346,6 +417,12 @@ class OcrPreviewService:
             while len(self._documents) > 4:
                 oldest = min(self._documents.items(), key=lambda item: item[1].get("lastAccessedAt", 0))[0]
                 self._documents.pop(oldest, None)
+            expired_pages = [key for key, value in self._page_cache.items() if value.get("lastAccessedAt", 0) < expires_before]
+            for key in expired_pages:
+                self._page_cache.pop(key, None)
+            while len(self._page_cache) > 80:
+                oldest_page = min(self._page_cache.items(), key=lambda item: item[1].get("lastAccessedAt", 0))[0]
+                self._page_cache.pop(oldest_page, None)
 
     def _prune_uploads(self) -> None:
         expires_before = time.monotonic() - 30 * 60
@@ -353,6 +430,45 @@ class OcrPreviewService:
             expired = [key for key, value in self._uploads.items() if value.get("lastAccessedAt", 0) < expires_before]
             for key in expired:
                 self._uploads.pop(key, None)
+
+    def _page_cache_key(
+        self,
+        *,
+        document_id: str,
+        page_number: int | None,
+        max_pages: int,
+        zoom: float,
+        include_text: bool,
+        render_images: bool,
+    ) -> str:
+        if not document_id or page_number is None:
+            return ""
+        return "|".join(
+            [
+                document_id,
+                str(int(page_number)),
+                str(int(max_pages)),
+                str(round(float(zoom), 3)),
+                "text" if include_text else "no-text",
+                "image" if render_images else "no-image",
+            ]
+        )
+
+    def _get_cached_page_preview(self, cache_key: str) -> dict[str, Any] | None:
+        with self._lock:
+            cached = self._page_cache.get(cache_key)
+            if cached:
+                cached["lastAccessedAt"] = time.monotonic()
+                payload = cached.get("payload")
+                return dict(payload) if isinstance(payload, dict) else None
+        return None
+
+    def _set_cached_page_preview(self, cache_key: str, payload: dict[str, Any]) -> None:
+        with self._lock:
+            self._page_cache[cache_key] = {
+                "payload": dict(payload),
+                "lastAccessedAt": time.monotonic(),
+            }
 
 
 OCR_PREVIEW_SERVICE = OcrPreviewService()

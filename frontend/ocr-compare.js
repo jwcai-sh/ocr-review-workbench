@@ -1153,10 +1153,51 @@ async function loadOssBookPayload(response, book) {
   await restoreOcrWorkspaceStateRemoteFirst();
   applyDatabaseBookState(response);
   updatePager();
-  const preview = await loadPagePreview(state.currentPage);
-  cachePreviewPage(state.currentPage, preview);
+  if (response.document?.deferred) {
+    state.pageCache.set(state.currentPage, placeholderPreviewPage(state.currentPage));
+  } else {
+    const preview = await loadPagePreview(state.currentPage);
+    cachePreviewPage(state.currentPage, preview);
+  }
   await renderCurrentPage();
+  if (response.document?.deferred) {
+    hydrateCurrentPagePreviewInBackground(state.currentPage);
+  }
   scheduleMineruRiskAnalysis();
+}
+
+function placeholderPreviewPage(pageNumber) {
+  const pageInfo = state.mineruInfo?.pdf_info?.[Math.max(0, Number(pageNumber || 1) - 1)] || {};
+  const pageSize = Array.isArray(pageInfo.page_size) ? pageInfo.page_size : [];
+  return {
+    pageNumber: Number(pageNumber) || 1,
+    name: `page-${Number(pageNumber) || 1}`,
+    mimeType: "image/png",
+    width: Number(pageSize[0]) || 612,
+    height: Number(pageSize[1]) || 792,
+    image: "",
+    deferred: true,
+  };
+}
+
+function hydrateCurrentPagePreviewInBackground(pageNumber) {
+  const targetPage = Number(pageNumber) || state.currentPage;
+  loadPagePreview(targetPage)
+    .then((preview) => {
+      if (!cachePreviewPage(targetPage, preview) || targetPage !== state.currentPage) {
+        return;
+      }
+      renderCurrentPage().catch((error) => setStatus("原文页渲染失败", "error", error?.message || String(error || "")));
+    })
+    .catch((error) => {
+      const cached = state.pageCache.get(targetPage);
+      if (cached?.deferred) {
+        state.pageCache.delete(targetPage);
+      }
+      if (targetPage === state.currentPage) {
+        setStatus("原文页后台加载失败", "error", error?.message || String(error || ""));
+      }
+    });
 }
 
 function applyDatabaseBookState(response) {
@@ -1877,6 +1918,12 @@ async function goToPage(pageNumber) {
   state.reviewCorrectionOpen.clear();
   updatePager();
   scheduleCurrentBookProgressSave();
+  if (hasPdfSource() && !state.pageCache.has(nextPage)) {
+    state.pageCache.set(nextPage, placeholderPreviewPage(nextPage));
+    await renderCurrentPage();
+    hydrateCurrentPagePreviewInBackground(nextPage);
+    return;
+  }
   await renderCurrentPage();
 }
 
@@ -2340,7 +2387,7 @@ function renderImageCard(page) {
   const pageAspectRatio = `${Number(page.width) || 1} / ${Number(page.height) || 1}`;
   const imageHtml = page.image
     ? `<div class="page-image-surface" style="--pdf-page-aspect-ratio: ${pageAspectRatio};"><img src="${page.image}" alt="第 ${page.pageNumber} 页 OCR 截图">${hotspotsHtml}<div class="page-image-focus" data-page-image-focus hidden></div></div>`
-    : `<div class="empty-inline">尚未选择 PDF。</div>`;
+    : `<div class="empty-inline">${page.deferred ? "原文页正在后台加载，校对内容已可先查看。" : "尚未选择 PDF。"}</div>`;
   card.innerHTML = `
     <div class="card-head image-card-head">
       <div class="source-page-card-pager">
@@ -4817,6 +4864,12 @@ function normalizeInlineMathSpacing(markdown) {
       output += char;
       continue;
     }
+    const footnoteMarker = readLikelyDollarFootnoteMarker(text, index);
+    if (footnoteMarker) {
+      output += footnoteMarker;
+      index += footnoteMarker.length - 1;
+      continue;
+    }
     if (next === "$") {
       output += "$$";
       index += 1;
@@ -4832,6 +4885,19 @@ function normalizeInlineMathSpacing(markdown) {
     }
   }
   return normalizeReferenceSpacing(output.replace(/[ \t]{2,}/g, " "));
+}
+
+function readLikelyDollarFootnoteMarker(text, index) {
+  const value = String(text || "");
+  if (!isSingleUnescapedDollar(value, index) || value[index + 1] !== "^") {
+    return "";
+  }
+  const previous = value[index - 1] || "";
+  if (!previous || !/[A-Za-z0-9)\]}]/.test(previous)) {
+    return "";
+  }
+  const marker = value.slice(index).match(/^\$\^(?:\d+|\{\d+\})\$?/);
+  return marker ? marker[0] : "";
 }
 
 function repairUnclosedInlineMathBeforeReference(line) {
@@ -5181,7 +5247,14 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
   state.acceptedPatchPreview = null;
   state.acceptedPatchBookPreview = null;
   setStatus(patchResult.patch?.status === "accepted" ? "Saved and accepted" : "Ready", "ok");
+  const fullKey = normalizeReviewBlockKey(blockKey, state.currentPage);
+  if (refreshRightWorkbenchOnly({ preserveReviewScroll: true, preserveReviewAnchorKey: fullKey })) {
+    refreshReviewSelectionInPlace(fullKey);
+    schedulePdfFocusSync();
+    return;
+  }
   await renderCurrentPage();
+  scrollSelectedReviewBlockIntoView();
 }
 
 function rejectPriorOcrPatchesForBlock(blockId, currentPatchId) {
@@ -5296,7 +5369,7 @@ function normalizeMathpixOcrArtifacts(markdown) {
 }
 
 function normalizeMathpixCollapsedProse(markdown) {
-  return String(markdown || "")
+  return restoreKnownSpacedOcrTextPhrases(String(markdown || ""))
     .replace(/\bForacompactbinarysystem,\s*/gi, "For a compact binary system, ")
     .replace(/\bthewaveforms\b/gi, "the waveforms")
     .replace(/\baregivento\b/gi, "are given to")
@@ -5531,6 +5604,7 @@ function compactLatexSourceLine(line) {
     .replace(/\\operatorname\*\{([^}]*)\}/g, (_match, name) => `\\operatorname*{${compactSpacedLetters(name)}}`)
     .replace(/\\operatorname\{([^}]*)\}/g, (_match, name) => `\\operatorname{${compactSpacedLetters(name)}}`)
     .replace(/\\mathrm\{([^}]*)\}/g, (_match, value) => `\\mathrm{${compactSpacedLetters(value)}}`)
+    .replace(/\\(?:text|mbox)\{([^}]*)\}/g, (match, value) => match.replace(value, normalizeLatexTextCommandContent(value)))
     .replace(/\\left\s+/g, "\\left")
     .replace(/\\right\s+/g, "\\right")
     .replace(/\(\s+/g, "(")
@@ -5911,6 +5985,47 @@ function isEscapedLatexChar(text, index) {
 function compactSpacedLetters(text) {
   const value = String(text || "").trim();
   return /^[A-Za-z](?:\s+[A-Za-z])+$/.test(value) ? value.replace(/\s+/g, "") : value;
+}
+
+function normalizeLatexTextCommandContent(text) {
+  const value = String(text || "");
+  const restored = restoreKnownSpacedOcrTextPhrases(value);
+  if (restored !== value) {
+    return restored;
+  }
+  const tokens = value.trim().split(/\s+/).filter(Boolean);
+  const singleLetterCount = tokens.filter((token) => /^[A-Za-z]$/.test(token)).length;
+  if (singleLetterCount < 3) {
+    return value;
+  }
+  const compacted = value.replace(/(?<=[A-Za-z])\s+(?=[A-Za-z])/g, "");
+  const restoredCompacted = restoreKnownSpacedOcrTextPhrases(compacted);
+  return restoredCompacted !== compacted ? restoredCompacted : value;
+}
+
+function restoreKnownSpacedOcrTextPhrases(text) {
+  return String(text || "")
+    .replace(/\bc\s*a\s*p\s*i\s*t\s*a\s*l\s+l\s*e\s*t\s*t\s*e\s*r\s*s\b/gi, "capital letters")
+    .replace(/\bs\s*u\s*b\s*s\s*c\s*r\s*i\s*p\s*t\s*e\s*d\s+l\s*o\s*w\s*e\s*r\s+c\s*a\s*s\s*e\s+l\s*e\s*t\s*t\s*e\s*r\s*s\b/gi, "subscripted lower case letters")
+    .replace(/\bl\s*o\s*w\s*e\s*r\s+c\s*a\s*s\s*e\s+G\s*r\s*e\s*e\s*k\s+l\s*e\s*t\s*t\s*e\s*r\s*s\b/g, "lower case Greek letters")
+    .replace(/\bl\s*o\s*w\s*e\s*r\s+c\s*a\s*s\s*e\s+G\s*r\s*e?\s*k\s+l\s*e\s*t\s*t\s*e\s*r\s*s\b/gi, "lower case Greek letters")
+    .replace(/\bl\s*o\s*w\s*e\s*r\s+c\s*a\s*s\s*e\s+l\s*e\s*t\s*t\s*e\s*r\s*s\b/gi, "lower case letters")
+    .replace(/\bf\s*o\s*r\s+m\s*a\s*t\s*r\s*i\s*c\s*e\s*s\b/gi, "for matrices")
+    .replace(/\bf\s*o\s*r\s+m\s*a\s*t\s*r\s*i\s*x\s+e\s*l\s*e\s*m\s*e\s*n\s*t\s*s\b/gi, "for matrix elements")
+    .replace(/\bf\s*o\s*r\s+v\s*e\s*c\s*t\s*o\s*r\s*s\b/gi, "for vectors")
+    .replace(/\bf\s*o\s*r\s+s\s*c\s*a\s*l\s*a\s*r\s*s\b/gi, "for scalars")
+    .replace(/\bcapitalletters\b/gi, "capital letters")
+    .replace(/\bsubscriptedlowercase\s+letters\b/gi, "subscripted lower case letters")
+    .replace(/\bsubscriptedlowercaseletters\b/gi, "subscripted lower case letters")
+    .replace(/\blowercaseGrekletters\b/g, "lower case Greek letters")
+    .replace(/\blowercasegrekletters\b/gi, "lower case Greek letters")
+    .replace(/\blowercaseGreekletters\b/g, "lower case Greek letters")
+    .replace(/\blowercasegreekletters\b/gi, "lower case Greek letters")
+    .replace(/\blowercaseletters\b/gi, "lower case letters")
+    .replace(/\bformatrices\b/gi, "for matrices")
+    .replace(/\bformatrixelements\b/gi, "for matrix elements")
+    .replace(/\bforvectors\b/gi, "for vectors")
+    .replace(/\bforscalars\b/gi, "for scalars");
 }
 
 function shouldRenderAsAlgorithmBlock(markdown, entry) {
