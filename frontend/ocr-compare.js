@@ -7457,9 +7457,13 @@ function normalizeVisibleEquationNumberAsLatexTag(markdown) {
 }
 
 function insertEquationNumberIntoDisplayMath(markdown, equationNumber) {
-  const output = String(markdown || "");
+  let output = String(markdown || "");
   const number = String(equationNumber || "").replace(/[()\s]/g, "");
   if (!number || output.includes(`\\tag{${number}}`)) {
+    return output;
+  }
+  output = replaceVisibleEquationNumberWithLatexTag(output, number);
+  if (output.includes(`\\tag{${number}}`)) {
     return output;
   }
   const endEnvironmentPattern = /\\end\{(?:equation|align|aligned|array|cases|matrix|pmatrix|bmatrix|gather|split|multline)\*?\}/g;
@@ -7475,6 +7479,56 @@ function insertEquationNumberIntoDisplayMath(markdown, equationNumber) {
     return `${output.slice(0, displayClose.index).trimEnd()}\\tag{${number}}\n${output.slice(displayClose.index)}`;
   }
   return `${output.trimEnd()} (${number})`;
+}
+
+function replaceVisibleEquationNumberWithLatexTag(markdown, number) {
+  const source = String(markdown || "");
+  const normalizedNumber = String(number || "").replace(/[()\s]/g, "");
+  if (!normalizedNumber) {
+    return source;
+  }
+  const visibleNumberPattern = new RegExp(`\\(\\s*${escapeRegExp(normalizedNumber).replace(/\\./g, "\\s*\\.\\s*")}\\s*\\)`);
+  const displayClose = findLastDisplayMathClose(source);
+  if (displayClose) {
+    const beforeClose = source.slice(0, displayClose.index);
+    const afterClose = source.slice(displayClose.index);
+    const match = lastVisibleEquationNumberMatch(beforeClose, visibleNumberPattern);
+    if (match) {
+      return `${beforeClose.slice(0, match.index).trimEnd()}\\tag{${normalizedNumber}}${beforeClose.slice(match.index + match.text.length)}${afterClose}`;
+    }
+  }
+  const endEnvironmentPattern = /\\end\{(?:equation|align|aligned|array|cases|matrix|pmatrix|bmatrix|gather|split|multline)\*?\}/g;
+  const environmentMatches = Array.from(source.matchAll(endEnvironmentPattern));
+  const lastEnvironment = environmentMatches[environmentMatches.length - 1];
+  if (!lastEnvironment || typeof lastEnvironment.index !== "number") {
+    return source;
+  }
+  const afterEnvironmentIndex = lastEnvironment.index + lastEnvironment[0].length;
+  const afterEnvironment = source.slice(afterEnvironmentIndex);
+  const match = afterEnvironment.match(visibleNumberPattern);
+  if (!match || typeof match.index !== "number") {
+    return source;
+  }
+  return `${source.slice(0, afterEnvironmentIndex)}\\tag{${normalizedNumber}}${afterEnvironment.slice(0, match.index)}${afterEnvironment.slice(match.index + match[0].length)}`;
+}
+
+function lastVisibleEquationNumberMatch(text, pattern) {
+  const source = String(text || "");
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  const regex = new RegExp(pattern.source, flags);
+  let last = null;
+  let match;
+  while ((match = regex.exec(source))) {
+    last = { index: match.index, text: match[0] };
+    if (match[0].length === 0) {
+      regex.lastIndex += 1;
+    }
+  }
+  return last;
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function findLastDisplayMathClose(markdown) {

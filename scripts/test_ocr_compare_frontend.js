@@ -166,7 +166,7 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260701-equation-tags"));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260701-equation-tags-dedupe"));
   assert(ocrCompareHtml.includes("ocr-compare.css?v=20260629-folder-upload"));
   assert(source.includes('OCR_COMPARE_BUILD_ID = "20260629-folder-upload"'));
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -6998,6 +6998,13 @@ const numberedDollarDisplayPatch = call(`insertEquationNumberIntoDisplayMath("$$
 assert(numberedDollarDisplayPatch.includes("\\tag{2.8}"), "display math without an explicit environment should receive a LaTeX tag");
 assert(!numberedDollarDisplayPatch.trimEnd().endsWith("(2.8)"), "display math numbers should not be appended as prose");
 assert(numberedDollarDisplayPatch.includes("E^S=-15.75A\\tag{2.8}"), "display math tags should stay on the formula line instead of a new line");
+
+const duplicatedVisibleNumberPatch = call(`insertEquationNumberIntoDisplayMath("$$\\n\\\\hat y + \\\\Delta y = f(x + \\\\Delta x),\\\\quad (1.2)\\n$$", "(1.2)")`);
+assert(duplicatedVisibleNumberPatch.includes("\\tag{1.2}"), "existing visible equation number should be normalized into one LaTeX tag");
+assert(!duplicatedVisibleNumberPatch.includes("\\quad (1.2)"), "existing visible equation number should be removed before tagging");
+
+const renderedDedupedEquationNumber = call(`renderBlockContent(${JSON.stringify(duplicatedVisibleNumberPatch)}, { kind: "interline_equation", blockIndex: "dedupe-number" })`);
+assert.strictEqual((renderedDedupedEquationNumber.match(/\(1\.2\)/g) || []).length, 1, "rendered formula should show the equation number only once");
 
 const renderedNumberedDollarDisplay = call(`renderBlockContent("$$\\nE^S=-15.75A\\n\\\\tag{2.8}\\n$$", { kind: "interline_equation", blockIndex: "0" })`);
 assert(renderedNumberedDollarDisplay.includes("math-display-equation-tag"), "rendered display math should expose a visible equation-number tag");
