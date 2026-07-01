@@ -323,6 +323,12 @@
       margin-right: 0;
     }
 
+    .bulk-label {
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
     .bulk-assign-bar select {
       min-width: 96px;
       height: 30px;
@@ -914,10 +920,10 @@
         return;
       }
       const options = [
-        { value: "all", label: "全部" },
-        { value: "mine", label: "只看我的" },
-        { value: "unassigned", label: "未分配" },
-      ].concat(PARTICIPANTS.map((name) => ({ value: `owner:${name}`, label: name })));
+        { value: "all", label: "筛选：全部" },
+        { value: "mine", label: "筛选：只看我的" },
+        { value: "unassigned", label: "筛选：未分配" },
+      ].concat(PARTICIPANTS.map((name) => ({ value: `owner:${name}`, label: `筛选：${name}` })));
       els.ownerFilterSelect.innerHTML = options.map((option) => `
         <option value="${escapeHtml(option.value)}" ${state.ownerFilter === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>
       `).join("");
@@ -1037,6 +1043,13 @@
         }
         await loadBooks();
       } catch (error) {
+        if (isGatewayInterruption(error)) {
+          setStatus("OSS 同步请求被 Zeabur 网关中断。若后台已启动，请稍后点“刷新列表”；当前先保留已加载书籍。", true);
+          window.setTimeout(() => {
+            loadBooks().finally(() => loadOssOverview({ silent: true }));
+          }, 1500);
+          return;
+        }
         setStatus(error.message || String(error), true);
       } finally {
         setBusy(false);
@@ -1058,7 +1071,20 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prefix, limit: 200000 }),
       });
-      const data = await readJsonResponse(response, "OSS 同步失败");
+      let data = null;
+      try {
+        data = await readJsonResponse(response, "OSS 同步失败");
+      } catch (error) {
+        if (isGatewayInterruption(error)) {
+          return {
+            ok: true,
+            status: "unknown",
+            statusReadFailed: true,
+            error: error.message || String(error),
+          };
+        }
+        throw error;
+      }
       if (!data.ok) {
         throw new Error(data.error || data.dbSync?.error || "OSS 同步失败");
       }
@@ -1537,10 +1563,11 @@
         <div class="bulk-assign-bar">
           <input class="folder-select" type="checkbox" data-select-all-books ${allSelected ? "checked" : ""} ${books.length ? "" : "disabled"} aria-label="全选当前书名列表">
           <span>已选 ${selectedCount} 本</span>
+          <span class="bulk-label">批量一校</span>
           <select data-bulk-assignee ${canAssign() ? "" : "disabled"}>
             ${participantOptions(state.bulkAssignee)}
           </select>
-          <button class="primary" type="button" data-bulk-assign ${canAssign() && selectedCount && !state.savingBulkAssignment ? "" : "disabled"}>批量分配</button>
+          <button class="primary" type="button" data-bulk-assign ${canAssign() && selectedCount && !state.savingBulkAssignment ? "" : "disabled"}>应用</button>
         </div>
       `;
     }
@@ -1816,6 +1843,7 @@
       setStatus(`正在分配：${book.title}`);
       try {
         await saveOverviewBookAssignment(book, assignment);
+        await loadOssOverview({ silent: true });
         setStatus(`${book.title} 分配已保存`);
       } catch (error) {
         setStatus(error.message || String(error), true);
@@ -2063,6 +2091,11 @@
         throw new Error(data.error || `${fallbackMessage}：HTTP ${response.status}`);
       }
       return data;
+    }
+
+    function isGatewayInterruption(error) {
+      const message = String(error?.message || error || "");
+      return /Bad Gateway|HTTP 502|Gateway Timeout|HTTP 504|Failed to fetch|NetworkError/i.test(message);
     }
 
     function delay(ms) {
