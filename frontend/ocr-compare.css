@@ -1731,6 +1731,21 @@ label[role="button"] {
   border-color: #dbe4ef;
 }
 
+.selected-save-action:disabled {
+  color: #93a4bc;
+  border-color: #dbe4ef;
+  background: #f8fafc;
+  opacity: 1;
+}
+
+.selected-save-action[aria-busy="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: #eff6ff;
+  cursor: progress;
+  opacity: 1;
+}
+
 .selected-block-toolbar-body {
   padding-top: 2px;
 }

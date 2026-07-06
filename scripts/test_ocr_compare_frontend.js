@@ -122,6 +122,8 @@ function runOcrCompareInContext(testContext) {
   assert(/\.page-block-hotspot:hover,[^{]*\{[^}]*outline:\s*none/.test(ocrCompareCss), "left PDF hover hotspots should suppress visible hover outlines");
   assert(/\.page-block-hotspot:hover,[^{]*\{[^}]*box-shadow:\s*none/.test(ocrCompareCss), "left PDF hover hotspots should suppress visible hover shadows");
   assert(ocrCompareCss.includes(".selected-block-toolbar"));
+  assert(ocrCompareCss.includes(".selected-save-action:disabled"));
+  assert(ocrCompareCss.includes('.selected-save-action[aria-busy="true"]'));
   assert(ocrCompareCss.includes(".block-step-button"));
   assert(ocrCompareCss.includes(".preview-panel"));
   assert(ocrCompareCss.includes(".page-list"));
@@ -3520,6 +3522,80 @@ function assertOcrPatchShape(patch) {
   assert.strictEqual(result.found, true, "save actions inside page blocks should find their Markdown editor");
 }
 
+{
+  const result = JSON.parse(
+    call(`(() => {
+      const detailButton = {
+        disabled: false,
+        textContent: "",
+        dataset: {
+          disableWhenClean: "1",
+          cleanLabel: "未修改",
+          dirtyLabel: "保持修改"
+        }
+      };
+      const toolbarButton = {
+        disabled: false,
+        textContent: "",
+        dataset: {
+          disableWhenClean: "1",
+          cleanLabel: "未修改",
+          dirtyLabel: "保存"
+        }
+      };
+      const detail = {
+        querySelector() {
+          return detailButton;
+        }
+      };
+      const toolbar = {
+        querySelectorAll(selector) {
+          return selector.includes("data-toolbar-apply") ? [toolbarButton] : [];
+        }
+      };
+      const editor = {
+        value: "Saved markdown",
+        defaultValue: "Saved markdown",
+        closest(selector) {
+          if (selector.includes(".block-source-detail")) {
+            return detail;
+          }
+          if (selector.includes(".selected-block-toolbar")) {
+            return toolbar;
+          }
+          return null;
+        }
+      };
+      const clean = updateReviewEditorActionState(editor);
+      const cleanState = {
+        clean,
+        detailDisabled: detailButton.disabled,
+        detailText: detailButton.textContent,
+        toolbarDisabled: toolbarButton.disabled,
+        toolbarText: toolbarButton.textContent
+      };
+      editor.value = "Edited markdown";
+      const dirty = updateReviewEditorActionState(editor);
+      return JSON.stringify({
+        cleanState,
+        dirtyState: {
+          dirty,
+          detailDisabled: detailButton.disabled,
+          detailText: detailButton.textContent,
+          toolbarDisabled: toolbarButton.disabled,
+          toolbarText: toolbarButton.textContent
+        }
+      });
+    })()`),
+  );
+  assert.strictEqual(result.cleanState.clean, false);
+  assert.strictEqual(result.cleanState.toolbarDisabled, true);
+  assert.strictEqual(result.cleanState.toolbarText, "未修改");
+  assert.strictEqual(result.dirtyState.dirty, true);
+  assert.strictEqual(result.dirtyState.toolbarDisabled, false);
+  assert.strictEqual(result.dirtyState.toolbarText, "保存");
+}
+
 function setupPreviewPageExpression(blocks) {
   return `
     state.currentPage = 1;
@@ -6488,7 +6564,7 @@ function setupPreviewBookExpression(pages) {
   assert(canvasResult.correctionCanvas.includes("查看/编辑 MinerU 源码"), "correction panel should expose source editing");
   assert(!canvasResult.correctionCanvas.includes('aria-label="收起校正面板"'), "correction panel toolbar should not expose a separate collapse action");
   assert(!canvasResult.correctionCanvas.includes(">⌃⌃</button>"), "correction panel toolbar should not render the old double-arrow collapse action");
-  assert(canvasResult.correctionCanvas.includes(">保存</button>"), "correction panel should expose an explicit save action");
+  assert(canvasResult.correctionCanvas.includes(">未修改</button>"), "clean correction panel should not present a disabled save action as clickable");
   assert(canvasResult.correctionCanvas.includes(">撤销</button>"), "correction panel should expose an explicit revert action");
   assert(!canvasResult.correctionCanvas.includes(">取消</button>"), "correction panel toolbar should not use the old cancel wording");
   assert(!canvasResult.correctionCanvas.includes("selected-edit-state"), "correction panel toolbar should not show the old keep-edit state action");

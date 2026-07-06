@@ -1718,6 +1718,11 @@ function persistDbOcrPatch(patch) {
   }
   return postJson(`/api/books/${encodeURIComponent(bookId)}/patches`, {
     ...patch,
+  }).then((result) => {
+    if (!result?.ok) {
+      throw new Error(result?.error || "数据库保存失败");
+    }
+    return result;
   }).catch((error) => {
     setStatus("数据库保存失败", "error", error?.message || String(error || ""));
     if (typeof console !== "undefined" && typeof console.warn === "function") {
@@ -1735,6 +1740,11 @@ function persistDbOcrPatchStatus(patch, status) {
   }
   return postJson(`/api/books/${encodeURIComponent(bookId)}/patches/${encodeURIComponent(patch.patchId)}/status`, {
     status,
+  }).then((result) => {
+    if (!result?.ok) {
+      throw new Error(result?.error || "数据库状态保存失败");
+    }
+    return result;
   }).catch((error) => {
     setStatus("数据库状态保存失败", "error", error?.message || String(error || ""));
     if (typeof console !== "undefined" && typeof console.warn === "function") {
@@ -2839,25 +2849,25 @@ function renderReviewCard() {
   card.querySelectorAll("[data-apply-mathpix-block-edit]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      applyMathpixBlockEdit(button.dataset.applyMathpixBlockEdit, button);
+      runReviewSaveButtonAction(button, () => applyMathpixBlockEdit(button.dataset.applyMathpixBlockEdit, button));
     });
   });
   card.querySelectorAll("[data-apply-mineru-source-edit]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      applyMineruSourceEdit(button.dataset.applyMineruSourceEdit, button);
+      runReviewSaveButtonAction(button, () => applyMineruSourceEdit(button.dataset.applyMineruSourceEdit, button));
     });
   });
   card.querySelectorAll("[data-toolbar-apply-mathpix-block-edit]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      applyMathpixBlockEdit(button.dataset.toolbarApplyMathpixBlockEdit, button);
+      runReviewSaveButtonAction(button, () => applyMathpixBlockEdit(button.dataset.toolbarApplyMathpixBlockEdit, button));
     });
   });
   card.querySelectorAll("[data-toolbar-apply-mineru-source-edit]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      applyMineruSourceEdit(button.dataset.toolbarApplyMineruSourceEdit, button);
+      runReviewSaveButtonAction(button, () => applyMineruSourceEdit(button.dataset.toolbarApplyMineruSourceEdit, button));
     });
   });
   card.querySelectorAll("[data-auto-unwrap-linebreaks]").forEach((button) => {
@@ -2959,6 +2969,27 @@ function renderReviewCard() {
     await renderCurrentPage();
   });
   return card;
+}
+
+async function runReviewSaveButtonAction(button, action) {
+  if (button?.disabled || typeof action !== "function") {
+    return false;
+  }
+  const originalText = String(button.textContent || "");
+  button.disabled = true;
+  button.textContent = "保存中...";
+  button.setAttribute?.("aria-busy", "true");
+  try {
+    setStatus("保存校对修改", "busy");
+    await action();
+    return true;
+  } finally {
+    if (button.isConnected) {
+      button.disabled = false;
+      button.textContent = originalText;
+      button.removeAttribute?.("aria-busy");
+    }
+  }
 }
 
 function hasAcceptedOcrPatches() {
@@ -3532,9 +3563,11 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
       : `<button class="text-button risk-action" type="button" data-risk-mathpix="${segment.blockIndex}" ${mathpixDisabled} ${mathpixTitle}>
           ${mathpixActionLabel}
         </button>`;
+    const saveCleanLabel = hasMathpixDraft ? "保存" : "未修改";
+    const saveTitle = hasMathpixDraft ? "保存当前 Mathpix 修改" : "展开“查看/编辑”并修改内容后可保存";
     const saveActionHtml = hasEditableMarkdown
-      ? `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="保存" data-dirty-label="保存" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>保存</button>`
-      : `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="保存" data-dirty-label="保存" disabled>保存</button>`;
+      ? `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="${saveCleanLabel}" data-dirty-label="保存" title="${escapeHtml(saveTitle)}" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>${saveCleanLabel}</button>`
+      : `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保存" title="展开“查看/编辑”并修改内容后可保存" disabled>未修改</button>`;
     const cancelActionHtml = hasMathpixDraft
       ? `<button class="text-button selected-cancel-action" type="button" data-revert-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}">撤销</button>`
       : `<button class="text-button selected-cancel-action" type="button" data-review-correction-toggle="${escapeHtml(reviewKey)}">撤销</button>`;
@@ -4266,26 +4299,32 @@ async function goToReviewBlockTarget(pageNumber, blockIndex) {
 async function applyMathpixBlockEdit(blockIndex, trigger) {
   const blockKey = String(blockIndex || "");
   if (!blockKey) {
-    return;
+    setStatus("保存失败", "error", "缺少 block id");
+    return false;
   }
   const editor = findReviewEditorForTrigger(trigger, "[data-mathpix-edit]");
   if (!editor) {
-    return;
+    setStatus("保存失败", "error", "未找到可保存的编辑内容，请展开“查看/编辑”后重试。");
+    return false;
   }
   const preparedMarkdown = cleanMathpixEditableMarkdown(prepareMathpixMarkdown(editor.value || ""));
   await saveHumanAcceptedBlockEdit(blockKey, preparedMarkdown);
+  return true;
 }
 
 async function applyMineruSourceEdit(blockIndex, trigger) {
   const blockKey = String(blockIndex || "");
   if (!blockKey) {
-    return;
+    setStatus("保存失败", "error", "缺少 block id");
+    return false;
   }
   const editor = findReviewEditorForTrigger(trigger, "[data-mineru-source-edit]");
   if (!editor) {
-    return;
+    setStatus("保存失败", "error", "未找到可保存的编辑内容，请展开“查看/编辑”后重试。");
+    return false;
   }
   await saveHumanAcceptedBlockEdit(blockKey, editor.value || "");
+  return true;
 }
 
 function findReviewEditorForTrigger(trigger, selector) {
@@ -5235,7 +5274,11 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
   const markdown = patchResult.normalizedText;
   if (patchResult.patch?.status === "draft") {
     rejectPriorOcrPatchesForBlock(patchResult.patch.blockId, patchResult.patch.patchId);
-    updateOcrPatchStatus(patchResult.patch.patchId, "accepted");
+    const statusResult = updateOcrPatchStatus(patchResult.patch.patchId, "accepted");
+    if (!statusResult.ok) {
+      setStatus("保存失败", "error", statusResult.reason || "patch_status_update_failed");
+      return;
+    }
   }
   getMathpixBlockDrafts(state.currentPage).delete(blockKey);
   clearLiveReviewDraftForBlock(state.currentPage, blockKey);
@@ -5256,7 +5299,7 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
   updateCorrectionSummary();
   state.acceptedPatchPreview = null;
   state.acceptedPatchBookPreview = null;
-  setStatus(patchResult.patch?.status === "accepted" ? "Saved and accepted" : "Ready", "ok");
+  setStatus(patchResult.patch?.status === "accepted" ? "保存成功" : "Ready", "ok");
   const fullKey = normalizeReviewBlockKey(blockKey, state.currentPage);
   if (refreshRightWorkbenchOnly({ preserveReviewScroll: true, preserveReviewAnchorKey: fullKey })) {
     refreshReviewSelectionInPlace(fullKey);
@@ -7738,8 +7781,9 @@ function updateOcrPatchStatus(patchId, nextStatus) {
   patch.status = targetStatus;
   patch.updatedAt = new Date().toISOString();
   saveOcrWorkspaceState();
-  persistDbOcrPatch(patch).catch(() => {});
-  persistDbOcrPatchStatus(patch, targetStatus).catch(() => {});
+  persistDbOcrPatch(patch)
+    .then(() => persistDbOcrPatchStatus(patch, targetStatus))
+    .catch(() => {});
   return { ok: true, reason: "", patch };
 }
 
