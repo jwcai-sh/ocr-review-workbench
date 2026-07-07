@@ -1437,6 +1437,46 @@ function assertOcrPatchShape(patch) {
 {
   const result = JSON.parse(
     call(`(() => {
+      state.currentPage = 1;
+      state.currentBookId = "oss-book-1";
+      state.currentBookOwnerId = "白";
+      state.currentUser = "门";
+      state.adminUserId = "门";
+      state.adminUserIds = ["门"];
+      state.authenticated = true;
+      const risk = {
+        blockIndex: "0",
+        bbox: [0, 0, 100, 50],
+        pageSize: [100, 100],
+        reasons: ["display_math_block"],
+      };
+      const segment = { blockIndex: "0", markdown: "$$\\\\nE=mc^2\\\\n$$", kind: "interline_equation" };
+      const adminReason = bookReadOnlyReason();
+      const adminCanEdit = canEditCurrentBook();
+      const adminHtml = renderReviewItem(segment, risk, "", false, "$$\\\\nE=m c^2\\\\n$$", null, { toolbarOnly: true });
+      state.currentUser = "丹";
+      const nonAdminReason = bookReadOnlyReason();
+      const nonAdminCanEdit = canEditCurrentBook();
+      state.currentBookId = "";
+      state.currentBookOwnerId = "";
+      state.adminUserIds = ["门"];
+      state.authenticated = false;
+      return JSON.stringify({ adminReason, adminCanEdit, adminHtml, nonAdminReason, nonAdminCanEdit });
+    })()`),
+  );
+  assert.strictEqual(result.adminReason, "", "admin should not be read-only on another owner book");
+  assert.strictEqual(result.adminCanEdit, true, "admin should be allowed to edit another owner book");
+  const adminSaveButton = result.adminHtml.match(/<button[^>]*data-toolbar-apply-mathpix-block-edit="0"[^>]*>/)?.[0] || "";
+  assert(adminSaveButton, "admin toolbar save should render");
+  assert(!adminSaveButton.includes("data-save-disabled-reason"), "admin save should not carry a read-only reason");
+  assert(!adminSaveButton.includes("disabled"), "admin save should stay enabled for another owner book");
+  assert(result.nonAdminReason.includes("owner 为“白”"), "non-admin non-owner should remain read-only");
+  assert.strictEqual(result.nonAdminCanEdit, false);
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
       ${setupPreviewPageExpression(["Original OCR block text"])}
       state.currentPage = 1;
       state.ocrPatches = [];

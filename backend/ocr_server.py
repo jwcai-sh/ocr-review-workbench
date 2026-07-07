@@ -287,6 +287,7 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             "user": current,
             "users": users,
             "adminUserId": SETTINGS.app_admin_user_id,
+            "adminUserIds": SETTINGS.admin_user_ids,
         }
 
     def _handle_login(self, payload: dict) -> None:
@@ -308,13 +309,21 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
                 "user": next(user for user in users if user["id"] == user_id),
                 "users": users,
                 "adminUserId": SETTINGS.app_admin_user_id,
+                "adminUserIds": SETTINGS.admin_user_ids,
             },
             cookie=f"{SESSION_COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_MAX_AGE_SECONDS}",
         )
 
     def _handle_logout(self) -> None:
         self._send_json_with_cookie(
-            {"ok": True, "authenticated": False, "user": None, "users": SETTINGS.auth_users, "adminUserId": SETTINGS.app_admin_user_id},
+            {
+                "ok": True,
+                "authenticated": False,
+                "user": None,
+                "users": SETTINGS.auth_users,
+                "adminUserId": SETTINGS.app_admin_user_id,
+                "adminUserIds": SETTINGS.admin_user_ids,
+            },
             cookie=f"{SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
         )
 

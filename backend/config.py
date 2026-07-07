@@ -82,6 +82,7 @@ class Settings:
     database_url: str = os.getenv("DATABASE_URL", f"sqlite:///{os.path.join(ROOT_DIR, 'data', 'ocr_workbench.db')}")
     app_users: str = os.getenv("APP_USERS", "傲,门,白,丹")
     app_admin_user_id: str = os.getenv("APP_ADMIN_USER_ID", "门")
+    app_admin_user_ids: str = os.getenv("APP_ADMIN_USER_IDS", "")
     session_secret: str = os.getenv("SESSION_SECRET", "ocr-review-workbench-local-session")
 
     @property
@@ -134,6 +135,22 @@ class Settings:
             if user_id:
                 users.append({"id": user_id, "name": name})
         return users or [{"id": name, "name": name} for name in ("傲", "门", "白", "丹")]
+
+    @property
+    def admin_user_ids(self) -> list[str]:
+        candidates = [self.app_admin_user_id]
+        candidates.extend(self.app_admin_user_ids.split(","))
+        admins = []
+        seen = set()
+        for raw_item in candidates:
+            user_id = str(raw_item or "").strip()
+            if user_id and user_id not in seen:
+                seen.add(user_id)
+                admins.append(user_id)
+        return admins or ["门"]
+
+    def is_admin_user(self, user_id: str) -> bool:
+        return str(user_id or "").strip() in set(self.admin_user_ids)
 
     def login_password_for(self, user_id: str) -> str:
         user_id = str(user_id or "").strip()

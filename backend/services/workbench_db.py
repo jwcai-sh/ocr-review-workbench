@@ -479,7 +479,7 @@ class WorkbenchDatabase:
     def upsert_oss_book_assignment(self, payload: dict[str, Any], *, user_id: str = "") -> dict[str, Any]:
         if not self.enabled:
             return {"ok": False, "error": self.error}
-        if user_id != SETTINGS.app_admin_user_id:
+        if not SETTINGS.is_admin_user(user_id):
             return {"ok": False, "error": "permission_denied_admin_only"}
         category_title = str(payload.get("categoryTitle") or payload.get("category_title") or "").strip()
         book_title = str(payload.get("bookTitle") or payload.get("book_title") or "").strip()
@@ -528,7 +528,7 @@ class WorkbenchDatabase:
     def bulk_upsert_oss_book_assignments(self, assignments: list[dict[str, Any]], *, user_id: str = "") -> dict[str, Any]:
         if not self.enabled:
             return {"ok": False, "error": self.error}
-        if user_id != SETTINGS.app_admin_user_id:
+        if not SETTINGS.is_admin_user(user_id):
             return {"ok": False, "error": "permission_denied_admin_only"}
         now = utc_now()
         placeholder = self.placeholder
@@ -744,7 +744,7 @@ class WorkbenchDatabase:
             updates["status"] != str(book.get("status") or "").strip()
             or updates["current_page"] != int(book.get("current_page") or 1)
         )
-        is_admin = user_id == SETTINGS.app_admin_user_id
+        is_admin = SETTINGS.is_admin_user(user_id)
         if assignment_changed and not is_admin:
             return {"ok": False, "error": "permission_denied_admin_only"}
         if progress_changed and not (is_admin and assignment_changed):
@@ -813,7 +813,7 @@ class WorkbenchDatabase:
             missing_ids = [book_id for book_id in unique_ids if book_id not in books_by_id]
             if missing_ids:
                 return {"ok": False, "error": "book_not_found", "bookId": missing_ids[0]}
-            is_admin = user_id == SETTINGS.app_admin_user_id
+            is_admin = SETTINGS.is_admin_user(user_id)
             now = utc_now()
             changed_ids: list[str] = []
             for book_id, payload in normalized_payloads:
@@ -1151,6 +1151,8 @@ class WorkbenchDatabase:
         owner = str((book or {}).get("owner_user_id") or "").strip()
         if not reviewer:
             return {"ok": False, "error": "missing_user_id"}
+        if SETTINGS.is_admin_user(reviewer):
+            return {"ok": True, "role": "admin"}
         if not owner:
             return {"ok": False, "error": "book_not_assigned"}
         if reviewer != owner:

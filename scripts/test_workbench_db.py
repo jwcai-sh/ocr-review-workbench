@@ -11,6 +11,7 @@ if str(ROOT_DIR) not in sys.path:
 
 IMPORT_TMP = tempfile.TemporaryDirectory()
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{Path(IMPORT_TMP.name) / 'import.sqlite'}")
+os.environ.setdefault("APP_ADMIN_USER_ID", "门")
 
 from backend.services.workbench_db import WorkbenchDatabase
 
@@ -142,6 +143,21 @@ def main() -> None:
         assert_true(state_after_resolve["reviewMarks"][0]["status"] == "resolved", "resolved mark should be restored")
         resumed_book = db.get_book(first["book"]["id"])
         assert_true(resumed_book["book"]["status"] == "second_review", "resolved mark should resume second review when second reviewer exists")
+
+        admin_patch = db.save_patch(
+            first["book"]["id"],
+            {**patch, "patchId": "patch-admin", "blockId": "1:4", "newText": "admin corrected markdown"},
+            user_id="门",
+        )
+        assert_true(admin_patch["ok"], "admin should save patches for another owner")
+        admin_accepted = db.update_patch_status(first["book"]["id"], "patch-admin", "accepted", user_id="门")
+        assert_true(admin_accepted["ok"], "admin should update patch status for another owner")
+        admin_mark = db.save_review_mark(
+            first["book"]["id"],
+            {"blockId": "1:4", "pageNo": 1, "markType": "needs_extra_correction", "status": "open"},
+            user_id="门",
+        )
+        assert_true(admin_mark["ok"], "admin should save review marks for another owner")
 
     print("workbench db ok")
 

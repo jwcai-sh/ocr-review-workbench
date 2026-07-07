@@ -53,6 +53,7 @@ const state = {
   authenticated: false,
   users: PARTICIPANTS.map((name) => ({ id: name, name })),
   adminUserId: "门",
+  adminUserIds: ["门"],
   workspaceRemoteSaveTimer: null,
   currentBookProgressSaveTimer: null,
   busy: false,
@@ -498,6 +499,8 @@ function applyAuthState(data) {
   const users = Array.isArray(data?.users) && data.users.length ? data.users : state.users;
   state.users = users.map((user) => ({ id: String(user.id || user.name || ""), name: String(user.name || user.id || "") })).filter((user) => user.id);
   state.adminUserId = String(data?.adminUserId || "门");
+  const adminIds = Array.isArray(data?.adminUserIds) && data.adminUserIds.length ? data.adminUserIds : [state.adminUserId];
+  state.adminUserIds = adminIds.map((userId) => String(userId || "").trim()).filter(Boolean);
   state.authenticated = Boolean(data?.authenticated && data?.user?.id);
   state.currentUser = state.authenticated ? String(data.user.id) : state.adminUserId;
   renderUserOptions();
@@ -1069,6 +1072,12 @@ function currentBookOwnerId() {
   return String(state.currentBookOwnerId || "").trim();
 }
 
+function currentReviewerIsAdmin() {
+  const reviewer = currentReviewerId();
+  const adminIds = Array.isArray(state.adminUserIds) && state.adminUserIds.length ? state.adminUserIds : [state.adminUserId];
+  return Boolean(reviewer && adminIds.map((userId) => String(userId || "").trim()).includes(reviewer));
+}
+
 function bookReadOnlyReason() {
   const bookId = currentDbBookId();
   if (!bookId) {
@@ -1078,6 +1087,9 @@ function bookReadOnlyReason() {
   const reviewer = currentReviewerId();
   if (!state.authenticated) {
     return "请先登录后再保存校对修改。";
+  }
+  if (currentReviewerIsAdmin()) {
+    return "";
   }
   if (!owner) {
     return "当前 OSS 书籍尚未分配 owner，请先在书库中完成分配。";
@@ -1098,12 +1110,14 @@ function updateReviewerSessionUi() {
     return;
   }
   const reason = bookReadOnlyReason();
+  const isAdmin = state.authenticated && currentReviewerIsAdmin();
+  const ownerLabel = currentBookOwnerId() || "未分配";
   const label = currentDbBookId()
-    ? (reason ? `只读 · ${truncateText(reason, 40)}` : `可编辑 · owner「${currentBookOwnerId()}」`)
+    ? (reason ? `只读 · ${truncateText(reason, 40)}` : isAdmin ? `管理员可编辑 · owner「${ownerLabel}」` : `可编辑 · owner「${ownerLabel}」`)
     : (state.authenticated ? `本地模式 · ${state.currentUser}` : "本地模式 · 未登录");
   els.reviewerAccessBadge.textContent = label;
   els.reviewerAccessBadge.className = `reviewer-access-badge ${reason ? "is-readonly" : ""}`;
-  els.reviewerAccessBadge.title = reason || "当前书籍可编辑";
+  els.reviewerAccessBadge.title = reason || (isAdmin ? "管理员可保存所有用户分配的校对修改" : "当前书籍可编辑");
 }
 
 function ensureWritableBookAction(actionLabel = "当前操作") {

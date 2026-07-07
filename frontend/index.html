@@ -838,6 +838,7 @@
       ownerFilter: "all",
       users: PARTICIPANTS.map((name) => ({ id: name, name })),
       adminUserId: "门",
+      adminUserIds: ["门"],
       ossCategories: [],
       syncRuns: [],
       ossOverview: [],
@@ -983,6 +984,8 @@
       const users = Array.isArray(data?.users) && data.users.length ? data.users : state.users;
       state.users = users.map((user) => ({ id: String(user.id || user.name || ""), name: String(user.name || user.id || "") })).filter((user) => user.id);
       state.adminUserId = String(data?.adminUserId || "门");
+      const adminIds = Array.isArray(data?.adminUserIds) && data.adminUserIds.length ? data.adminUserIds : [state.adminUserId];
+      state.adminUserIds = adminIds.map((userId) => String(userId || "").trim()).filter(Boolean);
       state.authenticated = Boolean(data?.authenticated && data?.user?.id);
       state.currentUser = state.authenticated ? String(data.user.id) : state.adminUserId;
       if (state.authenticated && state.ownerFilter === "all" && state.currentUser !== state.adminUserId) {
@@ -1037,12 +1040,13 @@
         els.adminBadge.style.color = "#8b6d12";
         return;
       }
-      els.adminBadge.textContent = isAdmin ? `当前为管理员“${state.currentUser}”，可分配` : `当前为“${state.currentUser}”，不可分配`;
+      els.adminBadge.textContent = isAdmin ? `当前为管理员“${state.currentUser}”，可分配并校对全部书` : `当前为“${state.currentUser}”，不可分配`;
       els.adminBadge.style.color = isAdmin ? "#2f7c48" : "#8b6d12";
     }
 
     function canAssign() {
-      return state.authenticated && state.currentUser === state.adminUserId;
+      const adminIds = Array.isArray(state.adminUserIds) && state.adminUserIds.length ? state.adminUserIds : [state.adminUserId];
+      return state.authenticated && adminIds.map((userId) => String(userId || "").trim()).includes(state.currentUser);
     }
 
     async function loadBooks() {
