@@ -73,7 +73,7 @@ const MATHJAX_SCRIPT_URLS = [
 ];
 const MATHJAX_LOAD_TIMEOUT_MS = 12000;
 const BLOCK_MATHPIX_CROP_PADDING = { horizontal: 4, vertical: 1 };
-const PDF_FOCUS_BOX_PADDING = { horizontal: 36, vertical: 22 };
+const PDF_FOCUS_BOX_PADDING = { horizontal: 36, vertical: 14 };
 const LEGACY_COLUMN_WIDTHS_KEYS = [
   "uma-ocr-compare-column-widths",
   "uma-ocr-compare-column-fractions-v2",
