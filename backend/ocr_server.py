@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import hmac
 import json
@@ -29,6 +30,59 @@ SESSION_COOKIE_NAME = "ocr_workbench_session"
 SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 14
 OSS_SYNC_JOBS: dict[str, dict] = {}
 OSS_SYNC_JOBS_LOCK = threading.Lock()
+BOOKS_LIST_CACHE_TTL_SECONDS = 20.0
+BOOKS_LIST_CACHE: dict[tuple[str, str, int], tuple[float, dict]] = {}
+BOOKS_LIST_CACHE_LOCK = threading.Lock()
+
+
+def _safe_int(value: object, default: int) -> int:
+    try:
+        return int(value or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _books_list_cache_key(status: str = "", reviewer_id: str = "", limit: int = 5000) -> tuple[str, str, int]:
+    normalized_limit = max(1, min(_safe_int(limit, 5000), 5000))
+    return str(status or ""), str(reviewer_id or ""), normalized_limit
+
+
+def _cached_books_list_payload(key: tuple[str, str, int]) -> dict | None:
+    now = time.monotonic()
+    with BOOKS_LIST_CACHE_LOCK:
+        entry = BOOKS_LIST_CACHE.get(key)
+        if not entry:
+            return None
+        expires_at, payload = entry
+        if expires_at <= now:
+            BOOKS_LIST_CACHE.pop(key, None)
+            return None
+        return copy.deepcopy(payload)
+
+
+def _store_books_list_payload(key: tuple[str, str, int], payload: dict) -> None:
+    if not payload.get("ok"):
+        return
+    with BOOKS_LIST_CACHE_LOCK:
+        BOOKS_LIST_CACHE[key] = (time.monotonic() + BOOKS_LIST_CACHE_TTL_SECONDS, copy.deepcopy(payload))
+
+
+def _invalidate_books_list_cache() -> None:
+    with BOOKS_LIST_CACHE_LOCK:
+        BOOKS_LIST_CACHE.clear()
+
+
+def _books_list_payload(status: str = "", reviewer_id: str = "", limit: int = 5000) -> dict:
+    key = _books_list_cache_key(status, reviewer_id, limit)
+    cached = _cached_books_list_payload(key)
+    if cached is not None:
+        return cached
+    normalized_limit = key[2]
+    payload = DB_SERVICE.list_books(status=key[0], reviewer_id=key[1], limit=normalized_limit)
+    if payload.get("ok"):
+        payload["syncRuns"] = DB_SERVICE.list_oss_sync_runs(limit=100).get("runs", [])
+    _store_books_list_payload(key, payload)
+    return payload
 
 
 class OcrWorkbenchHandler(BaseHTTPRequestHandler):
@@ -87,13 +141,11 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/books":
             query = parse_qs(parsed.query)
-            books_payload = DB_SERVICE.list_books(
+            books_payload = _books_list_payload(
                 status=str(query.get("status", [""])[0] or ""),
                 reviewer_id=str(query.get("reviewerId", [""])[0] or ""),
-                limit=int(query.get("limit", ["5000"])[0] or "5000"),
+                limit=_safe_int(query.get("limit", ["5000"])[0], 5000),
             )
-            if books_payload.get("ok"):
-                books_payload["syncRuns"] = DB_SERVICE.list_oss_sync_runs(limit=100).get("runs", [])
             self._send_json(books_payload)
             return
         book_state_id = _book_state_id_from_path(parsed.path)
@@ -145,63 +197,70 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             self._send_json(self._save_workspace(payload))
             return
         if parsed.path == "/api/oss/books":
-            self._send_json(self._oss_books(payload))
+            response = self._oss_books(payload)
+            _invalidate_books_list_cache()
+            self._send_json(response)
             return
         if parsed.path == "/api/books/sync-oss":
+            _invalidate_books_list_cache()
             self._send_json(self._sync_oss_books(payload))
             return
         if parsed.path == "/api/oss/book-assignment":
-            self._send_json(DB_SERVICE.upsert_oss_book_assignment(payload, user_id=self._current_user_id()))
+            response = DB_SERVICE.upsert_oss_book_assignment(payload, user_id=self._current_user_id())
+            _invalidate_books_list_cache()
+            self._send_json(response)
             return
         if parsed.path == "/api/oss/book-assignments/bulk":
-            self._send_json(self._bulk_upsert_oss_book_assignments(payload))
+            response = self._bulk_upsert_oss_book_assignments(payload)
+            _invalidate_books_list_cache()
+            self._send_json(response)
             return
         if parsed.path == "/api/oss/load-book":
             self._send_json(self._load_oss_book(payload))
             return
         if parsed.path == "/api/books/bulk-update":
-            self._send_json(self._bulk_update_books(payload))
+            response = self._bulk_update_books(payload)
+            _invalidate_books_list_cache()
+            self._send_json(response)
             return
         book_update_id = _book_update_id_from_path(parsed.path)
         if book_update_id:
-            self._send_json(
-                DB_SERVICE.update_book(
-                    book_update_id,
-                    payload,
-                    user_id=self._current_user_id(),
-                )
+            response = DB_SERVICE.update_book(
+                book_update_id,
+                payload,
+                user_id=self._current_user_id(),
             )
+            _invalidate_books_list_cache()
+            self._send_json(response)
             return
         book_mark_id = _book_mark_from_path(parsed.path)
         if book_mark_id:
-            self._send_json(
-                DB_SERVICE.save_review_mark(
-                    book_mark_id,
-                    payload,
-                    user_id=self._current_user_id(),
-                )
+            response = DB_SERVICE.save_review_mark(
+                book_mark_id,
+                payload,
+                user_id=self._current_user_id(),
             )
+            _invalidate_books_list_cache()
+            self._send_json(response)
             return
         book_patch = _book_patch_from_path(parsed.path)
         if book_patch:
             book_id, patch_id = book_patch
             if patch_id:
-                self._send_json(
-                    DB_SERVICE.update_patch_status(
-                        book_id,
-                        patch_id,
-                        str(payload.get("status") or ""),
-                        user_id=self._current_user_id(),
-                    )
+                response = DB_SERVICE.update_patch_status(
+                    book_id,
+                    patch_id,
+                    str(payload.get("status") or ""),
+                    user_id=self._current_user_id(),
                 )
             else:
-                self._send_json(
-                    DB_SERVICE.save_patch(
-                        book_id,
-                        payload,
-                        user_id=self._current_user_id(),
-                    )
+                response = DB_SERVICE.save_patch(
+                    book_id,
+                    payload,
+                    user_id=self._current_user_id(),
                 )
+            _invalidate_books_list_cache()
+            self._send_json(response)
             return
         if parsed.path == "/api/ocr/correct":
             self._send_json(OCR_CORRECTION_SERVICE.correct_markdown(payload))
@@ -718,6 +777,7 @@ def _run_oss_sync_job(job_id: str, prefix: str, limit: int, owner_user_id: str, 
         books_found = len(books)
         _set_oss_sync_job(job_id, {"booksFound": books_found, "message": "正在写入数据库..." if books else "正在记录同步结果..."})
         sync_result = DB_SERVICE.upsert_oss_books(books, owner_user_id=owner_user_id)
+        _invalidate_books_list_cache()
         db_sync_count = int(sync_result.get("count") or 0)
         if DB_SERVICE.enabled and run_id:
             DB_SERVICE.finish_oss_sync_run(
