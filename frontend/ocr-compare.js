@@ -73,7 +73,7 @@ const MATHJAX_SCRIPT_URLS = [
 ];
 const MATHJAX_LOAD_TIMEOUT_MS = 12000;
 const BLOCK_MATHPIX_CROP_PADDING = { horizontal: 4, vertical: 1 };
-const PDF_FOCUS_BOX_PADDING = { horizontal: 36, vertical: 14 };
+const PDF_FOCUS_BOX_PADDING = { horizontal: 36, vertical: 14, compactVertical: 6, compactMaxHeight: 36 };
 const LEGACY_COLUMN_WIDTHS_KEYS = [
   "uma-ocr-compare-column-widths",
   "uma-ocr-compare-column-fractions-v2",
@@ -2661,16 +2661,24 @@ function pdfFocusMetricsForRisk(risk, imageWidth, imageHeight) {
   const top = clamp(bbox[1] * scaleY, 0, height);
   const right = clamp(bbox[2] * scaleX, left, width);
   const bottom = clamp(bbox[3] * scaleY, top, height);
+  const verticalPadding = pdfFocusBoxVerticalPadding(top, bottom);
   const paddedLeft = clamp(left - PDF_FOCUS_BOX_PADDING.horizontal, 0, width);
-  const paddedTop = clamp(top - PDF_FOCUS_BOX_PADDING.vertical, 0, height);
+  const paddedTop = clamp(top - verticalPadding, 0, height);
   const paddedRight = clamp(right + PDF_FOCUS_BOX_PADDING.horizontal, paddedLeft, width);
-  const paddedBottom = clamp(bottom + PDF_FOCUS_BOX_PADDING.vertical, paddedTop, height);
+  const paddedBottom = clamp(bottom + verticalPadding, paddedTop, height);
   return {
     left: Math.round(paddedLeft),
     top: Math.round(paddedTop),
     width: Math.max(10, Math.round(paddedRight - paddedLeft)),
     height: Math.max(10, Math.round(paddedBottom - paddedTop)),
   };
+}
+
+function pdfFocusBoxVerticalPadding(top, bottom) {
+  const boxHeight = Math.max(0, Number(bottom) - Number(top));
+  return boxHeight <= PDF_FOCUS_BOX_PADDING.compactMaxHeight
+    ? PDF_FOCUS_BOX_PADDING.compactVertical
+    : PDF_FOCUS_BOX_PADDING.vertical;
 }
 
 function renderMineruCard() {

@@ -5133,12 +5133,14 @@ function setupPreviewBookExpression(pages) {
       return JSON.stringify({
         percent: pdfFocusPercentForRisk(activeExpandedRiskForPage(6)),
         metrics: pdfFocusMetricsForRisk(activeExpandedRiskForPage(6), 1000, 2000),
+        compactMetrics: pdfFocusMetricsForRisk({ bbox: [100, 200, 300, 210], pageSize: [500, 1000] }, 1000, 2000),
         missing: pdfFocusMetricsForRisk({ bbox: null, pageSize: [500, 1000] }, 1000, 2000)
       });
     })()`),
   );
   assert.deepStrictEqual(result.percent, { left: 20, top: 20, width: 40, height: 6 });
   assert.deepStrictEqual(result.metrics, { left: 164, top: 386, width: 472, height: 148 });
+  assert.deepStrictEqual(result.compactMetrics, { left: 164, top: 394, width: 472, height: 32 });
   assert.strictEqual(result.missing, null);
 }
 
