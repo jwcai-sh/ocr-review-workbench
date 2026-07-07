@@ -1115,6 +1115,18 @@ function ensureWritableBookAction(actionLabel = "当前操作") {
   return false;
 }
 
+function reviewSaveDisabledAttrs(reason, fallbackAttrs = "") {
+  const message = String(reason || "").trim();
+  if (!message) {
+    return fallbackAttrs;
+  }
+  return `disabled data-save-disabled-reason="${escapeHtml(message)}"`;
+}
+
+function reviewSaveTitle(reason, fallbackTitle) {
+  return String(reason || fallbackTitle || "").trim();
+}
+
 async function loadOssBookPayload(response, book) {
   const middleJson = response.middleJson;
   const pdfInfo = Array.isArray(middleJson?.pdf_info) ? middleJson.pdf_info : [];
@@ -1899,6 +1911,18 @@ function clearMathpixBlockError(pageNumber, blockIndex) {
 
 function getMathpixBlockError(pageNumber, blockIndex) {
   return state.mathpixBlockErrors.get(mathpixBlockErrorKey(pageNumber, blockIndex)) || "";
+}
+
+function showReviewBlockSaveError(blockKey, message) {
+  const text = String(message || "").trim();
+  if (!text) {
+    return;
+  }
+  setMathpixBlockError(state.currentPage, blockKey, text);
+  const fullKey = normalizeReviewBlockKey(blockKey, state.currentPage);
+  if (refreshRightWorkbenchOnly({ preserveReviewScroll: true, preserveReviewAnchorKey: fullKey })) {
+    refreshReviewSelectionInPlace(fullKey);
+  }
 }
 
 function restoreNestedMap(entries) {
@@ -2986,6 +3010,10 @@ function renderReviewCard() {
 
 async function runReviewSaveButtonAction(button, action) {
   if (button?.disabled || typeof action !== "function") {
+    const reason = String(button?.dataset?.saveDisabledReason || button?.title || "").trim();
+    if (reason) {
+      setStatus("保存不可用", "error", reason);
+    }
     return false;
   }
   const originalText = String(button.textContent || "");
@@ -2994,11 +3022,10 @@ async function runReviewSaveButtonAction(button, action) {
   button.setAttribute?.("aria-busy", "true");
   try {
     setStatus("保存校对修改", "busy");
-    await action();
-    return true;
+    return (await action()) !== false;
   } finally {
     if (button.isConnected) {
-      button.disabled = false;
+      button.disabled = Boolean(button.dataset?.saveDisabledReason);
       button.textContent = originalText;
       button.removeAttribute?.("aria-busy");
     }
@@ -3506,6 +3533,8 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
   } = correctionView;
   const reviewKey = reviewBlockKey(state.currentPage, segment.blockIndex);
   const expanded = state.reviewExpanded.has(reviewKey);
+  const saveDisabledReason = bookReadOnlyReason();
+  const saveUnavailableMessage = saveDisabledReason ? `保存不可用：${saveDisabledReason}` : "";
   const itemState = hasMathpixDraft ? "mathpix-draft" : isCorrected ? "corrected" : isReviewOnly ? "normal" : "candidate";
   const itemStateLabel = isCrossPage
     ? risk.crossPageLabel
@@ -3520,6 +3549,7 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
             : "";
   const correctedPaneTitle = hasMathpixDraft ? "Mathpix 识别稿（未应用）" : hasAcceptedPatchMarkdown ? "已接受校正稿" : "校正稿渲染";
   const mathpixError = String(options.mathpixError || getMathpixBlockError(state.currentPage, segment.blockIndex) || "");
+  const reviewActionError = [mathpixError, saveUnavailableMessage].filter(Boolean).join(" ");
   const mathpixActionLabel = mathpixUnavailable ? (state.mathpixConfigError ? "Mathpix 配置无效" : "Mathpix 未配置") : isCorrected ? "Mathpix 重校正" : risk.bbox ? "Mathpix 校正" : "缺少 bbox";
   const shouldShowLatestOnly = hasMathpixDraft || isCorrected;
   const title = risk?.syntheticLabel
@@ -3537,7 +3567,7 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
             <summary>编辑当前块 MinerU Markdown 源码</summary>
             <textarea class="mathpix-source-editor block-source-editor" data-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" spellcheck="false">${escapeHtml(segment.markdown)}</textarea>
             <div class="mathpix-edit-actions">
-              <button class="text-button" type="button" data-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保持修改" disabled>
+              <button class="text-button" type="button" data-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="未修改" data-dirty-label="保持修改" title="${escapeHtml(reviewSaveTitle(saveDisabledReason, "修改内容后可保存"))}" ${reviewSaveDisabledAttrs(saveDisabledReason, 'data-disable-when-clean="1" disabled')}>
                 未修改
               </button>
             </div>
@@ -3554,7 +3584,7 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
             <summary>编辑 Markdown 源码（保存后进入 accepted 校正稿）</summary>
             <textarea class="mathpix-source-editor" data-mathpix-edit="${escapeHtml(String(segment.blockIndex))}" spellcheck="false">${escapeHtml(editableMarkdown)}</textarea>
             <div class="mathpix-edit-actions">
-              <button class="text-button" type="button" data-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="${hasMathpixDraft ? "保持修改" : "未修改"}" data-dirty-label="保持修改" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>
+              <button class="text-button" type="button" data-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="${hasMathpixDraft ? "保持修改" : "未修改"}" data-dirty-label="保持修改" title="${escapeHtml(reviewSaveTitle(saveDisabledReason, hasMathpixDraft ? "保存当前 Mathpix 修改" : "修改内容后可保存"))}" ${reviewSaveDisabledAttrs(saveDisabledReason, hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled')}>
                 ${hasMathpixDraft ? "保持修改" : "未修改"}
               </button>
               ${hasMathpixDraft ? `<button class="text-button" type="button" data-revert-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}">撤销修改</button>` : ""}
@@ -3577,10 +3607,10 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
           ${mathpixActionLabel}
         </button>`;
     const saveCleanLabel = hasMathpixDraft ? "保存" : "未修改";
-    const saveTitle = hasMathpixDraft ? "保存当前 Mathpix 修改" : "展开“查看/编辑”并修改内容后可保存";
+    const saveTitle = reviewSaveTitle(saveDisabledReason, hasMathpixDraft ? "保存当前 Mathpix 修改" : "展开“查看/编辑”并修改内容后可保存");
     const saveActionHtml = hasEditableMarkdown
-      ? `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="${saveCleanLabel}" data-dirty-label="保存" title="${escapeHtml(saveTitle)}" ${hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled'}>${saveCleanLabel}</button>`
-      : `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保存" title="展开“查看/编辑”并修改内容后可保存" disabled>未修改</button>`;
+      ? `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="${saveCleanLabel}" data-dirty-label="保存" title="${escapeHtml(saveTitle)}" ${reviewSaveDisabledAttrs(saveDisabledReason, hasMathpixDraft ? "" : 'data-disable-when-clean="1" disabled')}>${saveCleanLabel}</button>`
+      : `<button class="text-button selected-save-action" type="button" data-toolbar-apply-mineru-source-edit="${escapeHtml(String(segment.blockIndex))}" data-clean-label="未修改" data-dirty-label="保存" title="${escapeHtml(reviewSaveTitle(saveDisabledReason, "展开“查看/编辑”并修改内容后可保存"))}" ${reviewSaveDisabledAttrs(saveDisabledReason, 'data-disable-when-clean="1" disabled')}>未修改</button>`;
     const cancelActionHtml = hasMathpixDraft
       ? `<button class="text-button selected-cancel-action" type="button" data-revert-mathpix-block-edit="${escapeHtml(String(segment.blockIndex))}">撤销</button>`
       : `<button class="text-button selected-cancel-action" type="button" data-review-correction-toggle="${escapeHtml(reviewKey)}">撤销</button>`;
@@ -3598,13 +3628,14 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
           </div>
         </div>
         <div class="selected-block-toolbar-body">
-          ${mathpixError ? `<div class="review-block-error" role="status">${escapeHtml(mathpixError)}</div>` : ""}
+          ${reviewActionError ? `<div class="review-block-error" role="status">${escapeHtml(reviewActionError)}</div>` : ""}
           ${renderCompactSelectedBlockEditor({
             segment,
             editableMarkdown,
             hasEditableMarkdown,
             hasMathpixDraft,
             mathpixEditorIsSaved,
+            saveDisabledReason,
           })}
         </div>
       </div>
@@ -3631,7 +3662,7 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
         </div>
       </div>
       <div class="review-item-body" ${expanded ? "" : "hidden"}>
-        ${mathpixError ? `<div class="review-block-error" role="status">${escapeHtml(mathpixError)}</div>` : ""}
+        ${reviewActionError ? `<div class="review-block-error" role="status">${escapeHtml(reviewActionError)}</div>` : ""}
         ${bodyHtml}
       </div>
     </article>
@@ -3798,16 +3829,18 @@ function liveReviewMarkdownForEditor(editor) {
   return cleanMathpixEditableMarkdown(value);
 }
 
-function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditableMarkdown, hasMathpixDraft, mathpixEditorIsSaved }) {
+function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditableMarkdown, hasMathpixDraft, mathpixEditorIsSaved, saveDisabledReason = "" }) {
   const blockIndex = escapeHtml(String(segment?.blockIndex ?? ""));
   const mineruMarkdown = escapeHtml(String(segment?.markdown || ""));
   const mathpixMarkdown = escapeHtml(String(editableMarkdown || ""));
+  const mathpixSaveTitle = reviewSaveTitle(saveDisabledReason, mathpixEditorIsSaved ? "修改内容后可保存" : "保存当前 Mathpix 修改");
+  const mineruSaveTitle = reviewSaveTitle(saveDisabledReason, "修改内容后可保存");
   const sourceEditorHtml = hasEditableMarkdown
     ? `<details class="block-source-detail selected-source-detail">
         <summary>查看/编辑</summary>
         <textarea class="mathpix-source-editor" data-mathpix-edit="${blockIndex}" spellcheck="false">${mathpixMarkdown}</textarea>
         <div class="mathpix-edit-actions">
-          <button class="text-button" type="button" data-apply-mathpix-block-edit="${blockIndex}" data-clean-label="${mathpixEditorIsSaved ? "未修改" : "保持修改"}" data-dirty-label="保持修改" ${mathpixEditorIsSaved ? 'data-disable-when-clean="1" disabled' : ""}>
+          <button class="text-button" type="button" data-apply-mathpix-block-edit="${blockIndex}" data-clean-label="${mathpixEditorIsSaved ? "未修改" : "保持修改"}" data-dirty-label="保持修改" title="${escapeHtml(mathpixSaveTitle)}" ${reviewSaveDisabledAttrs(saveDisabledReason, mathpixEditorIsSaved ? 'data-disable-when-clean="1" disabled' : "")}>
             ${mathpixEditorIsSaved ? "未修改" : "保持修改"}
           </button>
           ${hasMathpixDraft ? `<button class="text-button" type="button" data-revert-mathpix-block-edit="${blockIndex}">撤销修改</button>` : ""}
@@ -3817,7 +3850,7 @@ function renderCompactSelectedBlockEditor({ segment, editableMarkdown, hasEditab
         <summary>查看/编辑 MinerU 源码</summary>
         <textarea class="mathpix-source-editor block-source-editor" data-mineru-source-edit="${blockIndex}" spellcheck="false">${mineruMarkdown}</textarea>
         <div class="mathpix-edit-actions">
-          <button class="text-button" type="button" data-apply-mineru-source-edit="${blockIndex}" data-disable-when-clean="1" data-clean-label="未修改" data-dirty-label="保持修改" disabled>
+          <button class="text-button" type="button" data-apply-mineru-source-edit="${blockIndex}" data-clean-label="未修改" data-dirty-label="保持修改" title="${escapeHtml(mineruSaveTitle)}" ${reviewSaveDisabledAttrs(saveDisabledReason, 'data-disable-when-clean="1" disabled')}>
             未修改
           </button>
         </div>
@@ -3842,6 +3875,12 @@ function updateReviewEditorActionState(editor) {
     if (!targetButton) {
       return;
     }
+    const saveDisabledReason = String(targetButton.dataset?.saveDisabledReason || "").trim();
+    if (saveDisabledReason) {
+      targetButton.disabled = true;
+      targetButton.title = saveDisabledReason;
+      return;
+    }
     if (targetButton.dataset?.disableWhenClean === "1") {
       targetButton.disabled = !isDirty;
       targetButton.textContent = isDirty ? targetButton.dataset.dirtyLabel || "保持修改" : targetButton.dataset.cleanLabel || "未修改";
@@ -3857,6 +3896,10 @@ function updateReviewEditorActionState(editor) {
     stateButton.disabled = true;
     stateButton.textContent = isDirty ? stateButton.dataset.dirtyLabel || "保持修改" : stateButton.dataset.cleanLabel || "未修改";
   });
+  if (button?.dataset?.saveDisabledReason) {
+    button.disabled = true;
+    return isDirty;
+  }
   if (button?.dataset?.disableWhenClean === "1") {
     button.disabled = !isDirty;
     return isDirty;
@@ -4321,8 +4364,7 @@ async function applyMathpixBlockEdit(blockIndex, trigger) {
     return false;
   }
   const preparedMarkdown = cleanMathpixEditableMarkdown(prepareMathpixMarkdown(editor.value || ""));
-  await saveHumanAcceptedBlockEdit(blockKey, preparedMarkdown);
-  return true;
+  return saveHumanAcceptedBlockEdit(blockKey, preparedMarkdown);
 }
 
 async function applyMineruSourceEdit(blockIndex, trigger) {
@@ -4336,8 +4378,7 @@ async function applyMineruSourceEdit(blockIndex, trigger) {
     setStatus("保存失败", "error", "未找到可保存的编辑内容，请展开“查看/编辑”后重试。");
     return false;
   }
-  await saveHumanAcceptedBlockEdit(blockKey, editor.value || "");
-  return true;
+  return saveHumanAcceptedBlockEdit(blockKey, editor.value || "");
 }
 
 function findReviewEditorForTrigger(trigger, selector) {
@@ -5264,13 +5305,18 @@ function unwrapPlainTextParagraph(paragraph) {
 }
 
 async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
-  if (!ensureWritableBookAction("当前书籍只读")) {
-    return;
+  const readOnlyReason = bookReadOnlyReason();
+  if (readOnlyReason) {
+    setStatus("当前书籍只读", "error", readOnlyReason);
+    showReviewBlockSaveError(blockKey, readOnlyReason);
+    return false;
   }
   const preparedMarkdown = cleanMathpixEditableMarkdown(String(newMarkdown || ""));
   if (!preparedMarkdown.trim()) {
-    setStatus("Empty block", "error");
-    return;
+    const message = "保存内容为空。";
+    setStatus("保存失败", "error", message);
+    showReviewBlockSaveError(blockKey, message);
+    return false;
   }
   const segment = reviewSegmentsForPage(state.currentPage).find((item) => String(item.blockIndex) === blockKey);
   const risk = reviewRiskForBlock(state.currentPage, blockKey);
@@ -5282,15 +5328,22 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
     source: "human",
   });
   if (!patchResult?.patch) {
-    return;
+    const message = patchResult?.renderValidation?.reason === "readonly"
+      ? bookReadOnlyReason() || "当前书籍只读"
+      : "无法创建 OCR patch。";
+    setStatus("保存失败", "error", message);
+    showReviewBlockSaveError(blockKey, message);
+    return false;
   }
   const markdown = patchResult.normalizedText;
   if (patchResult.patch?.status === "draft") {
     rejectPriorOcrPatchesForBlock(patchResult.patch.blockId, patchResult.patch.patchId);
     const statusResult = updateOcrPatchStatus(patchResult.patch.patchId, "accepted");
     if (!statusResult.ok) {
-      setStatus("保存失败", "error", statusResult.reason || "patch_status_update_failed");
-      return;
+      const message = statusResult.reason || "patch_status_update_failed";
+      setStatus("保存失败", "error", message);
+      showReviewBlockSaveError(blockKey, message);
+      return false;
     }
   }
   getMathpixBlockDrafts(state.currentPage).delete(blockKey);
@@ -5305,9 +5358,12 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
       flushRemoteOcrWorkspaceSave(),
     ]);
   } catch (error) {
-    setStatus("保存失败", "error", error?.message || String(error || ""));
-    return;
+    const message = error?.message || String(error || "");
+    setStatus("保存失败", "error", message);
+    showReviewBlockSaveError(blockKey, message);
+    return false;
   }
+  clearMathpixBlockError(state.currentPage, blockKey);
   expandOnlyReviewBlock(state.currentPage, blockKey);
   updateCorrectionSummary();
   state.acceptedPatchPreview = null;
@@ -5317,10 +5373,11 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
   if (refreshRightWorkbenchOnly({ preserveReviewScroll: true, preserveReviewAnchorKey: fullKey })) {
     refreshReviewSelectionInPlace(fullKey);
     schedulePdfFocusSync();
-    return;
+    return true;
   }
   await renderCurrentPage();
   scrollSelectedReviewBlockIntoView();
+  return true;
 }
 
 function rejectPriorOcrPatchesForBlock(blockId, currentPatchId) {

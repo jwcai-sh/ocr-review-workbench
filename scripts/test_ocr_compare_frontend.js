@@ -1407,6 +1407,36 @@ function assertOcrPatchShape(patch) {
 {
   const result = JSON.parse(
     call(`(() => {
+      state.currentPage = 1;
+      state.currentBookId = "oss-book-1";
+      state.currentBookOwnerId = "门";
+      state.currentUser = "门";
+      state.authenticated = false;
+      state.mathpixBlockErrors.clear();
+      const risk = {
+        blockIndex: "0",
+        bbox: [0, 0, 100, 50],
+        pageSize: [100, 100],
+        reasons: ["display_math_block"],
+      };
+      const segment = { blockIndex: "0", markdown: "$$\\\\nE=mc^2\\\\n$$", kind: "interline_equation" };
+      const html = renderReviewItem(segment, risk, "", false, "$$\\\\nE=m c^2\\\\n$$", null, { toolbarOnly: true });
+      state.currentBookId = "";
+      state.currentBookOwnerId = "";
+      state.authenticated = false;
+      return JSON.stringify({ html });
+    })()`),
+  );
+  assert(result.html.includes("保存不可用：请先登录后再保存校对修改。"), "read-only Mathpix save should show the exact reason inline");
+  assert(
+    /data-toolbar-apply-mathpix-block-edit="0"[^>]*title="请先登录后再保存校对修改。"[^>]*disabled[^>]*data-save-disabled-reason="请先登录后再保存校对修改。"/.test(result.html),
+    "read-only Mathpix toolbar save should be disabled with a machine-readable reason",
+  );
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
       ${setupPreviewPageExpression(["Original OCR block text"])}
       state.currentPage = 1;
       state.ocrPatches = [];
@@ -3594,6 +3624,74 @@ function assertOcrPatchShape(patch) {
   assert.strictEqual(result.dirtyState.dirty, true);
   assert.strictEqual(result.dirtyState.toolbarDisabled, false);
   assert.strictEqual(result.dirtyState.toolbarText, "保存");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      const reason = "请先登录后再保存校对修改。";
+      const detailButton = {
+        disabled: false,
+        textContent: "未修改",
+        title: "",
+        dataset: {
+          disableWhenClean: "1",
+          cleanLabel: "未修改",
+          dirtyLabel: "保持修改",
+          saveDisabledReason: reason
+        }
+      };
+      const toolbarButton = {
+        disabled: false,
+        textContent: "保存",
+        title: "",
+        dataset: {
+          disableWhenClean: "1",
+          cleanLabel: "未修改",
+          dirtyLabel: "保存",
+          saveDisabledReason: reason
+        }
+      };
+      const detail = {
+        querySelector() {
+          return detailButton;
+        }
+      };
+      const toolbar = {
+        querySelectorAll(selector) {
+          return selector.includes("data-toolbar-apply") ? [toolbarButton] : [];
+        }
+      };
+      const editor = {
+        value: "Edited markdown",
+        defaultValue: "Original markdown",
+        closest(selector) {
+          if (selector.includes(".block-source-detail")) {
+            return detail;
+          }
+          if (selector.includes(".selected-block-toolbar")) {
+            return toolbar;
+          }
+          return null;
+        }
+      };
+      const dirty = updateReviewEditorActionState(editor);
+      return JSON.stringify({
+        dirty,
+        detailDisabled: detailButton.disabled,
+        detailTitle: detailButton.title,
+        toolbarDisabled: toolbarButton.disabled,
+        toolbarTitle: toolbarButton.title,
+        toolbarText: toolbarButton.textContent
+      });
+    })()`),
+  );
+  assert.strictEqual(result.dirty, true);
+  assert.strictEqual(result.detailDisabled, true, "read-only detail save must stay disabled after editing");
+  assert.strictEqual(result.toolbarDisabled, true, "read-only toolbar save must stay disabled after editing");
+  assert.strictEqual(result.detailTitle, "请先登录后再保存校对修改。");
+  assert.strictEqual(result.toolbarTitle, "请先登录后再保存校对修改。");
+  assert.strictEqual(result.toolbarText, "保存");
 }
 
 function setupPreviewPageExpression(blocks) {
