@@ -7470,7 +7470,12 @@ function createAndStoreDraftOcrPatch({ pageNo, blockIndex, oldText, newText, sou
     },
   });
   state.ocrPatches = state.ocrPatches || [];
-  state.ocrPatches.push(patch);
+  const existingPatchIndex = state.ocrPatches.findIndex((item) => item?.patchId === patch.patchId);
+  if (existingPatchIndex >= 0) {
+    state.ocrPatches.splice(existingPatchIndex, 1, patch);
+  } else {
+    state.ocrPatches.push(patch);
+  }
   saveOcrWorkspaceState();
   persistDbOcrPatch(patch).catch(() => {});
   return { patch, normalizedText, renderValidation };

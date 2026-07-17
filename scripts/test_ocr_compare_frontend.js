@@ -1244,6 +1244,35 @@ function assertOcrPatchShape(patch) {
 }
 
 {
+  const result = JSON.parse(
+    call(`(() => {
+      state.ocrPatches = [];
+      const input = {
+        pageNo: 14,
+        blockIndex: "3",
+        oldText: "Original glossary block",
+        newText: "Corrected glossary block",
+        source: "human"
+      };
+      const first = createAndStoreDraftOcrPatch(input).patch;
+      updateOcrPatchStatus(first.patchId, "accepted");
+      const repeated = createAndStoreDraftOcrPatch(input).patch;
+      const repeatedStatus = updateOcrPatchStatus(repeated.patchId, "accepted");
+      return JSON.stringify({
+        ok: repeatedStatus.ok,
+        reason: repeatedStatus.reason,
+        patchCount: state.ocrPatches.length,
+        statuses: state.ocrPatches.map((patch) => patch.status)
+      });
+    })()`),
+  );
+  assert.strictEqual(result.ok, true, "re-saving identical accepted text should remain transitionable");
+  assert.strictEqual(result.reason, "");
+  assert.strictEqual(result.patchCount, 1, "stable patch IDs should be upserted instead of duplicated locally");
+  assert.deepStrictEqual(result.statuses, ["accepted"]);
+}
+
+{
   const statusHtml = call(`(() => {
     state.ocrPatches = [];
     const patch = createAndStoreDraftOcrPatch({
