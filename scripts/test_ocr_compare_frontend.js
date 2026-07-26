@@ -170,9 +170,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260701-equation-tags-dedupe"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260629-folder-upload"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260629-folder-upload"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260726-structured-review-blocks"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260726-structured-review-blocks"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260726-structured-review-blocks"'));
   assert(source.includes('fetchApi("/api/auth/me"'));
   assert(source.includes('postJson("/api/auth/login"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));

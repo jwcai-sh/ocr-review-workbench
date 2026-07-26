@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260629-folder-upload";
+const OCR_COMPARE_BUILD_ID = "20260726-structured-review-blocks";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
