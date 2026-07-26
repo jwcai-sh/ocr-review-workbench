@@ -74,7 +74,7 @@ const MATHJAX_SCRIPT_URLS = [
 ];
 const MATHJAX_LOAD_TIMEOUT_MS = 12000;
 const BLOCK_MATHPIX_CROP_PADDING = { horizontal: 4, vertical: 1 };
-const PDF_FOCUS_BOX_PADDING = { horizontal: 36, vertical: 14, compactVertical: 6, compactMaxHeight: 36 };
+const PDF_FOCUS_BOX_PADDING = { horizontal: 36, minHorizontal: 12, vertical: 14, compactVertical: 6, compactMaxHeight: 36 };
 const LEGACY_COLUMN_WIDTHS_KEYS = [
   "uma-ocr-compare-column-widths",
   "uma-ocr-compare-column-fractions-v2",
@@ -2699,10 +2699,11 @@ function pdfFocusMetricsForRisk(risk, imageWidth, imageHeight) {
   const top = clamp(bbox[1] * scaleY, 0, height);
   const right = clamp(bbox[2] * scaleX, left, width);
   const bottom = clamp(bbox[3] * scaleY, top, height);
+  const horizontalPadding = pdfFocusBoxHorizontalPadding(left, right, width);
   const verticalPadding = pdfFocusBoxVerticalPadding(top, bottom);
-  const paddedLeft = clamp(left - PDF_FOCUS_BOX_PADDING.horizontal, 0, width);
+  const paddedLeft = clamp(left - horizontalPadding, 0, width);
   const paddedTop = clamp(top - verticalPadding, 0, height);
-  const paddedRight = clamp(right + PDF_FOCUS_BOX_PADDING.horizontal, paddedLeft, width);
+  const paddedRight = clamp(right + horizontalPadding, paddedLeft, width);
   const paddedBottom = clamp(bottom + verticalPadding, paddedTop, height);
   return {
     left: Math.round(paddedLeft),
@@ -2710,6 +2711,16 @@ function pdfFocusMetricsForRisk(risk, imageWidth, imageHeight) {
     width: Math.max(10, Math.round(paddedRight - paddedLeft)),
     height: Math.max(10, Math.round(paddedBottom - paddedTop)),
   };
+}
+
+function pdfFocusBoxHorizontalPadding(left, right, imageWidth) {
+  const boxWidth = Math.max(1, Number(right) - Number(left));
+  const width = Math.max(1, Number(imageWidth) || 0);
+  const columnRatio = boxWidth / width;
+  if (columnRatio <= 0.26) {
+    return Math.max(PDF_FOCUS_BOX_PADDING.minHorizontal, Math.min(20, boxWidth * 0.25));
+  }
+  return Math.min(PDF_FOCUS_BOX_PADDING.horizontal, Math.max(PDF_FOCUS_BOX_PADDING.minHorizontal, boxWidth * 0.14));
 }
 
 function pdfFocusBoxVerticalPadding(top, bottom) {
@@ -5432,6 +5443,9 @@ function expandOnlyReviewBlock(pageNumber, blockIndex) {
 }
 
 function renderBlockContent(markdown, entry) {
+  if (isTabSeparatedTextTableMarkdown(markdown)) {
+    return renderMarkdownHtml(markdown);
+  }
   if (shouldRenderAsAlgorithmBlock(markdown, entry)) {
     return renderAlgorithmBlock(markdownToAlgorithmLines(markdown));
   }
@@ -5446,6 +5460,12 @@ function renderBlockContent(markdown, entry) {
   const imagePreview = renderBlockImagePreview(normalizedMarkdown, entry);
   const markdownForHtml = imagePreview ? stripMarkdownImageReferences(normalizedMarkdown) : normalizedMarkdown;
   return `${imagePreview}${renderMarkdownHtml(markdownForHtml)}`;
+}
+
+function isTabSeparatedTextTableMarkdown(markdown) {
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+  const table = collectTabSeparatedTableBlock(lines, 0);
+  return Boolean(table && table.nextIndex === lines.length);
 }
 
 function normalizeInlineMathSpacingForRender(markdown) {
@@ -9026,8 +9046,10 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
   const reasons = scored.reasons.slice();
   let score = scored.score;
   const tableReferenceAnchor = continuation ? null : findPageTopTableAnchorForReferencingProse(text, sourceSegments);
+  const isNarrativeContinuation = Boolean(continuation);
   const anchorBlockIndex = continuation?.anchorBlockIndex ?? tableReferenceAnchor?.blockIndex;
   const isAnchoredContinuation = Boolean(anchorBlockIndex != null);
+  const hasContinuationContext = isNarrativeContinuation || isAnchoredContinuation;
   const isTopCandidate = Boolean(!isAnchoredContinuation && geometry?.topRatio <= 0.2 && text.length >= 6);
   if (isTopCandidate && hasCrossPageContinuationForPage(pageNumber)) {
     return null;
@@ -9055,7 +9077,7 @@ function contentListItemToRiskCandidate(item, pageNumber, pageItemIndex, pageSiz
       reasons.push("background_heading_missing");
     }
   }
-  if (isAnchoredContinuation) {
+  if (hasContinuationContext) {
     score = Math.max(score, 0.33);
     if (!reasons.includes("content_list_anchored_continuation")) {
       reasons.push("content_list_anchored_continuation");
@@ -9550,10 +9572,13 @@ function inferContentListPageSize(pageNumber, items = contentListItemsForPage(pa
   if (explicit) {
     return explicit;
   }
+  const page = state.mineruInfo?.pdf_info?.[pageNumber - 1];
+  if (page?.page_size) {
+    return page.page_size;
+  }
   const boxes = items.map((item) => normalizedBBox(item.bbox)).filter(Boolean);
   if (!boxes.length) {
-    const page = state.mineruInfo?.pdf_info?.[pageNumber - 1];
-    return page?.page_size || null;
+    return null;
   }
   const maxX = Math.max(...boxes.map((box) => box[2]));
   const maxY = Math.max(...boxes.map((box) => box[3]));
@@ -9936,19 +9961,32 @@ function blockToMarkdown(block) {
   if (!text) {
     return "";
   }
+  const bibliographyMarkdown = formatBibliographyBlock(block, text);
+  if (bibliographyMarkdown) {
+    return bibliographyMarkdown;
+  }
   if (block.type === "title") {
     return `### ${text}`;
   }
   if (block.type === "list") {
-    if (isLikelyBibliographyText(text)) {
-      return formatBibliographyText(text);
-    }
     return text
       .split("\n")
       .map((line) => (line.trim() ? `- ${line.trim()}` : ""))
       .join("\n");
   }
   return text;
+}
+
+function formatBibliographyBlock(block, text) {
+  const blockType = String(block?.type || "").toLowerCase();
+  if (["table", "image", "title", "code", "algorithm", "interline_equation"].includes(blockType)) {
+    return "";
+  }
+  const groupedEntries = bibliographyEntriesFromBlockLines(block);
+  if (groupedEntries.length >= 2) {
+    return groupedEntries.join("\n\n");
+  }
+  return isLikelyBibliographyText(text) ? formatBibliographyText(text) : "";
 }
 
 function formatBibliographyText(text) {
@@ -9989,7 +10027,7 @@ function isLikelyReferenceHeading(text) {
 }
 
 function isLikelyReferenceEntryStart(text) {
-  const line = String(text || "").trim();
+  const line = stripLeadingBibliographyIndex(String(text || "").trim());
   if (!line || isLikelyReferenceHeading(line)) {
     return false;
   }
@@ -10054,17 +10092,58 @@ function normalizeBibliographyLine(line) {
     .trim();
 }
 
+function stripLeadingBibliographyIndex(text) {
+  return String(text || "").replace(/^\d{1,4}[.)]?\s+/, "").trim();
+}
+
+function bibliographyEntriesFromBlockLines(block) {
+  const rawLines = collectBlockLineMarkdowns(block).map(normalizeBibliographyLine).filter(Boolean);
+  if (rawLines.length < 2) {
+    return [];
+  }
+  const entries = [];
+  let current = [];
+  rawLines.forEach((line) => {
+    if (bibliographyLineStartsNewEntry(line)) {
+      if (current.length) {
+        entries.push(current.join(" ").replace(/[ \t]{2,}/g, " ").trim());
+      }
+      current = [line];
+      return;
+    }
+    if (current.length) {
+      current.push(line);
+      return;
+    }
+    current = [line];
+  });
+  if (current.length) {
+    entries.push(current.join(" ").replace(/[ \t]{2,}/g, " ").trim());
+  }
+  return entries.filter(Boolean);
+}
+
+function bibliographyLineStartsNewEntry(line) {
+  const value = String(line || "").trim();
+  if (!value) {
+    return false;
+  }
+  return /^\d{1,4}[.)]?\s+\S/.test(value) || isLikelyReferenceEntryStart(value);
+}
+
 function referenceEntryStartIndexes(text) {
   const value = String(text || "");
-  const pattern = /[A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]+(?:[- ][A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]+)*,\s+(?:[A-Z]\.|[A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+|[A-Z]\s)[\s\S]{0,220}?\b(?:18|19|20)\d{2}[a-z]?\b/g;
   const starts = [];
-  let match;
-  while ((match = pattern.exec(value))) {
-    const start = match.index;
-    if (start === 0 || /[.!?]\s+$/.test(value.slice(0, start))) {
-      starts.push(start);
+  for (let index = 0; index < value.length; index += 1) {
+    const slice = value.slice(index);
+    if (!isLikelyReferenceEntryStart(slice)) {
+      continue;
     }
-    pattern.lastIndex = Math.max(pattern.lastIndex, start + 1);
+    const previousChar = index > 0 ? value[index - 1] : "";
+    const numberedLead = /^\d{1,4}[.)]?\s+/.test(slice) && (index === 0 || /\s/.test(previousChar));
+    if (index === 0 || numberedLead || /[.!?]\s+$/.test(value.slice(0, index))) {
+      starts.push(index);
+    }
   }
   return starts;
 }
@@ -10075,7 +10154,7 @@ function collectBlockText(block, options = {}) {
     let previousLine = null;
     let previousText = "";
     block.lines.forEach((line) => {
-      const lineText = (line.spans || []).map((span) => spanToMarkdown(span, options)).join("");
+      const lineText = lineToMarkdown(line, options, block);
       const text = lineText.trim();
       if (text) {
         if (options.preserveVisualParagraphs && chunks.length && isLikelyVisualParagraphBreak(previousLine, line, previousText, text, block, lineText)) {
@@ -10096,6 +10175,62 @@ function collectBlockText(block, options = {}) {
     });
   }
   return chunks.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+function collectBlockLineMarkdowns(block, options = {}, output = []) {
+  if (!block || typeof block !== "object") {
+    return output;
+  }
+  if (Array.isArray(block.lines)) {
+    block.lines.forEach((line) => {
+      const text = lineToMarkdown(line, options, block).trim();
+      if (text) {
+        output.push(text);
+      }
+    });
+  }
+  if (Array.isArray(block.blocks)) {
+    block.blocks.forEach((nested) => collectBlockLineMarkdowns(nested, options, output));
+  }
+  return output;
+}
+
+function lineToMarkdown(line, options = {}, block = null) {
+  const parts = (Array.isArray(line?.spans) ? line.spans : []).map((span) => ({
+    text: spanToMarkdown(span, options),
+    bbox: normalizedBBox(span?.bbox),
+    isHtml: Boolean(span?.html),
+    isImage: Boolean(span?.image_path),
+  }));
+  const meaningfulParts = parts.filter((part) => String(part.text || "").trim());
+  if (!meaningfulParts.length) {
+    return "";
+  }
+  if (shouldUseTabSeparatedSpanJoin(meaningfulParts, line, block)) {
+    return meaningfulParts.map((part) => String(part.text || "").trim()).join("\t");
+  }
+  return parts.map((part) => part.text).join("");
+}
+
+function shouldUseTabSeparatedSpanJoin(parts, line, block) {
+  const meaningfulParts = Array.isArray(parts) ? parts.filter((part) => String(part?.text || "").trim()) : [];
+  if (meaningfulParts.length < 2 || meaningfulParts.length > 4) {
+    return false;
+  }
+  if (meaningfulParts.some((part) => part.isHtml || part.isImage || !part.bbox)) {
+    return false;
+  }
+  const lineBox = normalizedBBox(line?.bbox) || getBlockBBox(block);
+  if (!lineBox) {
+    return false;
+  }
+  const lineWidth = Math.max(1, lineBox[2] - lineBox[0]);
+  const gapThreshold = Math.max(24, lineWidth * 0.08);
+  const gaps = [];
+  for (let index = 1; index < meaningfulParts.length; index += 1) {
+    gaps.push((meaningfulParts[index].bbox?.[0] || 0) - (meaningfulParts[index - 1].bbox?.[2] || 0));
+  }
+  return gaps.length > 0 && gaps.every((gap) => Number.isFinite(gap) && gap >= gapThreshold);
 }
 
 function isLikelyVisualParagraphBreak(previousLine, currentLine, previousText, currentText, block, rawCurrentText = "") {
@@ -11130,6 +11265,51 @@ function renderMarkdownTable(lines) {
   return `<div class="markdown-table-wrap"><table><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
 }
 
+function collectTabSeparatedTableBlock(lines, startIndex) {
+  const rows = [];
+  let expectedColumns = 0;
+  let index = startIndex;
+  while (index < lines.length) {
+    const rawLine = String(lines[index] || "");
+    const trimmed = rawLine.trim();
+    if (
+      !trimmed ||
+      /^(#{1,6})\s+/.test(trimmed) ||
+      /^\s*[-*+]\s+/.test(rawLine) ||
+      /^\s*>\s?/.test(rawLine) ||
+      isDisplayMathStart(rawLine) ||
+      isBareDisplayMathStart(rawLine) ||
+      isLatexTableAt(lines, index) ||
+      isMarkdownTableStart(lines, index) ||
+      isCodeFenceStart(rawLine)
+    ) {
+      break;
+    }
+    const cells = rawLine.split("\t").map((cell) => cell.trim());
+    if (cells.length < 2 || cells.length > 4 || cells.some((cell) => !cell)) {
+      break;
+    }
+    if (!expectedColumns) {
+      expectedColumns = cells.length;
+    }
+    if (cells.length !== expectedColumns) {
+      break;
+    }
+    rows.push(cells);
+    index += 1;
+  }
+  return rows.length >= 2 ? { rows, nextIndex: index } : null;
+}
+
+function renderTabSeparatedTable(rows) {
+  const width = Math.max(...rows.map((row) => row.length), 1);
+  const normalizeRow = (row) => row.concat(Array(Math.max(0, width - row.length)).fill(""));
+  const bodyHtml = rows
+    .map((row) => `<tr>${normalizeRow(row).map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+    .join("");
+  return `<div class="markdown-table-wrap"><table><tbody>${bodyHtml}</tbody></table></div>`;
+}
+
 function isLatexTableAt(lines, index) {
   const current = String(lines[index] || "").trim();
   const next = String(lines[index + 1] || "").trim();
@@ -11449,6 +11629,13 @@ function renderMarkdownHtml(markdown) {
       continue;
     }
 
+    const tabSeparatedTable = collectTabSeparatedTableBlock(lines, index);
+    if (tabSeparatedTable) {
+      parts.push(renderTabSeparatedTable(tabSeparatedTable.rows));
+      index = tabSeparatedTable.nextIndex;
+      continue;
+    }
+
     if (/^\s*[-*+]\s+/.test(lines[index])) {
       const listLines = [];
       while (index < lines.length && /^\s*[-*+]\s+/.test(lines[index])) {
@@ -11480,6 +11667,7 @@ function renderMarkdownHtml(markdown) {
       !isBareDisplayMathStart(lines[index]) &&
       !isLatexTableAt(lines, index) &&
       !isMarkdownTableStart(lines, index) &&
+      !collectTabSeparatedTableBlock(lines, index) &&
       !isCodeFenceStart(lines[index])
     ) {
       paragraphLines.push(lines[index]);

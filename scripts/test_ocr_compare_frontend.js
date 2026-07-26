@@ -86,6 +86,8 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareCss.includes(".control-column-pdf"));
   assert(ocrCompareCss.includes(".upload-button.primary-button"));
   assert(ocrCompareCss.includes(".upload-all-button"));
+  assert(/\.ocr-header\s*\{[^}]*position:\s*relative/.test(ocrCompareCss), "header should establish an overlay stacking context for the reviewer login dropdown");
+  assert(/\.ocr-header\s*\{[^}]*z-index:\s*[1-9]/.test(ocrCompareCss), "header should stay above the control band when the reviewer login dropdown is open");
   assert(!/\.hidden-input\s*\{[^}]*display:\s*none/.test(ocrCompareCss), "file inputs must stay label-activatable, not display:none");
   assert(/\.hidden-input\s*\{[^}]*opacity:\s*0/.test(ocrCompareCss), "file inputs should be visually hidden while remaining activatable by labels");
   assert(ocrCompareCss.includes('label[role="button"]'));
@@ -939,6 +941,85 @@ assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX tab
   );
   assert(!result.some((text) => text.includes("TH#μ Formalism")), "content_list page header/footer noise should not enter review blocks");
   assert(result.some((text) => text.includes("reanalyses of decay rates")), "content_list useful supplemental prose should remain available");
+}
+
+{
+  const bibliographyTextBlock = {
+    type: "text",
+    lines: [
+      {
+        bbox: [100, 100, 780, 124],
+        spans: [{ content: "61 Dongarra J J et al. LINPACK User's Guide. SIAM. 1979" }],
+      },
+      {
+        bbox: [100, 132, 780, 156],
+        spans: [{ content: "62 Duato J, Yalamanchili S, Ni L, Interconnection Networks: An Engineering Approach. IEEE" }],
+      },
+      {
+        bbox: [126, 160, 680, 184],
+        spans: [{ content: "Computer Society Press, 1997" }],
+      },
+      {
+        bbox: [100, 192, 780, 216],
+        spans: [{ content: "63 Felten E W et al. Early Experience with Message-Passing on the SHRIMP Multicomputer. 1996" }],
+      },
+    ],
+  };
+  const markdown = call(`blockToMarkdown(${JSON.stringify(bibliographyTextBlock)})`);
+  const html = call(`renderBlockContent(${JSON.stringify(markdown)}, { kind: "text", blockIndex: "references-1" })`);
+  assert(markdown.includes("\n\n62 Duato J"), "bibliography text blocks should be split into per-entry paragraphs");
+  assert(markdown.includes("62 Duato J, Yalamanchili S, Ni L, Interconnection Networks: An Engineering Approach. IEEE Computer Society Press, 1997"), "bibliography continuation lines should stay attached to the same reference entry");
+  assert(html.includes("</p><p>62 Duato J"), "bibliography text blocks should render separate review paragraphs instead of one collapsed paragraph");
+}
+
+{
+  const glossaryBlock = {
+    type: "text",
+    lines: [
+      {
+        bbox: [70, 100, 620, 126],
+        spans: [
+          { content: "组调度", bbox: [70, 100, 150, 126] },
+          { content: "Gang Scheduling", bbox: [230, 100, 430, 126] },
+          { content: "45", bbox: [560, 100, 620, 126] },
+        ],
+      },
+      {
+        bbox: [70, 136, 620, 162],
+        spans: [
+          { content: "组合", bbox: [70, 136, 130, 162] },
+          { content: "Agglomeration", bbox: [230, 136, 410, 162] },
+          { content: "171", bbox: [548, 136, 620, 162] },
+        ],
+      },
+    ],
+  };
+  const markdown = call(`blockToMarkdown(${JSON.stringify(glossaryBlock)})`);
+  const html = call(`renderBlockContent(${JSON.stringify(markdown)}, { kind: "text", blockIndex: "glossary-1" })`);
+  assert(markdown.includes("组调度\tGang Scheduling\t45"), "multi-column glossary lines should preserve explicit column separators in effective text");
+  assert(html.includes("<table>"), "tab-separated multi-column glossary lines should render as a review table");
+  assert(html.includes("<td>Gang Scheduling</td>") && html.includes("<td>171</td>"), "multi-column glossary rendering should preserve each column cell");
+}
+
+{
+  const pageSize = JSON.parse(
+    call(`(() => {
+      state.mineruInfo = { pdf_info: [{ page_size: [900, 1400], para_blocks: [] }] };
+      state.contentListItems = [
+        { page_idx: 0, type: "discarded", bbox: [90, 180, 280, 222], text: "1986 Nature Publishing Group" }
+      ];
+      return JSON.stringify(inferContentListPageSize(1));
+    })()`),
+  );
+  assert.deepStrictEqual(pageSize, [900, 1400], "content_list page size inference should prefer the real MinerU page size over bbox extents for focus-box mapping");
+}
+
+{
+  const narrowColumnFocusMetrics = JSON.parse(
+    call(`JSON.stringify(pdfFocusMetricsForRisk({ bbox: [110, 420, 270, 462], pageSize: [1000, 1400] }, 500, 700))`),
+  );
+  assert(narrowColumnFocusMetrics.width <= 120, "double-column focus boxes should not add single-column horizontal padding");
+  assert(narrowColumnFocusMetrics.height <= 40, "short narrow-column focus boxes should stay compact vertically");
 }
 
 const latexArray = "\\begin{array}{cc}\na & b \\\\ c & d\n\\end{array}";
