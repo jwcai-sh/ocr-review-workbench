@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OCR 三栏对照</title>
-  <link rel="stylesheet" href="./ocr-compare.css?v=20260726-structured-review-blocks">
+  <link rel="stylesheet" href="./ocr-compare.css?v=20260727-book-mathpix-drafts">
 </head>
 <body>
   <div class="ocr-shell">
@@ -36,6 +36,12 @@
       <div class="control-column control-column-pdf" aria-label="上传 OCR 输入文件">
         <span id="reviewerAccessBadge" class="reviewer-access-badge">本地模式</span>
         <div class="accepted-top-actions" aria-label="accepted 校正稿操作">
+          <button id="runBookMathpixButton" class="secondary-button mathpix-book-action-button" type="button" data-run-book-mathpix disabled>
+            全书 Mathpix 草稿
+          </button>
+          <button id="stopBookMathpixButton" class="secondary-button mathpix-book-stop-button" type="button" data-stop-book-mathpix disabled hidden>
+            停止
+          </button>
           <button id="previewAcceptedBookButton" class="secondary-button accepted-action-button" type="button" data-preview-accepted-book-patches disabled hidden>
             预览整书 accepted 校正稿
           </button>
@@ -156,6 +162,6 @@
       }
     };
   </script>
-  <script src="./ocr-compare.js?v=20260726-structured-review-blocks"></script>
+  <script src="./ocr-compare.js?v=20260727-book-mathpix-drafts"></script>
 </body>
 </html>

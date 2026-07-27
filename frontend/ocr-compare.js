@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260726-structured-review-blocks";
+const OCR_COMPARE_BUILD_ID = "20260727-book-mathpix-drafts";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -56,6 +56,14 @@ const state = {
   adminUserIds: ["门"],
   workspaceRemoteSaveTimer: null,
   currentBookProgressSaveTimer: null,
+  bookMathpixBatch: {
+    running: false,
+    stopRequested: false,
+    total: 0,
+    completed: 0,
+    failed: 0,
+    skipped: 0,
+  },
   busy: false,
 };
 state.ocrPatches = state.ocrPatches || [];
@@ -75,6 +83,7 @@ const MATHJAX_SCRIPT_URLS = [
 const MATHJAX_LOAD_TIMEOUT_MS = 12000;
 const BLOCK_MATHPIX_CROP_PADDING = { horizontal: 4, vertical: 1 };
 const PDF_FOCUS_BOX_PADDING = { horizontal: 36, minHorizontal: 12, vertical: 14, compactVertical: 6, compactMaxHeight: 36 };
+const BLOCK_MATHPIX_PROMPT = "请只将这一个裁剪区域中的内容转为 markdown 格式。完整保留区域内可见的公式编号、图号和表号；公式右侧编号请写成 LaTeX \\tag{编号}。不要补充区域外内容。";
 const LEGACY_COLUMN_WIDTHS_KEYS = [
   "uma-ocr-compare-column-widths",
   "uma-ocr-compare-column-fractions-v2",
@@ -394,6 +403,8 @@ function bindElements() {
     "ossBookEntryList",
     "ossBookSelectedSummary",
     "loadOssBookButton",
+    "runBookMathpixButton",
+    "stopBookMathpixButton",
     "previewAcceptedBookButton",
     "downloadAcceptedCorrectedButton",
     "pageList",
@@ -414,6 +425,8 @@ async function initialize() {
   bindNativeFilePickerLabel(els.pickMineruButton, els.mineruInput, "等待选择 middle.json");
   bindNativeFilePickerLabel(els.pickContentListButton, els.contentListInput, "等待选择 content_list");
   els.pickRequiredFilesButton?.addEventListener("click", handleRequiredFilesButtonClick);
+  els.runBookMathpixButton?.addEventListener("click", runBookMathpixDraftBatch);
+  els.stopBookMathpixButton?.addEventListener("click", requestStopBookMathpixDraftBatch);
   els.previewAcceptedBookButton?.addEventListener("click", toggleAcceptedBookPreview);
   els.downloadAcceptedCorrectedButton?.addEventListener("click", downloadAcceptedCorrectedFromTop);
   els.refreshOssBooksButton?.addEventListener("click", refreshOssBooks);
@@ -3062,11 +3075,52 @@ function hasAcceptedOcrPatches() {
   return patches.some((patch) => patch?.status === "accepted");
 }
 
+function bookMathpixDraftDisabledReason() {
+  const batch = state.bookMathpixBatch || {};
+  if (batch.running) {
+    return "全书 Mathpix 正在运行。";
+  }
+  if (!state.mineruInfo) {
+    return "先加载 middle.json。";
+  }
+  if (!hasPdfSource()) {
+    return "先加载 PDF 原文。";
+  }
+  const readonlyReason = bookReadOnlyReason();
+  if (readonlyReason) {
+    return readonlyReason;
+  }
+  if (state.mathpixConfigured === false) {
+    return state.mathpixConfigError || "Mathpix 未配置：请设置 MATHPIX_APP_ID/MATHPIX_APP_KEY。";
+  }
+  return "";
+}
+
+function updateBookMathpixTopControls() {
+  const batch = state.bookMathpixBatch || {};
+  const reason = bookMathpixDraftDisabledReason();
+  if (els.runBookMathpixButton) {
+    els.runBookMathpixButton.disabled = Boolean(reason);
+    els.runBookMathpixButton.title = reason || "对整本书逐块调用 Mathpix，生成 draft OcrPatch；不会自动 accept。";
+    els.runBookMathpixButton.textContent = batch.running
+      ? `Mathpix ${batch.completed || 0}/${batch.total || 0}`
+      : "全书 Mathpix 草稿";
+  }
+  if (els.stopBookMathpixButton) {
+    const running = Boolean(batch.running);
+    els.stopBookMathpixButton.hidden = !running;
+    els.stopBookMathpixButton.disabled = !running || Boolean(batch.stopRequested);
+    els.stopBookMathpixButton.textContent = batch.stopRequested ? "停止中..." : "停止";
+    els.stopBookMathpixButton.title = running ? "处理完当前块后停止批量 Mathpix。已完成的 draft 会保留。" : "";
+  }
+}
+
 function renderAcceptedPatchBookPreviewPanel() {
   return "";
 }
 
 function updateAcceptedPatchTopControls() {
+  updateBookMathpixTopControls();
   const hasAccepted = hasAcceptedOcrPatches();
   const canExportWorkspace = Boolean(state.mineruInfo && state.mineruFileName);
   if (els.exportWorkspaceButton) {
@@ -6583,6 +6637,228 @@ async function recognizeCurrentPageWithMathpix() {
   }
 }
 
+function requestStopBookMathpixDraftBatch() {
+  if (!state.bookMathpixBatch?.running) {
+    return;
+  }
+  state.bookMathpixBatch.stopRequested = true;
+  updateBookMathpixTopControls();
+  setStatus("Mathpix 停止中", "busy", "当前块处理完成后停止。已生成的 draft 会保留。");
+}
+
+function collectBookMathpixDraftJobs(options = {}) {
+  const includeExisting = Boolean(options.includeExisting);
+  const total = Math.max(1, getReviewPageCount());
+  const jobs = [];
+  for (let pageNo = 1; pageNo <= total; pageNo += 1) {
+    reviewSegmentsForPage(pageNo).forEach((segment) => {
+      const blockKey = String(segment?.blockIndex ?? "");
+      const oldText = String(segment?.markdown || "").trim();
+      const bbox = normalizedBBox(segment?.bbox);
+      if (!blockKey || !oldText || !bbox) {
+        return;
+      }
+      if (!includeExisting && reviewSegmentHasExistingDraftOrAccepted(pageNo, segment)) {
+        return;
+      }
+      jobs.push({
+        pageNo,
+        blockIndex: blockKey,
+        bbox,
+        pageSize: segment.pageSize,
+        oldText,
+        segment,
+      });
+    });
+  }
+  return jobs;
+}
+
+function reviewSegmentHasExistingDraftOrAccepted(pageNo, segment) {
+  const pageNumber = Number(pageNo) || 1;
+  const blockKeys = reviewSegmentPatchKeys(segment);
+  const mathpixDrafts = getMathpixBlockDrafts(pageNumber, false);
+  const liveDrafts = getLiveReviewDrafts(pageNumber, false);
+  const blockOverrides = getBlockOverrides(pageNumber, false);
+  return blockKeys.some(({ key, oldText }) => {
+    if (!key) {
+      return false;
+    }
+    if (mathpixDrafts.has(key) || liveDrafts.has(key) || blockOverrides.has(key)) {
+      return true;
+    }
+    const patch = getLatestOcrPatchForBlock(pageNumber, key, oldText);
+    return Boolean(patch && ["draft", "accepted"].includes(patch.status));
+  });
+}
+
+function reviewSegmentPatchKeys(segment) {
+  const segmentKey = String(segment?.blockIndex ?? "");
+  const entries = componentEntriesForReviewSegment(segment).map((entry) => ({
+    key: String(entry.blockIndex || ""),
+    oldText: String(entry.markdown || segment?.markdown || ""),
+  }));
+  if (segmentKey && !entries.some((entry) => entry.key === segmentKey)) {
+    entries.unshift({ key: segmentKey, oldText: String(segment?.markdown || "") });
+  }
+  return entries.filter((entry) => entry.key);
+}
+
+async function ensurePagePreviewForBookMathpix(pageNo) {
+  const pageNumber = Number(pageNo) || 1;
+  const cached = state.pageCache.get(pageNumber);
+  if (cached?.image && !isDeferredPreviewPage(cached)) {
+    return cached;
+  }
+  if (!hasPdfSource()) {
+    throw new Error("先加载 PDF 原文。");
+  }
+  const preview = await loadPagePreview(pageNumber);
+  cachePreviewPage(pageNumber, preview);
+  const page = state.pageCache.get(pageNumber) || preview?.pages?.[0] || null;
+  if (!page?.image) {
+    throw new Error(`第 ${pageNumber} 页原文图像未加载。`);
+  }
+  return page;
+}
+
+async function createMathpixDraftForBookJob(job) {
+  const pageNo = Number(job?.pageNo) || 1;
+  const blockKey = String(job?.blockIndex ?? "");
+  if (!blockKey) {
+    throw new Error("缺少 blockIndex。");
+  }
+  if (reviewSegmentHasExistingDraftOrAccepted(pageNo, job.segment)) {
+    return { ok: true, skipped: true, reason: "existing_draft_or_accepted" };
+  }
+  const page = await ensurePagePreviewForBookMathpix(pageNo);
+  const padding = cropPaddingForRiskBlock(reviewRiskFromSegment(job.segment, pageNo));
+  const cropDataUrl = await cropPageImage(page.image, job.bbox, job.pageSize, padding);
+  const upload = await postJson("/api/model-tester/upload", {
+    name: `page-${pageNo}-block-${blockKey.replace(/[^a-zA-Z0-9_-]+/g, "-")}.png`,
+    kind: "image",
+    mimeType: "image/png",
+    size: estimateDataUrlBytes(cropDataUrl),
+    dataUrl: cropDataUrl,
+  });
+  if (!upload.ok) {
+    throw new Error(upload.error || "块图片上传失败");
+  }
+  const data = await postJson("/api/model-tester/image-to-markdown", {
+    attachmentIds: [upload.id],
+    prompt: BLOCK_MATHPIX_PROMPT,
+    model: "mathpix:mathpix-text",
+    models: ["mathpix:mathpix-text"],
+    allowFallback: false,
+    temperature: 0.1,
+  });
+  if (!data.ok) {
+    throw new Error(data.error || "Mathpix 块级请求失败");
+  }
+  const preparedMarkdown = normalizedReviewMarkdownForActiveCorrection(data.markdown || data.answer || "");
+  if (!preparedMarkdown.trim()) {
+    throw new Error("Mathpix 块级响应为空");
+  }
+  const latestSegment = reviewSegmentsForPage(pageNo).find((item) => String(item.blockIndex) === blockKey) || job.segment;
+  const oldText = String(latestSegment?.markdown || job.oldText || "");
+  const risk = reviewRiskFromSegment(latestSegment || job.segment, pageNo);
+  const patchResult = createAndStoreDraftOcrPatch({
+    pageNo,
+    blockIndex: blockKey,
+    oldText,
+    newText: preparedMarkdown,
+    source: "mathpix",
+    preserveText: preservationTextForBlock(pageNo, blockKey, latestSegment, risk),
+  });
+  getMathpixBlockDrafts(pageNo).set(blockKey, patchResult.normalizedText);
+  clearLiveReviewDraftForBlock(pageNo, blockKey);
+  clearMathpixBlockError(pageNo, blockKey);
+  saveOcrWorkspaceState();
+  return { ok: true, skipped: false, patch: patchResult.patch, markdown: patchResult.normalizedText };
+}
+
+async function runBookMathpixDraftBatch() {
+  if (state.bookMathpixBatch?.running) {
+    setStatus("Mathpix 正在运行", "busy");
+    return;
+  }
+  const disabledReason = bookMathpixDraftDisabledReason();
+  if (disabledReason) {
+    setStatus("全书 Mathpix 不可用", "error", disabledReason);
+    updateBookMathpixTopControls();
+    return;
+  }
+  if (state.mathpixConfigured === false) {
+    const message = state.mathpixConfigError || "Mathpix 未配置：请设置 MATHPIX_APP_ID/MATHPIX_APP_KEY 后重启服务。";
+    setStatus("Mathpix 未配置", "error", message);
+    return;
+  }
+  const jobs = collectBookMathpixDraftJobs();
+  if (!jobs.length) {
+    setStatus("无待识别块", "ok", "全书可裁剪块都已有 draft/accepted，或缺少可用 bbox。");
+    updateBookMathpixTopControls();
+    return;
+  }
+  const originalPage = state.currentPage;
+  state.bookMathpixBatch = {
+    running: true,
+    stopRequested: false,
+    total: jobs.length,
+    completed: 0,
+    failed: 0,
+    skipped: 0,
+  };
+  state.busy = true;
+  updateBookMathpixTopControls();
+  setStatus(`Mathpix 0/${jobs.length}`, "busy", "正在生成全书 Mathpix draft。");
+  try {
+    for (const job of jobs) {
+      if (state.bookMathpixBatch.stopRequested) {
+        break;
+      }
+      const label = `第 ${job.pageNo} 页 Block ${job.blockIndex}`;
+      setStatus(`Mathpix ${state.bookMathpixBatch.completed + 1}/${jobs.length}`, "busy", label);
+      await waitForNextPaint();
+      try {
+        const result = await createMathpixDraftForBookJob(job);
+        if (result?.skipped) {
+          state.bookMathpixBatch.skipped += 1;
+        }
+      } catch (error) {
+        state.bookMathpixBatch.failed += 1;
+        const message = error?.message || String(error || "Mathpix 块级请求失败");
+        setMathpixBlockError(job.pageNo, job.blockIndex, message);
+      } finally {
+        state.bookMathpixBatch.completed += 1;
+        updateBookMathpixTopControls();
+      }
+    }
+    try {
+      await flushRemoteOcrWorkspaceSave();
+    } catch (error) {
+      if (typeof console !== "undefined" && typeof console.warn === "function") {
+        console.warn("[OCR Workspace] 全书 Mathpix 批处理后远端保存失败。", error);
+      }
+    }
+    const batch = state.bookMathpixBatch;
+    const stopped = Boolean(batch.stopRequested && batch.completed < batch.total);
+    const completed = batch.completed || 0;
+    const okCount = Math.max(0, completed - (batch.failed || 0) - (batch.skipped || 0));
+    const detail = `成功 ${okCount}，跳过 ${batch.skipped || 0}，失败 ${batch.failed || 0}，总计 ${batch.total || 0}`;
+    setStatus(stopped ? "Mathpix 已停止" : "Mathpix 全书完成", batch.failed ? "error" : "ok", detail);
+  } finally {
+    state.busy = false;
+    state.bookMathpixBatch.running = false;
+    updateCorrectionSummary();
+    updateBookMathpixTopControls();
+    if (state.currentPage === originalPage) {
+      await renderCurrentPage();
+    } else {
+      updatePager();
+    }
+  }
+}
+
 async function recognizeRiskBlockWithMathpix(blockIndex) {
   if (state.busy) {
     setStatus("正在处理", "busy");
@@ -6624,7 +6900,7 @@ async function recognizeRiskBlockWithMathpix(blockIndex) {
     }
     const data = await postJson("/api/model-tester/image-to-markdown", {
       attachmentIds: [upload.id],
-      prompt: "请只将这一个裁剪区域中的内容转为 markdown 格式。完整保留区域内可见的公式编号、图号和表号；公式右侧编号请写成 LaTeX \\tag{编号}。不要补充区域外内容。",
+      prompt: BLOCK_MATHPIX_PROMPT,
       model: "mathpix:mathpix-text",
       models: ["mathpix:mathpix-text"],
       allowFallback: false,

@@ -148,8 +148,14 @@ function runOcrCompareInContext(testContext) {
   assert(ocrCompareHtml.includes('id="previewAcceptedBookButton"'));
   assert(/id="previewAcceptedBookButton"[^>]*hidden/.test(ocrCompareHtml), "book preview button should stay hidden while it is not part of the main workflow");
   assert(ocrCompareHtml.includes('id="downloadAcceptedCorrectedButton"'));
+  assert(ocrCompareHtml.includes('id="runBookMathpixButton"'));
+  assert(ocrCompareHtml.includes('id="stopBookMathpixButton"'));
   assert(ocrCompareHtml.includes("预览整书 accepted 校正稿"));
   assert(ocrCompareHtml.includes("下载 accepted 校正稿"));
+  assert(ocrCompareHtml.includes("全书 Mathpix 草稿"));
+  assert(ocrCompareCss.includes(".mathpix-book-action-button"));
+  assert(ocrCompareCss.includes(".mathpix-book-stop-button"));
+  assert(source.includes("function runBookMathpixDraftBatch"));
   assert(ocrCompareHtml.includes('class="upload-icon"'));
   assert(ocrCompareHtml.includes('viewBox="0 0 24 24"'));
   assert(!ocrCompareHtml.includes("cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"), "MathJax CDN should be lazy-loaded by ocr-compare.js");
@@ -170,9 +176,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260726-structured-review-blocks"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260726-structured-review-blocks"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260726-structured-review-blocks"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260727-book-mathpix-drafts"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260727-book-mathpix-drafts"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260727-book-mathpix-drafts"'));
   assert(source.includes('fetchApi("/api/auth/me"'));
   assert(source.includes('postJson("/api/auth/login"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
@@ -218,6 +224,53 @@ function runOcrCompareInContext(testContext) {
   );
   assert.strictEqual(ownerResult.reason, "");
   assert.strictEqual(ownerResult.editable, true);
+}
+
+{
+  const batchJobs = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.pdfPageCount = 2;
+      state.pdfDocumentId = "doc-mathpix";
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [1000, 1400],
+            para_blocks: [
+              { type: "interline_equation", bbox: [120, 100, 820, 180], lines: [{ spans: [{ content: "bad formula 1" }] }] },
+              { type: "text", bbox: [120, 220, 820, 280], lines: [{ spans: [{ content: "body text still needs OCR" }] }] }
+            ]
+          },
+          {
+            page_size: [1000, 1400],
+            para_blocks: [
+              { type: "interline_equation", bbox: [120, 100, 820, 180], lines: [{ spans: [{ content: "already has draft" }] }] }
+            ]
+          }
+        ]
+      };
+      state.ocrPatches = [
+        { blockId: "p1_b0_aaaaaaaa", status: "accepted", metadata: { pageNo: 1 } }
+      ];
+      state.mathpixBlockDrafts = new Map([[2, new Map([["0", "draft from prior batch"]])]]);
+      const jobs = collectBookMathpixDraftJobs();
+      const output = jobs.map((job) => ({
+        pageNo: job.pageNo,
+        blockIndex: String(job.blockIndex),
+        text: job.oldText
+      }));
+      state.currentPage = 1;
+      state.pdfPageCount = 0;
+      state.pdfDocumentId = "";
+      state.mineruInfo = null;
+      state.ocrPatches = [];
+      state.mathpixBlockDrafts = new Map();
+      return JSON.stringify(output);
+    })()`),
+  );
+  assert.deepStrictEqual(batchJobs, [
+    { pageNo: 1, blockIndex: "1", text: "body text still needs OCR" },
+  ]);
 }
 
 {
