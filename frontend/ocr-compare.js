@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260727-book-mathpix-drafts";
+const OCR_COMPARE_BUILD_ID = "20260727-load-book-retry";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -978,13 +978,13 @@ async function loadSelectedOssBook() {
     els.loadOssBookButton.disabled = true;
   }
   try {
-    const response = await postJson("/api/oss/load-book", {
+    const response = await postJsonWithRetry("/api/oss/load-book", {
       bookId: book.id || book.workspaceId || "",
       pdfKey: book.pdfKey,
       middleKey: book.middleKey,
       contentListKey: book.contentListKey || "",
       workspaceId: book.workspaceId || book.id || "",
-    });
+    }, { retries: 1, retryDelayMs: 800 });
     if (!response?.ok) {
       throw new Error(response?.error || "OSS 书籍加载失败");
     }
@@ -1007,7 +1007,7 @@ async function loadInitialBookFromUrl() {
   renderOssBookLoadingState(bookId);
   setStatus("加载 OSS 书籍", "busy", bookId);
   try {
-    const response = await postJson("/api/oss/load-book", { bookId });
+    const response = await postJsonWithRetry("/api/oss/load-book", { bookId }, { retries: 1, retryDelayMs: 800 });
     if (!response?.ok) {
       throw new Error(response?.error || "书籍加载失败");
     }
@@ -11171,7 +11171,77 @@ async function postJson(path, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  return response.json();
+  return parseJsonResponseBody(path, response, await response.text());
+}
+
+async function postJsonWithRetry(path, body, options = {}) {
+  const retries = Math.max(0, Number(options.retries) || 0);
+  const retryDelayMs = Math.max(0, Number(options.retryDelayMs) || 0);
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await postJson(path, body);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries || !isRetriablePostJsonError(error)) {
+        throw error;
+      }
+      await delay(retryDelayMs);
+    }
+  }
+  throw lastError || new Error("请求失败");
+}
+
+function parseJsonResponseBody(path, response, text) {
+  const raw = String(text ?? "");
+  if (!raw.trim()) {
+    if (response?.ok === false) {
+      throw jsonResponseError(path, response, raw);
+    }
+    return {};
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw jsonResponseError(path, response, raw);
+  }
+}
+
+function jsonResponseError(path, response, text) {
+  const status = Number(response?.status) || 0;
+  const statusText = String(response?.statusText || "").trim();
+  const statusLabel = status ? `HTTP ${status}${statusText ? ` ${statusText}` : ""}` : "非 JSON 响应";
+  const snippet = responseBodySnippet(text);
+  const message = `${path || "API"} 返回 ${statusLabel}${snippet ? `：${snippet}` : ""}`;
+  const error = new Error(message);
+  if (status) {
+    error.status = status;
+  }
+  error.bodySnippet = snippet;
+  return error;
+}
+
+function responseBodySnippet(text) {
+  return String(text || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+}
+
+function isRetriablePostJsonError(error) {
+  const status = Number(error?.status) || 0;
+  if ([502, 503, 504].includes(status)) {
+    return true;
+  }
+  return /(?:HTTP\s+50[234]\b|Bad Gateway|Gateway Timeout|Service Unavailable|Failed to fetch|NetworkError)/i.test(String(error?.message || ""));
+}
+
+function delay(ms) {
+  const value = Math.max(0, Number(ms) || 0);
+  if (!value) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => setTimeout(resolve, value));
 }
 
 function readFileAsDataUrl(file) {

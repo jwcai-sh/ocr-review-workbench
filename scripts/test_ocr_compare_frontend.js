@@ -176,9 +176,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260727-book-mathpix-drafts"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260727-book-mathpix-drafts"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260727-book-mathpix-drafts"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260727-load-book-retry"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260727-load-book-retry"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260727-load-book-retry"'));
   assert(source.includes('fetchApi("/api/auth/me"'));
   assert(source.includes('postJson("/api/auth/login"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
@@ -7559,4 +7559,60 @@ assert(inlineImagePreviewHtml.includes("review-image-preview"), "inline image bl
 assert(!inlineImagePreviewHtml.includes("![image]"), "inline image token should be hidden when preview is rendered");
 assert(inlineImagePreviewHtml.includes("See for Fig. 2.2 Caption"), "inline image caption text should remain visible beside preview");
 
-console.log("ocr compare frontend regressions ok");
+const badGatewayJsonMessage = call(`(() => {
+  try {
+    parseJsonResponseBody("/api/oss/load-book", { ok: false, status: 502, statusText: "Bad Gateway" }, "Bad Gateway");
+  } catch (error) {
+    return error.message;
+  }
+  return "";
+})()`);
+assert(badGatewayJsonMessage.includes("HTTP 502 Bad Gateway"), "non-JSON gateway responses should surface the HTTP status instead of a JSON parse exception");
+assert(badGatewayJsonMessage.includes("Bad Gateway"), "non-JSON gateway responses should include the response body snippet");
+
+const retryableGatewayError = JSON.parse(
+  call(`JSON.stringify({
+    badGateway: isRetriablePostJsonError(Object.assign(new Error("HTTP 502 Bad Gateway"), { status: 502 })),
+    parseOnly: isRetriablePostJsonError(new SyntaxError("Unexpected token B in JSON"))
+  })`),
+);
+assert.strictEqual(retryableGatewayError.badGateway, true, "load-book should be allowed to retry gateway errors");
+assert.strictEqual(retryableGatewayError.parseOnly, false, "ordinary JSON parse failures should not be retried without HTTP gateway evidence");
+
+async function runAsyncRegressions() {
+  let loadBookCalls = 0;
+  const retryContext = runOcrCompareInContext(createOcrCompareContext({
+    fetch: async () => {
+      loadBookCalls += 1;
+      if (loadBookCalls === 1) {
+        return {
+          ok: false,
+          status: 502,
+          statusText: "Bad Gateway",
+          text: async () => "Bad Gateway",
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        text: async () => JSON.stringify({ ok: true, loaded: true }),
+      };
+    },
+  }));
+  const retryResult = await vm.runInContext(
+    'postJsonWithRetry("/api/oss/load-book", { bookId: "book-1" }, { retries: 1, retryDelayMs: 0 })',
+    retryContext,
+  );
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(retryResult)), { ok: true, loaded: true });
+  assert.strictEqual(loadBookCalls, 2, "load-book should retry exactly once after a transient gateway response");
+}
+
+runAsyncRegressions()
+  .then(() => {
+    console.log("ocr compare frontend regressions ok");
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
