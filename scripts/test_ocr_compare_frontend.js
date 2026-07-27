@@ -176,9 +176,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260727-defer-book-state"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260727-defer-book-state"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260727-defer-book-state"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260727-post-book-state"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260727-post-book-state"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260727-post-book-state"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -7610,10 +7610,12 @@ async function runAsyncRegressions() {
   assert.strictEqual(loadBookCalls, 2, "load-book should retry exactly once after a transient gateway response");
 
   const requestedPaths = [];
+  const requestedBodies = [];
   let renderCalls = 0;
   const stateHydrationContext = runOcrCompareInContext(createOcrCompareContext({
-    fetch: async (url) => {
+    fetch: async (url, options = {}) => {
       requestedPaths.push(String(url));
+      requestedBodies.push(String(options.body || ""));
       return {
         ok: true,
         status: 200,
@@ -7647,7 +7649,8 @@ async function runAsyncRegressions() {
     stateHydrationContext,
   );
   const hydrated = JSON.parse(stateHydrationResult);
-  assert(requestedPaths.some((item) => item.includes("/api/books/book-1/state")), "deferred DB state hydration should call the existing book state endpoint");
+  assert(requestedPaths.some((item) => item.includes("/api/books/state")), "deferred DB state hydration should call the short book state endpoint");
+  assert(requestedBodies.some((item) => item.includes('"bookId":"book-1"')), "deferred DB state hydration should send bookId in the request body instead of a long URL path");
   assert.strictEqual(hydrated.patchCount, 1, "deferred DB state hydration should restore patches");
   assert.strictEqual(hydrated.firstPatchId, "patch-1", "deferred DB state hydration should preserve the saved patch id");
   assert.strictEqual(hydrated.needsCorrection, true, "deferred DB state hydration should restore open review marks");

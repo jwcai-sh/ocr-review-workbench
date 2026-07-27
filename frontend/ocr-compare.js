@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260727-defer-book-state";
+const OCR_COMPARE_BUILD_ID = "20260727-post-book-state";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -1283,9 +1283,9 @@ async function hydrateDatabaseBookStateForCurrentBook(bookId = currentDbBookId()
   if (!targetBookId) {
     return false;
   }
-  const response = await getJsonWithRetry(
-    `/api/books/${encodeURIComponent(targetBookId)}/state`,
-    { cache: "no-store" },
+  const response = await postJsonWithRetry(
+    "/api/books/state",
+    { bookId: targetBookId },
     { retries: 2, retryDelayMs: 800 },
   );
   if (!response?.ok) {
@@ -11227,29 +11227,6 @@ async function postJson(path, body) {
     body: JSON.stringify(body),
   });
   return parseJsonResponseBody(path, response, await response.text());
-}
-
-async function getJson(path, options = {}) {
-  const response = await fetchApi(path, options);
-  return parseJsonResponseBody(path, response, await response.text());
-}
-
-async function getJsonWithRetry(path, options = {}, retryOptions = {}) {
-  const retries = Math.max(0, Number(retryOptions.retries) || 0);
-  const retryDelayMs = Math.max(0, Number(retryOptions.retryDelayMs) || 0);
-  let lastError = null;
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    try {
-      return await getJson(path, options);
-    } catch (error) {
-      lastError = error;
-      if (attempt >= retries || !isRetriableJsonRequestError(error)) {
-        throw error;
-      }
-      await delay(retryDelayMs);
-    }
-  }
-  throw lastError || new Error("请求失败");
 }
 
 async function postJsonWithRetry(path, body, options = {}) {

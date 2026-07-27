@@ -231,6 +231,9 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/oss/load-book":
             self._send_json(self._load_oss_book(payload))
             return
+        if parsed.path == "/api/books/state":
+            self._send_json(self._book_state_payload(payload))
+            return
         if parsed.path == "/api/books/bulk-update":
             response = self._bulk_update_books(payload)
             _invalidate_books_list_cache()
@@ -540,6 +543,12 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             response["ocrPatches"] = db_state.get("ocrPatches", []) if db_state.get("ok") else []
             response["reviewMarks"] = db_state.get("reviewMarks", []) if db_state.get("ok") else []
         return response
+
+    def _book_state_payload(self, payload: dict) -> dict:
+        book_id = str(payload.get("bookId") or payload.get("book_id") or payload.get("id") or "").strip()
+        if not book_id:
+            return {"ok": False, "error": "missing_book_id"}
+        return DB_SERVICE.get_state(book_id)
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A003
         return

@@ -94,6 +94,17 @@ def call_load_book(payload: dict) -> tuple[dict, FakeDbService, FakeOssStorage]:
         ocr_server.OCR_PREVIEW_SERVICE = old_preview
 
 
+def call_book_state(payload: dict) -> tuple[dict, FakeDbService]:
+    fake_db = FakeDbService()
+    old_db = ocr_server.DB_SERVICE
+    try:
+        ocr_server.DB_SERVICE = fake_db
+        response = ocr_server.OcrWorkbenchHandler._book_state_payload(object(), payload)
+        return response, fake_db
+    finally:
+        ocr_server.DB_SERVICE = old_db
+
+
 def main() -> None:
     deferred, deferred_db, deferred_oss = call_load_book({"bookId": "book-1", "deferBookState": True})
     assert_true(deferred["ok"], "deferred book load should succeed")
@@ -109,6 +120,16 @@ def main() -> None:
     assert_true(full.get("bookStateDeferred") is False, "full book load should not mark DB state as deferred")
     assert_true(full["ocrPatches"][0]["patchId"] == "patch-1", "full book load should include DB patches")
     assert_true(full["reviewMarks"][0]["blockId"] == "p1_b1", "full book load should include review marks")
+
+    state, state_db = call_book_state({"bookId": "book-1"})
+    assert_true(state["ok"], "short POST book state endpoint should return DB state")
+    assert_true(state_db.get_state_calls == 1, "short POST book state endpoint should read DB state exactly once")
+    assert_true(state["ocrPatches"][0]["patchId"] == "patch-1", "short POST book state endpoint should include DB patches")
+
+    missing_state, missing_db = call_book_state({})
+    assert_true(missing_state["ok"] is False, "short POST book state endpoint should reject missing book id")
+    assert_true(missing_state["error"] == "missing_book_id", "short POST book state endpoint should report missing_book_id")
+    assert_true(missing_db.get_state_calls == 0, "short POST book state endpoint should not read DB without book id")
 
     print("ocr server load-book ok")
 
