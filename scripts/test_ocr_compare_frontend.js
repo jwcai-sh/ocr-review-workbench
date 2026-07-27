@@ -7653,6 +7653,54 @@ async function runAsyncRegressions() {
   assert.strictEqual(hydrated.needsCorrection, true, "deferred DB state hydration should restore open review marks");
   assert.strictEqual(hydrated.owner, "门", "deferred DB state hydration should restore book owner metadata");
   assert.strictEqual(hydrated.renderCalls, 1, "deferred DB state hydration should re-render the current page after patches are restored");
+
+  let stateFetchCalls = 0;
+  const retryStateHydrationContext = runOcrCompareInContext(createOcrCompareContext({
+    setTimeout: (fn) => {
+      fn();
+      return 0;
+    },
+    fetch: async () => {
+      stateFetchCalls += 1;
+      if (stateFetchCalls === 1) {
+        throw new TypeError("Failed to fetch");
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        text: async () => JSON.stringify({
+          ok: true,
+          book: { id: "book-2", owner_user_id: "门" },
+          ocrPatches: [{ patchId: "patch-2", blockId: "p1_b2", status: "draft", newText: "draft markdown" }],
+          reviewMarks: [],
+        }),
+      };
+    },
+  }));
+  const retryStateHydrationResult = await vm.runInContext(
+    `(() => {
+      state.currentBookId = "book-2";
+      state.reviewNeedsCorrection = new Set(["stale"]);
+      globalThis.__renderCalls = 0;
+      renderCurrentPage = async () => { globalThis.__renderCalls += 1; };
+      updatePager = () => {};
+      return hydrateDatabaseBookStateForCurrentBook("book-2")
+        .then(() => JSON.stringify({
+          patchCount: state.ocrPatches.length,
+          firstPatchId: state.ocrPatches[0]?.patchId || "",
+          needsCorrectionSize: state.reviewNeedsCorrection.size,
+          renderCalls: globalThis.__renderCalls,
+        }));
+    })()`,
+    retryStateHydrationContext,
+  );
+  const retryHydrated = JSON.parse(retryStateHydrationResult);
+  assert.strictEqual(stateFetchCalls, 2, "deferred DB state hydration should retry once after a transient network failure");
+  assert.strictEqual(retryHydrated.patchCount, 1, "retried DB state hydration should restore patches");
+  assert.strictEqual(retryHydrated.firstPatchId, "patch-2", "retried DB state hydration should use the successful response");
+  assert.strictEqual(retryHydrated.needsCorrectionSize, 0, "retried DB state hydration should clear stale open marks when DB returns none");
+  assert.strictEqual(retryHydrated.renderCalls, 1, "retried DB state hydration should render once after success");
 }
 
 runAsyncRegressions()

@@ -1283,7 +1283,11 @@ async function hydrateDatabaseBookStateForCurrentBook(bookId = currentDbBookId()
   if (!targetBookId) {
     return false;
   }
-  const response = await getJson(`/api/books/${encodeURIComponent(targetBookId)}/state`, { cache: "no-store" });
+  const response = await getJsonWithRetry(
+    `/api/books/${encodeURIComponent(targetBookId)}/state`,
+    { cache: "no-store" },
+    { retries: 2, retryDelayMs: 800 },
+  );
   if (!response?.ok) {
     throw new Error(response?.error || "书籍校对状态恢复失败");
   }
@@ -11230,6 +11234,24 @@ async function getJson(path, options = {}) {
   return parseJsonResponseBody(path, response, await response.text());
 }
 
+async function getJsonWithRetry(path, options = {}, retryOptions = {}) {
+  const retries = Math.max(0, Number(retryOptions.retries) || 0);
+  const retryDelayMs = Math.max(0, Number(retryOptions.retryDelayMs) || 0);
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await getJson(path, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries || !isRetriableJsonRequestError(error)) {
+        throw error;
+      }
+      await delay(retryDelayMs);
+    }
+  }
+  throw lastError || new Error("请求失败");
+}
+
 async function postJsonWithRetry(path, body, options = {}) {
   const retries = Math.max(0, Number(options.retries) || 0);
   const retryDelayMs = Math.max(0, Number(options.retryDelayMs) || 0);
@@ -11285,6 +11307,10 @@ function responseBodySnippet(text) {
 }
 
 function isRetriablePostJsonError(error) {
+  return isRetriableJsonRequestError(error);
+}
+
+function isRetriableJsonRequestError(error) {
   const status = Number(error?.status) || 0;
   if ([502, 503, 504].includes(status)) {
     return true;
