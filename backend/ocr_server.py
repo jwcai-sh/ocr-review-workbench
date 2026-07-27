@@ -42,6 +42,19 @@ def _safe_int(value: object, default: int) -> int:
         return default
 
 
+def _payload_bool(payload: dict, *keys: str) -> bool:
+    for key in keys:
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+    return False
+
+
 def _books_list_cache_key(status: str = "", reviewer_id: str = "", limit: int = 5000) -> tuple[str, str, int]:
     normalized_limit = max(1, min(_safe_int(limit, 5000), 5000))
     return str(status or ""), str(reviewer_id or ""), normalized_limit
@@ -465,6 +478,7 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             return {"ok": False, "error": OSS_STORAGE_SERVICE.error or "OSS storage is not configured"}
         db_book = None
         book_id = str(payload.get("bookId") or payload.get("book_id") or "").strip()
+        defer_book_state = _payload_bool(payload, "deferBookState", "defer_book_state")
         if book_id and DB_SERVICE.enabled:
             book_result = DB_SERVICE.get_book(book_id)
             if book_result.get("ok"):
@@ -504,8 +518,9 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         )
         if not document.get("ok"):
             return document
-        db_state = DB_SERVICE.get_state(book_id) if book_id and DB_SERVICE.enabled else {}
-        return {
+        book_state_deferred = bool(book_id and DB_SERVICE.enabled and defer_book_state)
+        db_state = DB_SERVICE.get_state(book_id) if book_id and DB_SERVICE.enabled and not book_state_deferred else {}
+        response = {
             "ok": True,
             "document": document,
             "middleJson": middle_json,
@@ -514,14 +529,17 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             "contentListName": posixpath.basename(content_list_key) if content_list_key else "",
             "workspaceId": str(payload.get("workspaceId") or book_id or _workspace_id_for_oss_entry(middle_key, document.get("pageCount"))),
             "book": db_book,
-            "ocrPatches": db_state.get("ocrPatches", []) if db_state.get("ok") else [],
-            "reviewMarks": db_state.get("reviewMarks", []) if db_state.get("ok") else [],
+            "bookStateDeferred": book_state_deferred,
             "ossKeys": {
                 "pdf": pdf_key,
                 "middle": middle_key,
                 "contentList": content_list_key,
             },
         }
+        if not book_state_deferred:
+            response["ocrPatches"] = db_state.get("ocrPatches", []) if db_state.get("ok") else []
+            response["reviewMarks"] = db_state.get("reviewMarks", []) if db_state.get("ok") else []
+        return response
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A003
         return

@@ -176,9 +176,11 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260727-load-book-retry"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260727-load-book-retry"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260727-load-book-retry"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260727-defer-book-state"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260727-defer-book-state"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260727-defer-book-state"'));
+  assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
+  assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
   assert(source.includes('postJson("/api/auth/login"'));
   assert(source.includes('data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID'));
@@ -7606,6 +7608,51 @@ async function runAsyncRegressions() {
   );
   assert.deepStrictEqual(JSON.parse(JSON.stringify(retryResult)), { ok: true, loaded: true });
   assert.strictEqual(loadBookCalls, 2, "load-book should retry exactly once after a transient gateway response");
+
+  const requestedPaths = [];
+  let renderCalls = 0;
+  const stateHydrationContext = runOcrCompareInContext(createOcrCompareContext({
+    fetch: async (url) => {
+      requestedPaths.push(String(url));
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        text: async () => JSON.stringify({
+          ok: true,
+          book: { id: "book-1", owner_user_id: "门" },
+          ocrPatches: [{ patchId: "patch-1", blockId: "p1_b1", status: "accepted", newText: "accepted markdown" }],
+          reviewMarks: [{ blockId: "p1_b1", markType: "needs_extra_correction", status: "open" }],
+        }),
+      };
+    },
+  }));
+  const stateHydrationResult = await vm.runInContext(
+    `(() => {
+      state.currentBookId = "book-1";
+      state.currentBookOwnerId = "";
+      state.reviewNeedsCorrection = new Set();
+      globalThis.__renderCalls = 0;
+      renderCurrentPage = async () => { globalThis.__renderCalls += 1; };
+      updatePager = () => {};
+      return hydrateDatabaseBookStateForCurrentBook("book-1")
+        .then(() => JSON.stringify({
+          patchCount: state.ocrPatches.length,
+          firstPatchId: state.ocrPatches[0]?.patchId || "",
+          needsCorrection: state.reviewNeedsCorrection.has("p1_b1"),
+          owner: state.currentBookOwnerId,
+          renderCalls: globalThis.__renderCalls,
+        }));
+    })()`,
+    stateHydrationContext,
+  );
+  const hydrated = JSON.parse(stateHydrationResult);
+  assert(requestedPaths.some((item) => item.includes("/api/books/book-1/state")), "deferred DB state hydration should call the existing book state endpoint");
+  assert.strictEqual(hydrated.patchCount, 1, "deferred DB state hydration should restore patches");
+  assert.strictEqual(hydrated.firstPatchId, "patch-1", "deferred DB state hydration should preserve the saved patch id");
+  assert.strictEqual(hydrated.needsCorrection, true, "deferred DB state hydration should restore open review marks");
+  assert.strictEqual(hydrated.owner, "门", "deferred DB state hydration should restore book owner metadata");
+  assert.strictEqual(hydrated.renderCalls, 1, "deferred DB state hydration should re-render the current page after patches are restored");
 }
 
 runAsyncRegressions()

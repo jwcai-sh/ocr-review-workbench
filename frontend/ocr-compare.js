@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260727-load-book-retry";
+const OCR_COMPARE_BUILD_ID = "20260727-defer-book-state";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -984,6 +984,7 @@ async function loadSelectedOssBook() {
       middleKey: book.middleKey,
       contentListKey: book.contentListKey || "",
       workspaceId: book.workspaceId || book.id || "",
+      deferBookState: true,
     }, { retries: 1, retryDelayMs: 800 });
     if (!response?.ok) {
       throw new Error(response?.error || "OSS 书籍加载失败");
@@ -1007,7 +1008,7 @@ async function loadInitialBookFromUrl() {
   renderOssBookLoadingState(bookId);
   setStatus("加载 OSS 书籍", "busy", bookId);
   try {
-    const response = await postJsonWithRetry("/api/oss/load-book", { bookId }, { retries: 1, retryDelayMs: 800 });
+    const response = await postJsonWithRetry("/api/oss/load-book", { bookId, deferBookState: true }, { retries: 1, retryDelayMs: 800 });
     if (!response?.ok) {
       throw new Error(response?.error || "书籍加载失败");
     }
@@ -1190,7 +1191,9 @@ async function loadOssBookPayload(response, book) {
   state.currentBookOwnerId = String(response.book?.owner_user_id || "");
   updateReviewerSessionUi();
   analyzeCurrentMineruRiskPage();
-  await restoreOcrWorkspaceStateRemoteFirst();
+  if (!response.bookStateDeferred) {
+    await restoreOcrWorkspaceStateRemoteFirst();
+  }
   applyDatabaseBookState(response);
   updatePager();
   if (response.document?.deferred) {
@@ -1202,6 +1205,9 @@ async function loadOssBookPayload(response, book) {
   await renderCurrentPage();
   if (response.document?.deferred) {
     hydrateCurrentPagePreviewInBackground(state.currentPage);
+  }
+  if (response.bookStateDeferred) {
+    hydrateDatabaseBookStateInBackground(state.currentBookId);
   }
   scheduleMineruRiskAnalysis();
 }
@@ -1245,10 +1251,14 @@ function hydrateCurrentPagePreviewInBackground(pageNumber) {
 }
 
 function applyDatabaseBookState(response) {
-  state.reviewNeedsCorrection = new Set();
   state.currentBookOwnerId = String(response?.book?.owner_user_id || "");
-  if (Array.isArray(response?.ocrPatches)) {
-    state.ocrPatches = response.ocrPatches;
+  const patches = Array.isArray(response?.ocrPatches)
+    ? response.ocrPatches
+    : Array.isArray(response?.bookState?.ocrPatches)
+      ? response.bookState.ocrPatches
+      : null;
+  if (Array.isArray(patches)) {
+    state.ocrPatches = patches;
     state.acceptedPatchPreview = null;
     state.acceptedPatchBookPreview = null;
   }
@@ -1256,8 +1266,8 @@ function applyDatabaseBookState(response) {
     ? response.reviewMarks
     : Array.isArray(response?.bookState?.reviewMarks)
       ? response.bookState.reviewMarks
-      : [];
-  if (marks.length) {
+      : null;
+  if (Array.isArray(marks)) {
     state.reviewNeedsCorrection = new Set(
       marks
         .filter((mark) => mark?.markType === "needs_extra_correction" && mark?.status !== "resolved")
@@ -1266,6 +1276,47 @@ function applyDatabaseBookState(response) {
     );
   }
   updateReviewerSessionUi();
+}
+
+async function hydrateDatabaseBookStateForCurrentBook(bookId = currentDbBookId()) {
+  const targetBookId = String(bookId || "").trim();
+  if (!targetBookId) {
+    return false;
+  }
+  const response = await getJson(`/api/books/${encodeURIComponent(targetBookId)}/state`, { cache: "no-store" });
+  if (!response?.ok) {
+    throw new Error(response?.error || "书籍校对状态恢复失败");
+  }
+  if (targetBookId !== currentDbBookId()) {
+    return false;
+  }
+  applyDatabaseBookState(response);
+  updatePager();
+  await renderCurrentPage();
+  return true;
+}
+
+function hydrateDatabaseBookStateInBackground(bookId = currentDbBookId()) {
+  const targetBookId = String(bookId || "").trim();
+  if (!targetBookId) {
+    return Promise.resolve(false);
+  }
+  return hydrateDatabaseBookStateForCurrentBook(targetBookId)
+    .then((restored) => {
+      if (!restored || targetBookId !== currentDbBookId()) {
+        return false;
+      }
+      const patchCount = Array.isArray(state.ocrPatches) ? state.ocrPatches.length : 0;
+      const markCount = state.reviewNeedsCorrection instanceof Set ? state.reviewNeedsCorrection.size : 0;
+      setStatus("校对状态已恢复", "ok", `patch ${patchCount}，待校正 ${markCount}`);
+      return true;
+    })
+    .catch((error) => {
+      if (targetBookId === currentDbBookId()) {
+        setStatus("校对状态恢复失败", "error", error?.message || String(error || ""));
+      }
+      return false;
+    });
 }
 
 function identifyRequiredUploadFiles(files) {
@@ -11171,6 +11222,11 @@ async function postJson(path, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  return parseJsonResponseBody(path, response, await response.text());
+}
+
+async function getJson(path, options = {}) {
+  const response = await fetchApi(path, options);
   return parseJsonResponseBody(path, response, await response.text());
 }
 
