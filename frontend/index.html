@@ -514,14 +514,14 @@
 
     .book-list-unit {
       display: grid;
-      gap: 4px;
+      gap: 2px;
     }
 
     .book-chunk-list {
       display: grid;
-      gap: 3px;
-      margin: -1px 0 7px 34px;
-      padding-left: 12px;
+      gap: 2px;
+      margin: -2px 0 7px 30px;
+      padding: 2px 0 2px 14px;
       border-left: 1px solid var(--border);
     }
 
@@ -530,7 +530,7 @@
       align-items: center;
       gap: 7px;
       min-height: 30px;
-      padding: 5px 8px;
+      padding: 5px 8px 5px 6px;
       border-radius: 7px;
       color: #2f6f24;
       text-decoration: none;
@@ -538,6 +538,15 @@
       font-weight: 650;
       line-height: 1.2;
       word-break: break-word;
+    }
+
+    .book-chunk-link::before {
+      content: "";
+      width: 10px;
+      height: 1px;
+      flex: 0 0 auto;
+      margin-left: -14px;
+      background: var(--border);
     }
 
     .book-chunk-link:hover {
@@ -889,6 +898,7 @@
       bulkAssignee: "",
       bulkAssignStage: "first",
       savingBulkAssignment: false,
+      expandedBookKeys: new Set(),
     };
     const els = {};
 
@@ -1700,6 +1710,7 @@
           if (bookRecords(book).some((record) => String(record.id || "") === focusedBookId)) {
             state.selectedCategoryKey = category.key;
             state.selectedBookKey = book.key;
+            state.expandedBookKeys.add(book.key);
             clearDashboardFocusedBookId();
             return true;
           }
@@ -1823,9 +1834,12 @@
 
     function renderBookListItem(book) {
       const selected = book.key === state.selectedBookKey;
+      const chunkCount = bookRecords(book).filter((record) => String(record.mode || "") === "chunk").length;
+      const expandable = chunkCount > 1;
+      const expanded = expandable && state.expandedBookKeys.has(book.key);
       return `
         <div class="book-list-unit">
-          <button class="folder-item ${selected ? "is-selected" : ""}" type="button" data-book-key="${escapeHtml(book.key)}">
+          <button class="folder-item ${selected ? "is-selected" : ""}" type="button" data-book-key="${escapeHtml(book.key)}" aria-expanded="${expanded ? "true" : "false"}">
             <input class="folder-select" type="checkbox" data-book-select="${escapeHtml(book.key)}" ${state.selectedBookKeys.has(book.key) ? "checked" : ""} aria-label="选择 ${escapeHtml(book.title)}">
             <span class="folder-icon" aria-hidden="true"></span>
             <span class="folder-main">
@@ -1835,9 +1849,9 @@
               </span>
               <span class="folder-meta">${escapeHtml(bookMetaLabel(book))}</span>
             </span>
-            <span class="folder-arrow" aria-hidden="true">›</span>
+            <span class="folder-arrow" aria-hidden="true">${expandable ? (expanded ? "⌄" : "›") : "›"}</span>
           </button>
-          ${selected ? renderBookChunkLinks(book) : ""}
+          ${expanded ? renderBookChunkLinks(book) : ""}
         </div>
       `;
     }
@@ -2112,7 +2126,18 @@
       if (!button) {
         return;
       }
-      state.selectedBookKey = String(button.dataset.bookKey || "");
+      const key = String(button.dataset.bookKey || "");
+      const wasSelected = state.selectedBookKey === key;
+      const book = findBookByKey(visibleCategories(), key);
+      const expandable = bookRecords(book || {}).filter((record) => String(record.mode || "") === "chunk").length > 1;
+      state.selectedBookKey = key;
+      if (expandable) {
+        if (wasSelected && state.expandedBookKeys.has(key)) {
+          state.expandedBookKeys.delete(key);
+        } else {
+          state.expandedBookKeys.add(key);
+        }
+      }
       renderExplorer();
     }
 
