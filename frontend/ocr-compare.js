@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260728-reference-page-fix";
+const OCR_COMPARE_BUILD_ID = "20260728-reference-empty-page-fix";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -3656,7 +3656,15 @@ function renderPageReviewBlock(entry) {
   const codeConversionAvailable = canConvertCodeLikeMarkdownToPlainMarkdown(displayMarkdown, segment);
   const formulaStructureAvailable = canStructureFormulaMarkdown(displayMarkdown);
   const mathpixError = getMathpixBlockError(state.currentPage, blockKey);
-  const actionsHtml = actionsOpen
+  const forceActionsOpen = risk?.supplementalSource === "empty_page_full_mathpix";
+  const mathpixUnavailable = state.mathpixConfigured === false;
+  const mathpixDisabled = mathpixUnavailable ? "disabled" : "";
+  const mathpixTitle = mathpixUnavailable ? `title="${escapeHtml(state.mathpixConfigError || "未配置 MATHPIX_APP_ID/MATHPIX_APP_KEY")}"` : "";
+  const mathpixActionLabel = mathpixUnavailable ? (state.mathpixConfigError ? "Mathpix 配置无效" : "Mathpix 未配置") : forceActionsOpen ? "整页 Mathpix 校正" : "Mathpix 校正";
+  const labelHtml = risk?.syntheticLabel
+    ? `<div class="review-page-block-label">${escapeHtml(risk.syntheticLabel)}</div>`
+    : "";
+  const actionsHtml = actionsOpen || forceActionsOpen
     ? `<div class="review-page-block-actions">
         <button class="review-page-mark-button ${needsCorrection ? "is-active" : ""}" type="button" data-review-needs-correction-toggle="${escapeHtml(fullKey)}" aria-pressed="${needsCorrection ? "true" : "false"}">
           需要额外校正
@@ -3676,6 +3684,11 @@ function renderPageReviewBlock(entry) {
             ? `<button class="review-page-local-button" type="button" data-structure-formula-block="${escapeHtml(blockKey)}">结构化公式</button>`
             : ""
         }
+        ${
+          forceActionsOpen
+            ? `<button class="review-page-local-button risk-action" type="button" data-risk-mathpix="${escapeHtml(blockKey)}" ${mathpixDisabled} ${mathpixTitle}>${mathpixActionLabel}</button>`
+            : ""
+        }
         <button class="review-page-correct-button" type="button" data-review-correction-toggle="${escapeHtml(fullKey)}" aria-expanded="${correctionOpen ? "true" : "false"}">
           ${correctionOpen ? "收起校正" : "校正"}
         </button>
@@ -3683,6 +3696,7 @@ function renderPageReviewBlock(entry) {
     : "";
   return `
     <section class="review-page-block ${selected ? "is-selected" : ""} ${corrected ? "is-corrected" : ""} ${hasDraft ? "has-mathpix-draft" : ""} ${needsCorrection ? "needs-extra-correction" : ""}" tabindex="0" role="button" data-review-page-block="${escapeHtml(fullKey)}" data-source-block-id="${escapeHtml(blockKey)}" data-review-item-state="${escapeHtml(itemState)}">
+      ${labelHtml}
       <div class="review-page-block-render">
         ${renderBlockContent(displayMarkdown, segment)}
       </div>
@@ -5641,7 +5655,40 @@ function renderBlockContent(markdown, entry) {
   );
   const imagePreview = renderBlockImagePreview(normalizedMarkdown, entry);
   const markdownForHtml = imagePreview ? stripMarkdownImageReferences(normalizedMarkdown) : normalizedMarkdown;
+  const bibliographyHtml = renderBibliographyHtml(markdownForHtml);
+  if (bibliographyHtml) {
+    return `${imagePreview}${bibliographyHtml}`;
+  }
   return `${imagePreview}${renderMarkdownHtml(markdownForHtml)}`;
+}
+
+function renderBibliographyHtml(markdown) {
+  const formatted = formatBibliographyText(markdown);
+  if (!formatted || !isLikelyBibliographyText(formatted)) {
+    return "";
+  }
+  const entries = splitBibliographyTextByEntryStarts(formatted);
+  if (entries.length < 2) {
+    return "";
+  }
+  return `
+    <div class="bibliography-list" role="list">
+      ${entries.map(renderBibliographyEntryHtml).join("")}
+    </div>
+  `;
+}
+
+function renderBibliographyEntryHtml(entry) {
+  const text = String(entry || "").replace(/\s+/g, " ").trim();
+  const match = text.match(/^(\d{1,4})[.)]?\s*(.*)$/);
+  const number = match ? match[1] : "";
+  const body = match ? match[2].trim() : text;
+  return `
+    <div class="bibliography-entry" role="listitem">
+      ${number ? `<span class="bibliography-number">${escapeHtml(number)}</span>` : ""}
+      <span class="bibliography-text">${escapeHtml(body || text)}</span>
+    </div>
+  `;
 }
 
 function isTabSeparatedTextTableMarkdown(markdown) {
@@ -9466,10 +9513,42 @@ function detectLocalRiskCandidatesForPage(pageNumber) {
 }
 
 function detectSupplementalRiskCandidatesForPage(pageNumber) {
-  return detectCrossPageContinuationCandidatesForPage(pageNumber)
+  const candidates = detectCrossPageContinuationCandidatesForPage(pageNumber)
     .concat(detectSyntheticRiskCandidatesForPage(pageNumber))
     .concat(detectContentListRiskCandidatesForPage(pageNumber))
     .concat(detectPdfReferenceTextCandidatesForPage(pageNumber));
+  return candidates.length ? candidates : detectEmptyPageMathpixCandidatesForPage(pageNumber);
+}
+
+function detectEmptyPageMathpixCandidatesForPage(pageNumber) {
+  if (!hasPdfSource()) {
+    return [];
+  }
+  const page = state.mineruInfo?.pdf_info?.[pageNumber - 1];
+  if (!page) {
+    return [];
+  }
+  const hasReviewText = reviewSegmentsForPage(pageNumber).some((segment) => String(segment?.markdown || "").trim());
+  if (hasReviewText) {
+    return [];
+  }
+  const pageSize = page.page_size || pdfTextPageSizeForPage(pageNumber) || state.pageCache.get(pageNumber)?.pageSize || null;
+  const width = pageSizeWidth(pageSize) || 1000;
+  const height = pageSizeHeight(pageSize) || 1400;
+  return [
+    {
+      pageNumber,
+      blockIndex: `page-full-mathpix-${pageNumber}`,
+      bbox: [0, 0, width, height],
+      pageSize: [width, height],
+      text: "当前页 MinerU 未识别出正文。点击 Mathpix 校正可对整页图像补识别，生成 draft 后再人工校对和接受。",
+      score: 0.35,
+      reasons: ["empty_page_full_mathpix"],
+      syntheticPlacement: "page_top",
+      syntheticLabel: "整页 Mathpix 候选",
+      supplementalSource: "empty_page_full_mathpix",
+    },
+  ];
 }
 
 function detectSyntheticRiskCandidatesForPage(pageNumber) {
@@ -10785,13 +10864,18 @@ function referenceEntryStartIndexes(text) {
   const value = String(text || "");
   const starts = [];
   for (let index = 0; index < value.length; index += 1) {
+    const previousChar = index > 0 ? value[index - 1] : "";
     const slice = value.slice(index);
+    const numberedLeadMatch = slice.match(/^(\d{1,4})[.)]?\s*[A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,}/u);
+    const numberedLead = Boolean(numberedLeadMatch && isPlausibleBibliographyIndex(Number(numberedLeadMatch[1])) && (index === 0 || /\s/.test(previousChar)));
+    if (numberedLead) {
+      starts.push(index);
+      continue;
+    }
     if (!isLikelyReferenceEntryStart(slice)) {
       continue;
     }
-    const previousChar = index > 0 ? value[index - 1] : "";
-    const numberedLead = /^\d{1,4}[.)]?\s*(?=\S)/.test(slice) && (index === 0 || /\s/.test(previousChar));
-    if (index === 0 || numberedLead || /[.!?]\s+$/.test(value.slice(0, index))) {
+    if (index === 0 || /[.!?]\s+$/.test(value.slice(0, index))) {
       starts.push(index);
     }
   }

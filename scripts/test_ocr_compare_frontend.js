@@ -185,9 +185,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-reference-page-fix"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-reference-page-fix"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-reference-page-fix"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-reference-empty-page-fix"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-reference-empty-page-fix"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-reference-empty-page-fix"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -1033,7 +1033,9 @@ assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX tab
   const html = call(`renderBlockContent(${JSON.stringify(markdown)}, { kind: "text", blockIndex: "references-1" })`);
   assert(markdown.includes("\n\n62 Duato J"), "bibliography text blocks should be split into per-entry paragraphs");
   assert(markdown.includes("62 Duato J, Yalamanchili S, Ni L, Interconnection Networks: An Engineering Approach. IEEE Computer Society Press, 1997"), "bibliography continuation lines should stay attached to the same reference entry");
-  assert(html.includes("</p><p>62 Duato J"), "bibliography text blocks should render separate review paragraphs instead of one collapsed paragraph");
+  assert(html.includes("bibliography-list"), "bibliography text blocks should render with a dedicated reference-list layout");
+  assert(html.includes("bibliography-number\">61</span>"), "bibliography rendering should expose the reference number as a stable visual label");
+  assert(html.includes("bibliography-text\">Duato J"), "bibliography rendering should put each reference body in its own visual row");
 }
 
 {
@@ -1063,10 +1065,13 @@ assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX tab
     ],
   };
   const markdown = call(`blockToMarkdown(${JSON.stringify(bibliographyListBlock)})`);
+  const html = call(`renderBlockContent(${JSON.stringify(markdown)}, { kind: "list", blockIndex: "references-2" })`);
   assert(markdown.startsWith("61 Dongarra"), "numbered bibliography list blocks should insert a missing space after the reference number");
   assert(markdown.includes("\n\n62 Duato"), "numbered bibliography list blocks should split entries even when OCR omits the number/name space");
   assert(markdown.includes("62 Duato J,Yalamanchili S,Ni L,Interconnection Networks: An Engineering Approach. IEEE Computer Society Press,1997"), "continuation lines should remain attached to the no-space numbered reference entry");
   assert(markdown.includes("\n\n63 Felten"), "following no-space numbered reference entries should start a new paragraph");
+  assert(html.includes("bibliography-list"), "no-space numbered bibliography blocks should render as a readable reference list");
+  assert(html.includes("bibliography-number\">62</span>"), "no-space numbered bibliography entries should preserve the entry number in a dedicated label");
 }
 
 {
@@ -4940,6 +4945,7 @@ function setupPreviewBookExpression(pages) {
       state.mineruBlockOverrides.clear();
       state.mathpixBlockDrafts.clear();
       state.riskByPage.clear();
+      state.pdfDocumentId = "doc-empty-page";
       state.contentListItems = [];
       state.mineruInfo = {
         pdf_info: [
@@ -4964,11 +4970,14 @@ function setupPreviewBookExpression(pages) {
       };
       const risks = detectRiskCandidatesForPage(2);
       const entries = buildReviewEntriesForPage(risks, reviewSegmentsForPage(2), 2);
-      return JSON.stringify({ risks, keys: entries.map((entry) => entry.key) });
+      const html = renderPageReviewCanvas(entries);
+      return JSON.stringify({ risks, keys: entries.map((entry) => entry.key), html });
     })()`),
   );
   assert(!result.risks.some((risk) => risk.blockIndex === "cross-page-continuation-2-0"), "blank pages should not show previous-page bottom cross_page noise as current-page content");
-  assert.deepStrictEqual(result.keys, [], "blank pages with only previous-page bottom cross_page noise should not render next-page review cards");
+  assert.deepStrictEqual(result.keys, ["page-full-mathpix-2"], "blank OCR pages with a PDF source should expose a full-page Mathpix draft candidate instead of a dead empty state");
+  assert(result.html.includes("整页 Mathpix 候选"), "blank OCR page fallback should tell users the card is a full-page Mathpix candidate");
+  assert(result.html.includes("data-risk-mathpix=\"page-full-mathpix-2\""), "blank OCR page fallback should reuse the block Mathpix action path");
 }
 
 {

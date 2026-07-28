@@ -2461,6 +2461,31 @@ label[role="button"] {
   margin: 4px 0;
 }
 
+.bibliography-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.bibliography-entry {
+  display: grid;
+  grid-template-columns: 3.2em minmax(0, 1fr);
+  column-gap: 0.7em;
+  align-items: start;
+}
+
+.bibliography-number {
+  color: #334155;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: text;
+}
+
+.bibliography-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .markdown-body blockquote {
   margin: 14px 0;
   padding: 10px 14px;
