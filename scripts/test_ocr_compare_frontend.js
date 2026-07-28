@@ -176,9 +176,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260727-post-book-state"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260727-post-book-state"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260727-post-book-state"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-focus-fragments"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-focus-fragments"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-focus-fragments"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -1070,11 +1070,65 @@ assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX tab
 }
 
 {
+  const pageSize = JSON.parse(
+    call(`(() => {
+      state.mineruInfo = { pdf_info: [{ page_size: [581, 793], para_blocks: [] }] };
+      state.contentListItems = [
+        { page_idx: 0, type: "discarded", bbox: [731, 55, 941, 64], text: "NATUREVOL.3244DECEMBER1986" },
+        { page_idx: 0, type: "discarded", bbox: [432, 967, 617, 977], text: "@ 1986 Nature Publishing Group" }
+      ];
+      return JSON.stringify(inferContentListPageSize(1));
+    })()`),
+  );
+  assert(pageSize[0] > 900, "content_list page size inference should not clamp bboxes to a smaller MinerU page width when coordinates clearly use a larger page image");
+  assert(pageSize[1] > 950, "content_list page size inference should not clamp bboxes to a smaller MinerU page height when footer coordinates clearly use a larger page image");
+}
+
+{
+  const discardedNoise = JSON.parse(
+    call(`(() => {
+      state.mineruInfo = { pdf_info: [{ page_size: [581, 793], para_blocks: [] }] };
+      state.contentListItems = normalizeContentListItems([
+        { page_idx: 0, type: "discarded", bbox: [423, 58, 578, 71], text: "LETTERSTONATURE" },
+        { page_idx: 0, type: "discarded", bbox: [731, 55, 941, 64], text: "NATUREVOL.3244DECEMBER1986" },
+        { page_idx: 0, type: "discarded", bbox: [432, 967, 617, 977], text: "@ 1986 Nature Publishing Group" },
+        { page_idx: 0, type: "discarded", bbox: [514, 79, 790, 114], text: "A hierarchical O(N log N) force-calculation algorithm" }
+      ]);
+      return JSON.stringify(detectContentListRiskCandidatesForPage(1).map((item) => item.text));
+    })()`),
+  );
+  assert(!discardedNoise.some((text) => /LETTERSTONATURE|NATUREVOL|Nature Publishing Group/.test(text)), "running journal headers and copyright footers should not become review sync blocks");
+  assert(discardedNoise.some((text) => /hierarchical/.test(text)), "real discarded title text should remain eligible as a review candidate");
+}
+
+{
   const narrowColumnFocusMetrics = JSON.parse(
     call(`JSON.stringify(pdfFocusMetricsForRisk({ bbox: [110, 420, 270, 462], pageSize: [1000, 1400] }, 500, 700))`),
   );
   assert(narrowColumnFocusMetrics.width <= 120, "double-column focus boxes should not add single-column horizontal padding");
   assert(narrowColumnFocusMetrics.height <= 40, "short narrow-column focus boxes should stay compact vertically");
+}
+
+{
+  const fragmentedFocus = JSON.parse(
+    call(`(() => {
+      const block = {
+        type: "text",
+        lines: [
+          { bbox: [32, 717, 283, 730], spans: [{ content: "left column bottom line" }] },
+          { bbox: [32, 729, 283, 739], spans: [{ content: "left column bottom continuation" }] },
+          { bbox: [298, 339, 547, 351], spans: [{ content: "right column top line" }] },
+          { bbox: [298, 380, 346, 389], spans: [{ content: "right column ending" }] }
+        ]
+      };
+      const focusBBoxes = focusBBoxesForBlock(block, [581, 793]);
+      const metrics = pdfFocusMetricsForRisk({ bbox: getBlockBBox(block), focusBBoxes, pageSize: [581, 793] }, 581, 793);
+      return JSON.stringify({ focusBBoxes, fragmentCount: metrics.fragments.length, fragments: metrics.fragments });
+    })()`),
+  );
+  assert.strictEqual(fragmentedFocus.focusBBoxes.length, 2, "a block that jumps from left-column bottom to right-column top should keep separate focus bboxes");
+  assert.strictEqual(fragmentedFocus.fragmentCount, 2, "PDF focus metrics should expose separate fragments instead of one cross-column rectangle");
+  assert(fragmentedFocus.fragments.every((fragment) => fragment.width < 300), "fragmented double-column focus boxes should not bridge the gutter");
 }
 
 const latexArray = "\\begin{array}{cc}\na & b \\\\ c & d\n\\end{array}";
@@ -5442,8 +5496,8 @@ function setupPreviewBookExpression(pages) {
     })()`),
   );
   assert.deepStrictEqual(result.percent, { left: 20, top: 20, width: 40, height: 6 });
-  assert.deepStrictEqual(result.metrics, { left: 164, top: 386, width: 472, height: 148 });
-  assert.deepStrictEqual(result.compactMetrics, { left: 164, top: 394, width: 472, height: 32 });
+  assert.deepStrictEqual(result.metrics, { left: 180, top: 386, width: 440, height: 148, fragments: [{ left: 180, top: 386, width: 440, height: 148 }] });
+  assert.deepStrictEqual(result.compactMetrics, { left: 180, top: 394, width: 440, height: 32, fragments: [{ left: 180, top: 394, width: 440, height: 32 }] });
   assert.strictEqual(result.missing, null);
 }
 
@@ -5467,9 +5521,9 @@ function setupPreviewBookExpression(pages) {
   );
   assert.strictEqual(result.ok, true);
   assert.strictEqual(result.hidden, false);
-  assert.strictEqual(result.style.left, "214px");
+  assert.strictEqual(result.style.left, "230px");
   assert.strictEqual(result.style.top, "326px");
-  assert.strictEqual(result.style.width, "572px");
+  assert.strictEqual(result.style.width, "540px");
   assert.strictEqual(result.style.height, "130px");
   assert.strictEqual(result.scrolled.top, 191);
   assert.strictEqual(result.scrolled.left, 200);

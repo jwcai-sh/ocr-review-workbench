@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260727-post-book-state";
+const OCR_COMPARE_BUILD_ID = "20260728-focus-fragments";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -2715,13 +2715,12 @@ function applyPdfFocusBox(wrap, image, focus, risk) {
   const metrics = pdfFocusMetricsForRisk(risk, image.clientWidth || image.naturalWidth || image.width, image.clientHeight || image.naturalHeight || image.height);
   if (!metrics) {
     focus.hidden = true;
+    focus.innerHTML = "";
+    focus.classList?.remove?.("is-fragmented");
     return false;
   }
   focus.hidden = false;
-  focus.style.left = `${metrics.left}px`;
-  focus.style.top = `${metrics.top}px`;
-  focus.style.width = `${metrics.width}px`;
-  focus.style.height = `${metrics.height}px`;
+  renderPdfFocusBox(focus, metrics);
   const targetTop = clamp(metrics.top + metrics.height / 2 - wrap.clientHeight / 2, 0, Math.max(0, wrap.scrollHeight - wrap.clientHeight));
   const targetLeft = clamp(metrics.left + metrics.width / 2 - wrap.clientWidth / 2, 0, Math.max(0, wrap.scrollWidth - wrap.clientWidth));
   if (typeof wrap.scrollTo === "function") {
@@ -2731,6 +2730,27 @@ function applyPdfFocusBox(wrap, image, focus, risk) {
     wrap.scrollLeft = targetLeft;
   }
   return true;
+}
+
+function renderPdfFocusBox(focus, metrics) {
+  const fragments = Array.isArray(metrics?.fragments) ? metrics.fragments : [];
+  focus.style.left = `${metrics.left}px`;
+  focus.style.top = `${metrics.top}px`;
+  focus.style.width = `${metrics.width}px`;
+  focus.style.height = `${metrics.height}px`;
+  if (fragments.length <= 1) {
+    focus.classList?.remove?.("is-fragmented");
+    focus.innerHTML = "";
+    return;
+  }
+  focus.classList?.add?.("is-fragmented");
+  focus.innerHTML = fragments
+    .map((fragment) => {
+      const left = Math.max(0, Math.round(Number(fragment.left) - Number(metrics.left)));
+      const top = Math.max(0, Math.round(Number(fragment.top) - Number(metrics.top)));
+      return `<span class="page-image-focus-fragment" style="left: ${left}px; top: ${top}px; width: ${Math.max(1, Math.round(Number(fragment.width) || 0))}px; height: ${Math.max(1, Math.round(Number(fragment.height) || 0))}px;"></span>`;
+    })
+    .join("");
 }
 
 function pdfFocusPercentForRisk(risk) {
@@ -2753,20 +2773,49 @@ function pdfFocusPercentForRisk(risk) {
 }
 
 function pdfFocusMetricsForRisk(risk, imageWidth, imageHeight) {
-  const bbox = normalizedBBox(risk?.bbox);
-  const pageWidth = pageSizeWidth(risk?.pageSize);
-  const pageHeight = pageSizeHeight(risk?.pageSize);
+  const fragments = pdfFocusFragmentsForRisk(risk, imageWidth, imageHeight);
+  if (!fragments.length) {
+    return null;
+  }
+  if (fragments.length === 1) {
+    return { ...fragments[0], fragments };
+  }
+  const left = Math.min(...fragments.map((fragment) => fragment.left));
+  const top = Math.min(...fragments.map((fragment) => fragment.top));
+  const right = Math.max(...fragments.map((fragment) => fragment.left + fragment.width));
+  const bottom = Math.max(...fragments.map((fragment) => fragment.top + fragment.height));
+  return {
+    left,
+    top,
+    width: Math.max(10, Math.round(right - left)),
+    height: Math.max(10, Math.round(bottom - top)),
+    fragments,
+  };
+}
+
+function pdfFocusFragmentsForRisk(risk, imageWidth, imageHeight) {
+  const focusBBoxes = Array.isArray(risk?.focusBBoxes) ? risk.focusBBoxes.map(normalizedBBox).filter(Boolean) : [];
+  const bboxes = focusBBoxes.length ? focusBBoxes : [normalizedBBox(risk?.bbox)].filter(Boolean);
+  return bboxes
+    .map((bbox) => pdfFocusMetricForBBox(bbox, risk?.pageSize, imageWidth, imageHeight))
+    .filter(Boolean);
+}
+
+function pdfFocusMetricForBBox(bbox, pageSize, imageWidth, imageHeight) {
+  const normalized = normalizedBBox(bbox);
+  const pageWidth = pageSizeWidth(pageSize);
+  const pageHeight = pageSizeHeight(pageSize);
   const width = Number(imageWidth) || 0;
   const height = Number(imageHeight) || 0;
-  if (!bbox || !pageWidth || !pageHeight || !width || !height) {
+  if (!normalized || !pageWidth || !pageHeight || !width || !height) {
     return null;
   }
   const scaleX = width / pageWidth;
   const scaleY = height / pageHeight;
-  const left = clamp(bbox[0] * scaleX, 0, width);
-  const top = clamp(bbox[1] * scaleY, 0, height);
-  const right = clamp(bbox[2] * scaleX, left, width);
-  const bottom = clamp(bbox[3] * scaleY, top, height);
+  const left = clamp(normalized[0] * scaleX, 0, width);
+  const top = clamp(normalized[1] * scaleY, 0, height);
+  const right = clamp(normalized[2] * scaleX, left, width);
+  const bottom = clamp(normalized[3] * scaleY, top, height);
   const horizontalPadding = pdfFocusBoxHorizontalPadding(left, right, width);
   const verticalPadding = pdfFocusBoxVerticalPadding(top, bottom);
   const paddedLeft = clamp(left - horizontalPadding, 0, width);
@@ -2785,8 +2834,8 @@ function pdfFocusBoxHorizontalPadding(left, right, imageWidth) {
   const boxWidth = Math.max(1, Number(right) - Number(left));
   const width = Math.max(1, Number(imageWidth) || 0);
   const columnRatio = boxWidth / width;
-  if (columnRatio <= 0.26) {
-    return Math.max(PDF_FOCUS_BOX_PADDING.minHorizontal, Math.min(20, boxWidth * 0.25));
+  if (columnRatio <= 0.48) {
+    return Math.max(PDF_FOCUS_BOX_PADDING.minHorizontal, Math.min(20, boxWidth * 0.08));
   }
   return Math.min(PDF_FOCUS_BOX_PADDING.horizontal, Math.max(PDF_FOCUS_BOX_PADDING.minHorizontal, boxWidth * 0.14));
 }
@@ -3461,6 +3510,7 @@ function reviewRiskFromSegment(segment, pageNumber = state.currentPage) {
     pageNumber,
     blockIndex: String(segment?.blockIndex ?? ""),
     bbox: segment?.bbox || null,
+    focusBBoxes: Array.isArray(segment?.focusBBoxes) ? segment.focusBBoxes : null,
     pageSize: segment?.pageSize || null,
     text: segment?.markdown || "",
     score: 0,
@@ -7070,6 +7120,7 @@ function reviewBlockMarkdownsForPage(pageNumber) {
         block,
         blockIndex,
         bbox: getBlockBBox(scopedBlock) || getBlockBBox(block),
+        focusBBoxes: focusBBoxesForBlock(scopedBlock, page.page_size) || focusBBoxesForBlock(block, page.page_size),
         markdown: cleanNarrativeFigureTablePrefixForTextBlock(blockToMarkdown(scopedBlock), scopedBlock),
         pageSize: page.page_size,
       };
@@ -7292,6 +7343,7 @@ function mergePlainProseEntries(previous, current) {
     blockIndexes,
     componentEntries,
     bbox: mergeBBoxes([previous?.bbox, current?.bbox]),
+    focusBBoxes: mergedFocusBBoxesForEntries(componentEntries),
     markdown: [previous?.markdown, current?.markdown].map((text) => String(text || "").trim()).filter(Boolean).join("\n"),
     pageSize: previous?.pageSize || current?.pageSize,
     mergedPlainProse: true,
@@ -7304,6 +7356,7 @@ function componentEntriesForReviewSegment(entry = {}) {
       blockIndex: String(component.blockIndex ?? ""),
       markdown: String(component.markdown || ""),
       bbox: component.bbox || null,
+      focusBBoxes: Array.isArray(component.focusBBoxes) ? component.focusBBoxes : null,
       pageSize: component.pageSize || entry.pageSize || null,
     }));
   }
@@ -7314,6 +7367,7 @@ function componentEntriesForReviewSegment(entry = {}) {
       blockIndex: String(blockIndex ?? ""),
       markdown: String(blockIndexes.length === 1 || String(blockIndex ?? "") === firstBlockIndex ? entry?.markdown || "" : ""),
       bbox: entry?.bbox || null,
+      focusBBoxes: Array.isArray(entry?.focusBBoxes) ? entry.focusBBoxes : null,
       pageSize: entry?.pageSize || null,
     }))
     .filter((component) => component.blockIndex);
@@ -7473,6 +7527,7 @@ function segmentEntries(entries) {
       blockIndex: `algo-${first}-${last}`,
       blockIndexes: group.map((item) => item.blockIndex),
       bbox: mergeBBoxes(group.map((item) => item.bbox)),
+      focusBBoxes: mergedFocusBBoxesForEntries(group),
       markdown: group.map((item) => item.markdown).filter(Boolean).join("\n"),
       pageSize: group[0].pageSize,
       kind: "algorithm",
@@ -7581,6 +7636,99 @@ function bboxReadingGeometry(bbox, pageSize) {
     pageWidth: pageSizeWidth(pageSize) || Math.max(1, normalized[2]),
     pageHeight: pageSizeHeight(pageSize) || Math.max(1, normalized[3]),
   };
+}
+
+function focusBBoxesForBlock(block, pageSize) {
+  const lineBoxes = collectLineBBoxes(block).map(normalizedBBox).filter(Boolean);
+  if (lineBoxes.length < 2) {
+    return null;
+  }
+  const clusters = [];
+  lineBoxes.forEach((box) => {
+    const current = clusters[clusters.length - 1];
+    if (!current?.length || shouldStartNewFocusBBoxCluster(current[current.length - 1], box, pageSize)) {
+      clusters.push([box]);
+    } else {
+      current.push(box);
+    }
+  });
+  const clusterBoxes = clusters.map((cluster) => mergeBBoxes(cluster)).filter(Boolean);
+  return focusClustersMeaningfullyFragmented(clusterBoxes, pageSize) ? clusterBoxes : null;
+}
+
+function collectLineBBoxes(node, boxes = []) {
+  if (!node || typeof node !== "object") {
+    return boxes;
+  }
+  if (Array.isArray(node.lines)) {
+    node.lines.forEach((line) => {
+      if (Array.isArray(line?.bbox) && line.bbox.length >= 4) {
+        boxes.push(line.bbox.slice(0, 4).map(Number));
+      }
+      collectLineBBoxes(line, boxes);
+    });
+  }
+  if (Array.isArray(node.blocks)) {
+    node.blocks.forEach((block) => collectLineBBoxes(block, boxes));
+  }
+  return boxes;
+}
+
+function shouldStartNewFocusBBoxCluster(previousBox, currentBox, pageSize) {
+  const previous = bboxReadingGeometry(previousBox, pageSize);
+  const current = bboxReadingGeometry(currentBox, pageSize);
+  if (!previous || !current) {
+    return false;
+  }
+  const horizontalOverlap = Math.max(0, Math.min(previous.right, current.right) - Math.max(previous.left, current.left));
+  const minWidth = Math.max(1, Math.min(previous.width, current.width));
+  const sameColumn = horizontalOverlap / minWidth >= 0.25;
+  const pageHeight = Math.max(previous.pageHeight, current.pageHeight, 1);
+  const upwardJump = previous.top - current.top >= Math.max(18, pageHeight * 0.035);
+  return upwardJump && !sameColumn;
+}
+
+function focusClustersMeaningfullyFragmented(clusterBoxes, pageSize) {
+  const boxes = (Array.isArray(clusterBoxes) ? clusterBoxes : []).map(normalizedBBox).filter(Boolean);
+  if (boxes.length < 2) {
+    return false;
+  }
+  const union = mergeBBoxes(boxes);
+  const unionArea = bboxArea(union);
+  const summedArea = boxes.reduce((total, box) => total + bboxArea(box), 0);
+  const pageWidth = pageSizeWidth(pageSize) || Math.max(...boxes.map((box) => box[2]));
+  const hasColumnGap = boxes.some((left, index) =>
+    boxes.slice(index + 1).some((right) => Math.abs(left[0] - right[0]) >= pageWidth * 0.18 && Math.max(0, Math.min(left[2], right[2]) - Math.max(left[0], right[0])) <= Math.min(left[2] - left[0], right[2] - right[0]) * 0.25)
+  );
+  return hasColumnGap && unionArea > summedArea * 1.35;
+}
+
+function bboxArea(bbox) {
+  const normalized = normalizedBBox(bbox);
+  if (!normalized) {
+    return 0;
+  }
+  return Math.max(0, normalized[2] - normalized[0]) * Math.max(0, normalized[3] - normalized[1]);
+}
+
+function mergedFocusBBoxesForEntries(entries) {
+  const boxes = [];
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    if (Array.isArray(entry?.focusBBoxes) && entry.focusBBoxes.length) {
+      entry.focusBBoxes.forEach((box) => {
+        const normalized = normalizedBBox(box);
+        if (normalized) {
+          boxes.push(normalized);
+        }
+      });
+      return;
+    }
+    const normalized = normalizedBBox(entry?.bbox);
+    if (normalized) {
+      boxes.push(normalized);
+    }
+  });
+  return boxes.length > 1 ? boxes : null;
 }
 
 function filterBlockLines(block, includeLine) {
@@ -9498,10 +9646,28 @@ function isLikelyContentListHeaderFooterNoise(text, bbox, pageSize, sourceSegmen
   if (!geometry || (geometry.topRatio > 0.14 && geometry.bottomRatio < 0.86)) {
     return false;
   }
+  if (isRunningJournalHeaderFooterText(value, geometry)) {
+    return true;
+  }
+  if (isCopyrightFooterText(value) && geometry.topRatio >= 0.82) {
+    return true;
+  }
   if (!looksLikeSectionHeaderNoise(value)) {
     return false;
   }
   return pageAlreadyContainsSimilarHeading(value, sourceSegments);
+}
+
+function isRunningJournalHeaderFooterText(text, geometry) {
+  const value = String(text || "").replace(/\s+/g, "").toUpperCase();
+  if (!value || !geometry || geometry.bottomRatio > 0.14) {
+    return false;
+  }
+  return value === "LETTERSTONATURE" || /^NATUREVOL\.?\d+[A-Z0-9]*$/.test(value);
+}
+
+function isCopyrightFooterText(text) {
+  return /^[?@©]?\s*\d{4}\s+Nature\s+Publishing\s+Group$/i.test(String(text || "").trim());
 }
 
 function looksLikeSectionHeaderNoise(text) {
@@ -9903,17 +10069,28 @@ function inferContentListPageSize(pageNumber, items = contentListItemsForPage(pa
   if (explicit) {
     return explicit;
   }
+  const boxes = items.map((item) => normalizedBBox(item.bbox)).filter(Boolean);
   const page = state.mineruInfo?.pdf_info?.[pageNumber - 1];
-  if (page?.page_size) {
+  if (page?.page_size && (!boxes.length || contentListBBoxesFitPageSize(boxes, page.page_size))) {
     return page.page_size;
   }
-  const boxes = items.map((item) => normalizedBBox(item.bbox)).filter(Boolean);
   if (!boxes.length) {
-    return null;
+    return page?.page_size || null;
   }
   const maxX = Math.max(...boxes.map((box) => box[2]));
   const maxY = Math.max(...boxes.map((box) => box[3]));
   return [Math.ceil(Math.max(maxX + 20, maxX * 1.1)), Math.ceil(Math.max(maxY + 20, maxY * 1.08))];
+}
+
+function contentListBBoxesFitPageSize(boxes, pageSize) {
+  const pageWidth = pageSizeWidth(pageSize);
+  const pageHeight = pageSizeHeight(pageSize);
+  if (!pageWidth || !pageHeight || !Array.isArray(boxes) || !boxes.length) {
+    return false;
+  }
+  const maxX = Math.max(...boxes.map((box) => Number(box?.[2]) || 0));
+  const maxY = Math.max(...boxes.map((box) => Number(box?.[3]) || 0));
+  return maxX <= pageWidth * 1.08 && maxY <= pageHeight * 1.08;
 }
 
 function normalizeTextForComparison(text) {
