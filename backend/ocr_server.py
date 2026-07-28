@@ -98,6 +98,16 @@ def _books_list_payload(status: str = "", reviewer_id: str = "", limit: int = 50
     return payload
 
 
+def _focused_books_payload(book_id: str, limit: int = 100) -> dict:
+    normalized_book_id = str(book_id or "").strip()
+    if not normalized_book_id:
+        return {"ok": False, "error": "missing_book_id", "books": []}
+    payload = DB_SERVICE.list_focused_books(normalized_book_id, limit=max(1, min(int(limit or 100), 500)))
+    if payload.get("ok"):
+        payload["syncRuns"] = DB_SERVICE.list_oss_sync_runs(limit=100).get("runs", [])
+    return payload
+
+
 class OcrWorkbenchHandler(BaseHTTPRequestHandler):
     server_version = "OcrWorkbenchHTTP/1.0"
 
@@ -154,6 +164,13 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/books":
             query = parse_qs(parsed.query)
+            focused_book_id = str(query.get("focusBookId", query.get("focus_book_id", [""]))[0] or "")
+            if focused_book_id:
+                self._send_json(_focused_books_payload(
+                    focused_book_id,
+                    limit=_safe_int(query.get("limit", ["100"])[0], 100),
+                ))
+                return
             books_payload = _books_list_payload(
                 status=str(query.get("status", [""])[0] or ""),
                 reviewer_id=str(query.get("reviewerId", [""])[0] or ""),

@@ -18,6 +18,7 @@ import backend.ocr_server as ocr_server
 class FakeBookDb:
     def __init__(self) -> None:
         self.list_books_calls = 0
+        self.list_focused_books_calls = 0
         self.sync_runs_calls = 0
 
     def list_books(self, *, status: str = "", reviewer_id: str = "", limit: int = 5000) -> dict:
@@ -37,6 +38,18 @@ class FakeBookDb:
         self.sync_runs_calls += 1
         return {"runs": [{"id": f"sync-{self.sync_runs_calls}", "limit": limit}]}
 
+    def list_focused_books(self, book_id: str, *, limit: int = 100) -> dict:
+        self.list_focused_books_calls += 1
+        return {
+            "ok": True,
+            "book": {"id": book_id, "title": "focused book"},
+            "books": [
+                {"id": book_id, "title": "focused book", "chunk_label": "part_0001_pages_0001-0070"},
+                {"id": f"{book_id}:next", "title": "focused book", "chunk_label": "part_0002_pages_0071-0140"},
+            ],
+            "count": 2,
+        }
+
 
 def main() -> None:
     original_db = ocr_server.DB_SERVICE
@@ -55,6 +68,14 @@ def main() -> None:
         filtered = ocr_server._books_list_payload(status="first_review", reviewer_id="门", limit=50)
         assert fake_db.list_books_calls == 2
         assert filtered["books"][0]["id"].startswith("first_review:门:50:")
+
+        focused = ocr_server._focused_books_payload("book-1", limit=100)
+        assert fake_db.list_books_calls == 2
+        assert fake_db.list_focused_books_calls == 1
+        assert focused["ok"] is True
+        assert focused["book"]["id"] == "book-1"
+        assert len(focused["books"]) == 2
+        assert focused["syncRuns"][0]["id"] == "sync-3"
 
         ocr_server._invalidate_books_list_cache()
         third = ocr_server._books_list_payload(limit=5000)

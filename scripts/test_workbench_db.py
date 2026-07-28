@@ -45,15 +45,30 @@ def main() -> None:
                     "pdfKey": "books/book-b/chunks/part-0001/book-b_origin.pdf",
                     "middleKey": "books/book-b/chunks/part-0001/book-b_middle.json",
                 },
+                {
+                    "id": "oss:books/book-b/chunks/part-0002/book-b_middle.json",
+                    "title": "Book B",
+                    "mode": "chunked",
+                    "chunkLabel": "part-0002",
+                    "pdfKey": "books/book-b/chunks/part-0002/book-b_origin.pdf",
+                    "middleKey": "books/book-b/chunks/part-0002/book-b_middle.json",
+                },
             ],
             owner_user_id="reviewer-a",
         )
         assert_true(sync["ok"], "OSS book sync should succeed")
-        assert_true(sync["count"] == 2, "two OSS books should be synced")
+        assert_true(sync["count"] == 3, "three OSS books should be synced")
 
         books = db.list_books()
         assert_true(books["ok"], "book list should succeed")
-        assert_true(len(books["books"]) == 2, "book list should contain two rows")
+        assert_true(len(books["books"]) == 3, "book list should contain three rows")
+        focused_books = db.list_focused_books("oss:books/book-b/chunks/part-0002/book-b_middle.json")
+        assert_true(focused_books["ok"], "focused book list should succeed")
+        assert_true(focused_books["count"] == 2, "focused book list should return the selected chunk group")
+        assert_true(
+            [item["chunk_label"] for item in focused_books["books"]] == ["part-0001", "part-0002"],
+            "focused book list should preserve sibling chunk order",
+        )
         first = db.get_book("oss:books/book-a/auto/book-a_middle.json")
         assert_true(first["ok"], "synced book should be readable")
         assert_true(first["book"]["owner_user_id"] == "reviewer-a", "owner should be persisted")

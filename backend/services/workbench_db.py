@@ -710,6 +710,56 @@ class WorkbenchDatabase:
         books = [self._normalize_row(row) for row in rows]
         return {"ok": True, "books": books, "count": len(books)}
 
+    def list_focused_books(self, book_id: str, *, limit: int = 100) -> dict[str, Any]:
+        if not self.enabled:
+            return {"ok": False, "error": self.error, "books": []}
+        focused = self.get_book(book_id)
+        if not focused.get("ok"):
+            return {**focused, "books": []}
+        book = focused["book"]
+        placeholder = self.placeholder
+        params = [
+            str(book.get("title") or ""),
+            str(book.get("parent_book_id") or ""),
+            str(book.get("id") or ""),
+            str(book.get("id") or ""),
+            book_id,
+        ]
+        sql = f"""
+            SELECT
+              b.*,
+              COALESCE(p.patch_count, 0) AS patch_count,
+              COALESCE(p.accepted_patch_count, 0) AS accepted_patch_count,
+              COALESCE(p.draft_patch_count, 0) AS draft_patch_count,
+              COALESCE(m.needs_extra_correction_count, 0) AS needs_extra_correction_count
+            FROM books b
+            LEFT JOIN (
+              SELECT
+                book_id,
+                COUNT(*) AS patch_count,
+                SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) AS accepted_patch_count,
+                SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) AS draft_patch_count
+              FROM ocr_patches
+              GROUP BY book_id
+            ) p ON p.book_id = b.id
+            LEFT JOIN (
+              SELECT book_id, COUNT(*) AS needs_extra_correction_count
+              FROM review_marks
+              WHERE mark_type = 'needs_extra_correction' AND status = 'open'
+              GROUP BY book_id
+            ) m ON m.book_id = b.id
+            WHERE b.title = {placeholder}
+               OR ({placeholder} <> '' AND b.parent_book_id = {placeholder})
+               OR b.parent_book_id = {placeholder}
+               OR b.id = {placeholder}
+            ORDER BY b.title ASC, b.chunk_label ASC, b.updated_at DESC
+            LIMIT {int(limit)}
+        """
+        with self.connect() as conn:
+            rows = conn.cursor().execute(sql, params).fetchall()
+        books = [self._normalize_row(row) for row in rows]
+        return {"ok": True, "book": book, "books": books, "count": len(books)}
+
     def get_book(self, book_id: str) -> dict[str, Any]:
         if not self.enabled:
             return {"ok": False, "error": self.error}

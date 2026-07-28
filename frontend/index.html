@@ -946,7 +946,7 @@
       els.folderList.addEventListener("click", handleFolderClick);
       initAuth().finally(() => {
         loadOssCategories();
-        loadBooks().finally(() => loadOssOverview({ silent: true }));
+        loadInitialBooks();
       });
     });
 
@@ -1090,8 +1090,11 @@
       return state.authenticated && adminIds.map((userId) => String(userId || "").trim()).includes(state.currentUser);
     }
 
-    async function loadBooks() {
-      setBusy(true, "正在加载书籍列表...");
+    async function loadBooks(options = {}) {
+      const silent = Boolean(options.silent);
+      if (!silent) {
+        setBusy(true, "正在加载书籍列表...");
+      }
       try {
         const response = await fetch("/api/books?limit=5000", { cache: "no-store", credentials: "include" });
         const data = await readJsonResponse(response, "书籍列表读取失败");
@@ -1101,13 +1104,51 @@
         state.books = Array.isArray(data.books) ? data.books : [];
         state.syncRuns = Array.isArray(data.syncRuns) ? data.syncRuns : [];
         ensureSelection();
-        setStatus(`已加载 ${state.books.length} 条书籍记录`);
+        if (!silent) {
+          setStatus(`已加载 ${state.books.length} 条书籍记录`);
+        }
         renderExplorer();
       } catch (error) {
-        state.books = [];
-        state.syncRuns = [];
+        if (!silent) {
+          state.books = [];
+          state.syncRuns = [];
+          renderExplorer();
+          setStatus(error.message || String(error), true);
+        }
+      } finally {
+        if (!silent) {
+          setBusy(false);
+        }
+      }
+    }
+
+    async function loadInitialBooks() {
+      const focusedBookId = dashboardFocusedBookId();
+      if (!focusedBookId) {
+        return loadBooks().finally(() => loadOssOverview({ silent: true }));
+      }
+      const focusedLoaded = await loadFocusedBooks(focusedBookId);
+      loadBooks({ silent: true }).finally(() => loadOssOverview({ silent: true }));
+      return focusedLoaded;
+    }
+
+    async function loadFocusedBooks(bookId) {
+      setBusy(true, "正在返回当前书稿...");
+      try {
+        const response = await fetch(`/api/books?focusBookId=${encodeURIComponent(bookId)}&limit=100`, { cache: "no-store", credentials: "include" });
+        const data = await readJsonResponse(response, "当前书稿读取失败");
+        if (!data.ok) {
+          throw new Error(data.error || "当前书稿读取失败");
+        }
+        state.books = Array.isArray(data.books) ? data.books : [];
+        state.syncRuns = Array.isArray(data.syncRuns) ? data.syncRuns : [];
+        ensureSelection();
+        setStatus(`已返回当前书稿：${state.books.length} 个分块`);
         renderExplorer();
-        setStatus(error.message || String(error), true);
+        return data;
+      } catch (error) {
+        setStatus(`${error.message || String(error)}；正在回退到完整书库列表...`, true);
+        return loadBooks();
       } finally {
         setBusy(false);
       }
