@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260728-circled-number-fix";
+const OCR_COMPARE_BUILD_ID = "20260728-oss-part-sort-fix";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -904,7 +904,39 @@ function ossBookGroups() {
     }
     groups.get(key).items.push({ book, index });
   });
-  return Array.from(groups.values()).sort((left, right) => left.title.localeCompare(right.title, "zh-Hans-CN"));
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      items: group.items.slice().sort(compareOssBookGroupItems),
+    }))
+    .sort((left, right) => left.title.localeCompare(right.title, "zh-Hans-CN"));
+}
+
+function compareOssBookGroupItems(left, right) {
+  const leftSort = ossBookPartSortKey(left?.book, left?.index);
+  const rightSort = ossBookPartSortKey(right?.book, right?.index);
+  if (leftSort.partNumber !== rightSort.partNumber) {
+    return leftSort.partNumber - rightSort.partNumber;
+  }
+  if (leftSort.startPage !== rightSort.startPage) {
+    return leftSort.startPage - rightSort.startPage;
+  }
+  const labelOrder = leftSort.label.localeCompare(rightSort.label, "zh-Hans-CN", { numeric: true, sensitivity: "base" });
+  return labelOrder || leftSort.index - rightSort.index;
+}
+
+function ossBookPartSortKey(book, index = 0) {
+  const label = [book?.chunkLabel, book?.label, book?.middleKey, book?.directory]
+    .map((value) => String(value || ""))
+    .find((value) => value.trim()) || "";
+  const partMatch = label.match(/part[_-]?(\d+)/i);
+  const pagesMatch = label.match(/pages?[_-]?(\d+)/i);
+  return {
+    partNumber: partMatch ? Number(partMatch[1]) : Number.MAX_SAFE_INTEGER,
+    startPage: pagesMatch ? Number(pagesMatch[1]) : Number.MAX_SAFE_INTEGER,
+    label,
+    index: Number(index) || 0,
+  };
 }
 
 function ossBookGroupTitle(book, index) {

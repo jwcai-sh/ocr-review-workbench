@@ -185,9 +185,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-circled-number-fix"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-circled-number-fix"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-circled-number-fix"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-oss-part-sort-fix"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-oss-part-sort-fix"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-oss-part-sort-fix"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -291,6 +291,7 @@ function runOcrCompareInContext(testContext) {
       `(() => {
       state.ossBooks = [
         { title: "Whole Book A", label: "Whole Book A", mode: "whole-book", middleKey: "books/a/auto/a_middle.json" },
+        { title: "Chunked Book", label: "Chunked Book · part_0005_pages_0281-0350", mode: "chunked", chunkLabel: "part_0005_pages_0281-0350", middleKey: "books/c/chunks/5/middle.json" },
         { title: "Chunked Book", label: "Chunked Book · part_0001_pages_0001-0070", mode: "chunked", chunkLabel: "part_0001_pages_0001-0070", middleKey: "books/c/chunks/1/middle.json" },
         { title: "Chunked Book", label: "Chunked Book · part_0002_pages_0071-0140", mode: "chunked", chunkLabel: "part_0002_pages_0071-0140", middleKey: "books/c/chunks/2/middle.json" }
       ];
@@ -305,11 +306,12 @@ function runOcrCompareInContext(testContext) {
       renderOssBookOptions();
       state.selectedOssGroupKey = "Chunked Book";
       renderOssBookOptions();
-      state.selectedOssBookIndex = 2;
+      state.selectedOssBookIndex = 3;
       renderOssBookEntries();
       updateOssBookControls();
       return JSON.stringify({
         groups: ossBookGroups().map((group) => ({ title: group.title, count: group.items.length })),
+        chunkLabels: ossBookGroups().find((group) => group.title === "Chunked Book").items.map((item) => item.book.chunkLabel),
         groupHtml: groupList.innerHTML,
         entryHtml: entryList.innerHTML,
         selectedMiddleKey: selectedOssBook()?.middleKey || "",
@@ -321,8 +323,13 @@ function runOcrCompareInContext(testContext) {
     ),
   );
   assert.deepStrictEqual(ossBrowserResult.groups, [
-    { title: "Chunked Book", count: 2 },
+    { title: "Chunked Book", count: 3 },
     { title: "Whole Book A", count: 1 },
+  ]);
+  assert.deepStrictEqual(ossBrowserResult.chunkLabels, [
+    "part_0001_pages_0001-0070",
+    "part_0002_pages_0071-0140",
+    "part_0005_pages_0281-0350",
   ]);
   assert(ossBrowserResult.groupHtml.includes("oss-book-folder-icon"), "OSS browser should render book folders");
   assert(ossBrowserResult.entryHtml.includes("part_0002_pages_0071-0140"), "OSS browser should render chunk labels separately");
