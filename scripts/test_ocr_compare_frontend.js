@@ -176,9 +176,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-column-order"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-column-order"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-column-order"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-reference-page-fix"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-reference-page-fix"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-reference-page-fix"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -1025,6 +1025,39 @@ assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX tab
   assert(markdown.includes("\n\n62 Duato J"), "bibliography text blocks should be split into per-entry paragraphs");
   assert(markdown.includes("62 Duato J, Yalamanchili S, Ni L, Interconnection Networks: An Engineering Approach. IEEE Computer Society Press, 1997"), "bibliography continuation lines should stay attached to the same reference entry");
   assert(html.includes("</p><p>62 Duato J"), "bibliography text blocks should render separate review paragraphs instead of one collapsed paragraph");
+}
+
+{
+  const bibliographyListBlock = {
+    type: "list",
+    lines: [
+      {
+        bbox: [64, 71, 350, 87],
+        spans: [{ content: "61Dongarra J J et al.LINPACK User's Guide.SIAM.1979" }],
+      },
+      {
+        bbox: [64, 91, 510, 105],
+        spans: [{ content: "62Duato J,Yalamanchili S,Ni L,Interconnection Networks: An Engineering Approach. IEEE" }],
+      },
+      {
+        bbox: [86, 108, 223, 122],
+        spans: [{ content: "Computer Society Press,1997" }],
+      },
+      {
+        bbox: [63, 124, 507, 143],
+        spans: [{ content: "63Felten E W et al.Early Experience with Message-Passing on the SHRIMP Multicomputer." }],
+      },
+      {
+        bbox: [84, 142, 367, 159],
+        spans: [{ content: "Proc.of the 23rd Int'l Symp.on Computer Architecture,1996" }],
+      },
+    ],
+  };
+  const markdown = call(`blockToMarkdown(${JSON.stringify(bibliographyListBlock)})`);
+  assert(markdown.startsWith("61 Dongarra"), "numbered bibliography list blocks should insert a missing space after the reference number");
+  assert(markdown.includes("\n\n62 Duato"), "numbered bibliography list blocks should split entries even when OCR omits the number/name space");
+  assert(markdown.includes("62 Duato J,Yalamanchili S,Ni L,Interconnection Networks: An Engineering Approach. IEEE Computer Society Press,1997"), "continuation lines should remain attached to the no-space numbered reference entry");
+  assert(markdown.includes("\n\n63 Felten"), "following no-space numbered reference entries should start a new paragraph");
 }
 
 {
@@ -4885,6 +4918,48 @@ function setupPreviewBookExpression(pages) {
   assert.strictEqual(result[0].key, "0", "top figure block should remain before lower cross-page continuation text");
   assert(result[0].markdown.includes("fig-12-3.jpg"), "first review entry should be the figure");
   assert.strictEqual(result[1].key, "cross-page-continuation-18-0", "lower cross-page continuation should follow the figure by visual order");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 2;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      state.mineruOverrides.clear();
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.riskByPage.clear();
+      state.contentListItems = [];
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [581, 793],
+            para_blocks: [
+              {
+                type: "list",
+                lines: [
+                  { bbox: [64, 71, 350, 87], spans: [{ bbox: [64, 71, 350, 87], content: "61Dongarra J J et al.LINPACK User's Guide.SIAM.1979" }] },
+                  { bbox: [66, 92, 475, 107], spans: [{ bbox: [66, 92, 475, 107], content: "104JaJa J.An Introduction to Parallel Algorithms.Addison-Wesley Pub.Company,1992", cross_page: true }] },
+                  { bbox: [66, 109, 513, 127], spans: [{ bbox: [66, 109, 513, 127], content: "105Jones M,Plassmann P.Parallel Algorithms for the Adaptive Refinement and Partitioning of", cross_page: true }] },
+                  { bbox: [93, 127, 512, 145], spans: [{ bbox: [93, 127, 512, 145], content: "Unstructured Meshes. Proc.1994 Scalable High-Performance Computing Conf., IEEE,1994", cross_page: true }] },
+                  { bbox: [117, 660, 491, 679], spans: [{ bbox: [117, 660, 491, 679], content: "Wilson G V,Lu P (Eds). Parallel Programming Using C++.MIT Press,1996", cross_page: true }] },
+                  { bbox: [90, 733, 534, 750], spans: [{ bbox: [90, 733, 534, 750], content: "184Wolfe M. High-Performance Compilers for Parallel Computing.", cross_page: true }] }
+                ]
+              }
+            ]
+          },
+          { page_size: [581, 793], para_blocks: [] }
+        ]
+      };
+      const risks = detectRiskCandidatesForPage(2);
+      const entries = buildReviewEntriesForPage(risks, reviewSegmentsForPage(2), 2);
+      return JSON.stringify({ risks, keys: entries.map((entry) => entry.key) });
+    })()`),
+  );
+  assert(!result.risks.some((risk) => risk.blockIndex === "cross-page-continuation-2-0"), "blank pages should not show previous-page bottom cross_page noise as current-page content");
+  assert.deepStrictEqual(result.keys, [], "blank pages with only previous-page bottom cross_page noise should not render next-page review cards");
 }
 
 {

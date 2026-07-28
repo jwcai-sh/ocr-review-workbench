@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260728-column-order";
+const OCR_COMPARE_BUILD_ID = "20260728-reference-page-fix";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -9536,6 +9536,19 @@ function hasBibliographyBodySignal(text) {
   return starts >= 1 && yearHits >= 1 && (starts >= 2 || referenceSignals >= 1 || yearHits >= 3);
 }
 
+function isLikelyBlankPageCrossPageBibliographyNoise(text) {
+  const { bodyText, starts, yearHits, referenceSignals } = bibliographySignalStats(text);
+  if (!bodyText || bodyText.length < 80) {
+    return false;
+  }
+  const numberedReferenceStarts = (bodyText.match(/(?:^|\s)\d{1,4}[.)]?\s*[A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,}/gu) || []).length;
+  return (
+    (starts >= 2 && yearHits >= 1) ||
+    (numberedReferenceStarts >= 2 && yearHits >= 2) ||
+    (yearHits >= 3 && referenceSignals >= 2)
+  );
+}
+
 function detectCrossPageContinuationCandidatesForPage(pageNumber) {
   const page = state.mineruInfo?.pdf_info?.[pageNumber - 1];
   const previousPage = state.mineruInfo?.pdf_info?.[pageNumber - 2];
@@ -9544,8 +9557,10 @@ function detectCrossPageContinuationCandidatesForPage(pageNumber) {
   }
   const pageSize = page.page_size || previousPage.page_size || null;
   const blocks = Array.isArray(previousPage.para_blocks) ? previousPage.para_blocks : [];
+  const currentReviewSegments = reviewSegmentsForPage(pageNumber);
+  const currentPageHasVisibleReviewText = currentReviewSegments.some((entry) => String(entry?.markdown || "").trim());
   const currentTexts = new Set(
-    reviewBlockMarkdownsForPage(pageNumber)
+    currentReviewSegments
       .map((entry) => normalizeTextForComparison(entry.markdown))
       .filter(Boolean),
   );
@@ -9557,6 +9572,12 @@ function detectCrossPageContinuationCandidatesForPage(pageNumber) {
         return null;
       }
       const bbox = getBlockBBox(continuationBlock);
+      if (!currentPageHasVisibleReviewText && !isPageTopBBox(bbox, pageSize)) {
+        return null;
+      }
+      if (!currentPageHasVisibleReviewText && (isLikelyBibliographyText(markdown) || isLikelyBlankPageCrossPageBibliographyNoise(markdown))) {
+        return null;
+      }
       const scored = scoreRiskBlock(markdown);
       return {
         pageNumber,
@@ -10634,7 +10655,7 @@ function bibliographySignalStats(text) {
     bodyText,
     starts: pieces.filter(isLikelyReferenceEntryStart).length || referenceEntryStartIndexes(bodyText).length,
     yearHits: (bodyText.match(/\b(?:18|19|20)\d{2}[a-z]?\b/g) || []).length,
-    referenceSignals: (bodyText.match(/\b(?:ArXiv|Phys\.|Rev\.|Astrophys\.|Astron\.|Science|Class\.|Quantum|Lett\.|J\.)/gi) || []).length,
+    referenceSignals: (bodyText.match(/\b(?:ArXiv|Phys\.|Rev\.|Astrophys\.|Astron\.|Science|Class\.|Quantum|Lett\.|J\.|Proc\.?|Press|Comput(?:er|ing)?|Parallel|ACM|IEEE|SIAM|Conf\.?|Symp\.?)\b/gi) || []).length,
   };
 }
 
@@ -10678,7 +10699,7 @@ function normalizeBibliographyBodyText(text) {
 }
 
 function normalizeBibliographyLine(line) {
-  return String(line || "")
+  return normalizeBibliographyIndexSpacing(String(line || ""))
     .trim()
     .replace(/[ \t]{2,}/g, " ")
     .replace(/^(?:\d+\s+)?References?\b[:.]?\s*/i, "")
@@ -10686,7 +10707,20 @@ function normalizeBibliographyLine(line) {
 }
 
 function stripLeadingBibliographyIndex(text) {
-  return String(text || "").replace(/^\d{1,4}[.)]?\s+/, "").trim();
+  return String(text || "").replace(/^\d{1,4}[.)]?\s*/, "").trim();
+}
+
+function normalizeBibliographyIndexSpacing(text) {
+  return String(text || "").replace(/(^|[\s.!?])(\d{1,4})([A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,})/gu, (match, prefix, number, word) => {
+    if (!isPlausibleBibliographyIndex(Number(number))) {
+      return match;
+    }
+    return `${prefix}${number} ${word}`;
+  });
+}
+
+function isPlausibleBibliographyIndex(value) {
+  return Number.isInteger(value) && value >= 1 && value <= 999;
 }
 
 function bibliographyEntriesFromBlockLines(block) {
@@ -10721,7 +10755,7 @@ function bibliographyLineStartsNewEntry(line) {
   if (!value) {
     return false;
   }
-  return /^\d{1,4}[.)]?\s+\S/.test(value) || isLikelyReferenceEntryStart(value);
+  return /^\d{1,4}[.)]?\s*\S/.test(value) || isLikelyReferenceEntryStart(value);
 }
 
 function referenceEntryStartIndexes(text) {
@@ -10733,7 +10767,7 @@ function referenceEntryStartIndexes(text) {
       continue;
     }
     const previousChar = index > 0 ? value[index - 1] : "";
-    const numberedLead = /^\d{1,4}[.)]?\s+/.test(slice) && (index === 0 || /\s/.test(previousChar));
+    const numberedLead = /^\d{1,4}[.)]?\s*(?=\S)/.test(slice) && (index === 0 || /\s/.test(previousChar));
     if (index === 0 || numberedLead || /[.!?]\s+$/.test(value.slice(0, index))) {
       starts.push(index);
     }
