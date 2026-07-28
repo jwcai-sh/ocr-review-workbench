@@ -870,6 +870,7 @@
 
   <script>
     const PARTICIPANTS = ["傲", "门", "白", "丹"];
+    const FOCUSED_BOOK_CACHE_KEY = "ocrWorkbench.focusedBook.v1";
     const state = {
       books: [],
       selectedCategoryKey: "",
@@ -1127,13 +1128,19 @@
       if (!focusedBookId) {
         return loadBooks().finally(() => loadOssOverview({ silent: true }));
       }
-      const focusedLoaded = await loadFocusedBooks(focusedBookId);
+      const restored = restoreFocusedBooksFromCache(focusedBookId);
+      const focusedLoaded = restored
+        ? loadFocusedBooks(focusedBookId, { silent: true })
+        : await loadFocusedBooks(focusedBookId);
       loadBooks({ silent: true }).finally(() => loadOssOverview({ silent: true }));
       return focusedLoaded;
     }
 
-    async function loadFocusedBooks(bookId) {
-      setBusy(true, "正在返回当前书稿...");
+    async function loadFocusedBooks(bookId, options = {}) {
+      const silent = Boolean(options.silent);
+      if (!silent) {
+        setBusy(true, "正在返回当前书稿...");
+      }
       try {
         const response = await fetch(`/api/books?focusBookId=${encodeURIComponent(bookId)}&limit=100`, { cache: "no-store", credentials: "include" });
         const data = await readJsonResponse(response, "当前书稿读取失败");
@@ -1143,14 +1150,42 @@
         state.books = Array.isArray(data.books) ? data.books : [];
         state.syncRuns = Array.isArray(data.syncRuns) ? data.syncRuns : [];
         ensureSelection();
-        setStatus(`已返回当前书稿：${state.books.length} 个分块`);
+        if (!silent) {
+          setStatus(`已返回当前书稿：${state.books.length} 个分块`);
+        }
         renderExplorer();
         return data;
       } catch (error) {
-        setStatus(`${error.message || String(error)}；正在回退到完整书库列表...`, true);
-        return loadBooks();
+        if (!silent) {
+          setStatus(`${error.message || String(error)}；正在回退到完整书库列表...`, true);
+          return loadBooks();
+        }
+        return { ok: false, error: error.message || String(error) };
       } finally {
-        setBusy(false);
+        if (!silent) {
+          setBusy(false);
+        }
+      }
+    }
+
+    function restoreFocusedBooksFromCache(bookId) {
+      try {
+        const cached = JSON.parse(sessionStorage.getItem(FOCUSED_BOOK_CACHE_KEY) || "{}");
+        if (String(cached?.focusedBookId || "") !== String(bookId || "")) {
+          return false;
+        }
+        const books = Array.isArray(cached.books) ? cached.books : [];
+        if (!books.length) {
+          return false;
+        }
+        state.books = books;
+        state.syncRuns = [];
+        ensureSelection();
+        setStatus(`已返回当前书稿：${books.length} 个分块`);
+        renderExplorer();
+        return true;
+      } catch {
+        return false;
       }
     }
 
@@ -1818,7 +1853,7 @@
             const openHref = `./ocr-compare.html?book_id=${encodeURIComponent(String(record.id || ""))}`;
             const returnHref = appendReturnBookId(openHref, record);
             return `
-              <a class="book-chunk-link" href="${returnHref}">
+              <a class="book-chunk-link" href="${returnHref}" data-focus-book-id="${escapeHtml(String(record.id || ""))}">
                 <span class="book-chunk-icon" aria-hidden="true"></span>
                 <span>${escapeHtml(folderRecordLinkLabel(record, index))}</span>
               </a>
@@ -1941,7 +1976,7 @@
             ${needsExtraCount ? `<a class="link-button" href="${needsExtraHref}">查看需校正</a>` : ""}
           </div>
           <div class="mineru-actions">
-            <a class="link-button" href="${returnHref}">打开校对</a>
+            <a class="link-button" href="${returnHref}" data-focus-book-id="${escapeHtml(String(primaryRecord.id || ""))}">打开校对</a>
           </div>
         </article>
       `;
@@ -2034,6 +2069,7 @@
     }
 
     function handleBookClick(event) {
+      cacheFocusedDashboardLink(event);
       const selectAll = event.target.closest("[data-select-all-books]");
       if (selectAll) {
         const category = visibleCategories().find((item) => item.key === state.selectedCategoryKey);
@@ -2127,6 +2163,7 @@
     }
 
     async function handleFolderClick(event) {
+      cacheFocusedDashboardLink(event);
       const secondStageButton = event.target.closest("[data-folder-second-stage]");
       if (secondStageButton) {
         if (!canAssign()) {
@@ -2141,6 +2178,33 @@
         await enterSecondReview(String(secondStageButton.dataset.folderSecondStage || ""));
         return;
       }
+    }
+
+    function cacheFocusedDashboardLink(event) {
+      const link = event.target.closest("a[data-focus-book-id]");
+      if (!link) {
+        return false;
+      }
+      const focusedBookId = String(link.dataset.focusBookId || "").trim();
+      const categories = visibleCategories();
+      for (const category of categories) {
+        for (const book of category.books || []) {
+          const records = bookRecords(book);
+          if (records.some((record) => String(record.id || "") === focusedBookId)) {
+            try {
+              sessionStorage.setItem(FOCUSED_BOOK_CACHE_KEY, JSON.stringify({
+                focusedBookId,
+                cachedAt: Date.now(),
+                books: records,
+              }));
+            } catch {
+              // Cache is only for faster navigation; backend remains authoritative.
+            }
+            return true;
+          }
+        }
+      }
+      return false;
     }
 
     async function saveOverviewBookAssignments(books, assignment, options = {}) {
