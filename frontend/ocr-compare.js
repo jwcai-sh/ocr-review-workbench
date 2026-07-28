@@ -3661,7 +3661,7 @@ function renderPageReviewBlock(entry) {
   const mathpixDisabled = mathpixUnavailable ? "disabled" : "";
   const mathpixTitle = mathpixUnavailable ? `title="${escapeHtml(state.mathpixConfigError || "未配置 MATHPIX_APP_ID/MATHPIX_APP_KEY")}"` : "";
   const mathpixActionLabel = mathpixUnavailable ? (state.mathpixConfigError ? "Mathpix 配置无效" : "Mathpix 未配置") : forceActionsOpen ? "整页 Mathpix 校正" : "Mathpix 校正";
-  const labelHtml = risk?.syntheticLabel
+  const labelHtml = shouldRenderReviewBlockSyntheticLabel(risk)
     ? `<div class="review-page-block-label">${escapeHtml(risk.syntheticLabel)}</div>`
     : "";
   const actionsHtml = actionsOpen || forceActionsOpen
@@ -3717,6 +3717,14 @@ function renderPageReviewBlock(entry) {
       ${mathpixError ? `<div class="review-block-error" role="status">${escapeHtml(mathpixError)}</div>` : ""}
     </section>
   `;
+}
+
+function shouldRenderReviewBlockSyntheticLabel(risk) {
+  if (!risk?.syntheticLabel) {
+    return false;
+  }
+  return risk?.supplementalSource !== "cross_page_continuation"
+    && !risk?.reasons?.includes?.("cross_page_continuation");
 }
 
 function isActiveReviewBlockKey(fullKey) {

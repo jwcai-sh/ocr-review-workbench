@@ -4862,6 +4862,7 @@ function setupPreviewBookExpression(pages) {
       const continuation = page6Risks.find((risk) => risk.blockIndex === "cross-page-continuation-6-0");
       const pageTopMissing = page6Risks.find((risk) => risk.blockIndex === "missing-page-top-text-6");
       const page6Entries = buildReviewEntriesForPage(page6Risks, reviewSegmentsForPage(6), 6);
+      const page6CanvasHtml = renderPageReviewCanvas(page6Entries);
       const patch5 = createAndStoreDraftOcrPatch({
         pageNo: 5,
         blockIndex: "0",
@@ -4887,6 +4888,8 @@ function setupPreviewBookExpression(pages) {
         pageTopMissing,
         page6EntryKeys: page6Entries.map((entry) => entry.key),
         page6DisplayIndexes: page6Entries.map((entry) => [entry.key, entry.displayIndex]),
+        page6EntryLabels: page6Entries.map((entry) => reviewEntryLabel(entry)),
+        page6CanvasHtml,
         preview5,
         preview6,
         label: riskReasonLabel("cross_page_continuation")
@@ -4900,6 +4903,8 @@ function setupPreviewBookExpression(pages) {
   assert.strictEqual(result.continuation.syntheticLabel, "跨页续段候选");
   assert(result.continuation.reasons.includes("cross_page_continuation"));
   assert(result.continuation.text.includes("of Robert Dicke"));
+  assert(result.page6EntryLabels.some((label) => label.includes("跨页续段候选")), "block navigator should still identify cross-page continuation candidates");
+  assert(!result.page6CanvasHtml.includes("review-page-block-label\">跨页续段候选"), "cross-page continuation labels should not render as body text in the right column");
   assert.deepStrictEqual(result.continuation.bbox, [104, 62, 467, 87]);
   assert.strictEqual(result.pageTopMissing, undefined, "real cross-page continuation should suppress generic missing-page-top candidate");
       assert(result.page6EntryKeys.includes("cross-page-continuation-6-0"), "third column should show recovered cross-page continuation");
