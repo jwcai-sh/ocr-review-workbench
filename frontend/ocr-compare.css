@@ -1610,6 +1610,11 @@ label[role="button"] {
 .review-page-correct-button,
 .review-page-mark-button,
 .review-page-local-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 28px;
   min-height: 28px;
   padding: 0 10px;
   border-radius: 6px;
@@ -1618,6 +1623,8 @@ label[role="button"] {
   cursor: pointer;
   font-size: 12px;
   font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
   transition: opacity 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 

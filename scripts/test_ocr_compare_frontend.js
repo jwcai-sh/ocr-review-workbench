@@ -126,6 +126,9 @@ function runOcrCompareInContext(testContext) {
   assert(/\.math-display\.is-multiline\s+\.math-display-equation-tag\s*\{[^}]*bottom:\s*1\.45em/.test(ocrCompareCss), "multiline display equation labels should be lifted onto the final formula row");
   assert(ocrCompareCss.includes('.math-display-formula mjx-container[display="true"]'));
   assert(ocrCompareCss.includes(".review-page-block.is-selected"));
+  assert(ocrCompareCss.includes("display: inline-flex;"), "review block action buttons should use flex centering for aligned labels");
+  assert(ocrCompareCss.includes("height: 28px;"), "review block action buttons should have a fixed shared height");
+  assert(ocrCompareCss.includes("white-space: nowrap;"), "review block action buttons should not wrap mixed Chinese/Mathpix labels");
   assert(ocrCompareCss.includes(".page-block-hotspot"));
   assert(ocrCompareCss.includes(".page-block-hotspot:hover"));
   assert(!/\.page-block-hotspot:hover,[\s\S]*?background:\s*rgba\(37,\s*99,\s*235,\s*0\.06\)/.test(ocrCompareCss), "left PDF hover hotspots should not draw an inaccurate bbox preview");
@@ -185,9 +188,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-oss-part-sort-fix"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-oss-part-sort-fix"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-oss-part-sort-fix"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-review-button-align-fix"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-review-button-align-fix"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-review-button-align-fix"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
