@@ -630,6 +630,28 @@
       grid-column: 1 / -1;
     }
 
+    .chunk-link-list {
+      display: grid;
+      gap: 6px;
+      grid-column: 1 / -1;
+    }
+
+    .chunk-link-list-title {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .chunk-link-list .link-button {
+      justify-content: flex-start;
+      min-height: 34px;
+      height: auto;
+      padding: 7px 10px;
+      line-height: 1.25;
+      text-align: left;
+      word-break: break-word;
+    }
+
     .stage-actions {
       display: grid;
       grid-template-columns: minmax(0, 1fr);
@@ -1770,6 +1792,7 @@
       const openHref = `./ocr-compare.html?book_id=${encodeURIComponent(String(primaryRecord.id || ""))}`;
       const needsExtraCount = folderNeedsExtraCorrectionCount(folder);
       const needsExtraHref = `${openHref}&review_filter=needs_extra_correction`;
+      const recordLinks = renderFolderRecordLinks(folder);
       return `
         <article class="mineru-card">
           <div class="mineru-top">
@@ -1790,7 +1813,7 @@
             ${needsExtraCount ? `<a class="link-button" href="${needsExtraHref}">查看需校正</a>` : ""}
           </div>
           <div class="mineru-actions">
-            <a class="link-button" href="${openHref}">${folder.records.length > 1 ? `打开首个分块 (${folder.records.length})` : "打开校对"}</a>
+            ${recordLinks}
           </div>
           <div class="stage-actions">
             <span class="stage-actions-label">阶段管理</span>
@@ -1798,6 +1821,33 @@
           </div>
         </article>
       `;
+    }
+
+    function renderFolderRecordLinks(folder) {
+      const records = Array.isArray(folder.records) ? folder.records : [];
+      if (records.length <= 1) {
+        const record = records[0] || {};
+        const openHref = `./ocr-compare.html?book_id=${encodeURIComponent(String(record.id || ""))}`;
+        return `<a class="link-button" href="${openHref}">打开校对</a>`;
+      }
+      return `
+        <div class="chunk-link-list" aria-label="分块列表">
+          <span class="chunk-link-list-title">分块列表</span>
+          ${records.map((record, index) => {
+            const openHref = `./ocr-compare.html?book_id=${encodeURIComponent(String(record.id || ""))}`;
+            return `<a class="link-button" href="${openHref}">${escapeHtml(folderRecordLinkLabel(record, index))}</a>`;
+          }).join("")}
+        </div>
+      `;
+    }
+
+    function folderRecordLinkLabel(record, index) {
+      const chunkLabel = String(record?.chunk_label || "").trim();
+      const pageMatch = chunkLabel.match(/part[_-](\d+)[_-]pages[_-](\d+)[_-](\d+)/i);
+      if (pageMatch) {
+        return `part_${pageMatch[1]} · pages ${pageMatch[2]}-${pageMatch[3]}`;
+      }
+      return chunkLabel || `分块 ${index + 1}`;
     }
 
     function folderNeedsExtraCorrectionCount(folder) {

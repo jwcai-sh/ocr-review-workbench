@@ -11,6 +11,7 @@ const source = fs
 const patchBrowserSource = fs.readFileSync("frontend/ocr-core/patch/ocrPatch.browser.js", "utf8");
 const ocrCompareHtml = fs.readFileSync("frontend/ocr-compare.html", "utf8");
 const ocrCompareCss = fs.readFileSync("frontend/ocr-compare.css", "utf8");
+const dashboardHtml = fs.readFileSync("frontend/index.html", "utf8");
 const { hashBlockText: nodeHashBlockText } = require(path.resolve("frontend/ocr-core/patch/blockHasher"));
 const { createOcrPatch: nodeCreateOcrPatch } = require(path.resolve("frontend/ocr-core/patch/patchGenerator"));
 
@@ -33,6 +34,11 @@ vm.runInContext(source, context);
 
 function call(expression) {
   return vm.runInContext(expression, context);
+}
+
+{
+  assert(dashboardHtml.includes("renderFolderRecordLinks"), "dashboard should render direct links for each chunk record");
+  assert(!dashboardHtml.includes("打开首个分块"), "dashboard must not hide chunked books behind a first-chunk-only action");
 }
 
 function readStoredZipEntries(bytes) {
