@@ -176,9 +176,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-focus-fragments"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-focus-fragments"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-focus-fragments"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-column-order"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-column-order"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-column-order"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -1129,6 +1129,72 @@ assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX tab
   assert.strictEqual(fragmentedFocus.focusBBoxes.length, 2, "a block that jumps from left-column bottom to right-column top should keep separate focus bboxes");
   assert.strictEqual(fragmentedFocus.fragmentCount, 2, "PDF focus metrics should expose separate fragments instead of one cross-column rectangle");
   assert(fragmentedFocus.fragments.every((fragment) => fragment.width < 300), "fragmented double-column focus boxes should not bridge the gutter");
+}
+
+{
+  const orderedBlockIndexes = JSON.parse(
+    call(`(() => {
+      const entries = [
+        { blockIndex: "left-top", bbox: [40, 120, 260, 170], pageSize: [600, 800], markdown: "left top", block: { type: "text" } },
+        { blockIndex: "right-top", bbox: [330, 125, 550, 175], pageSize: [600, 800], markdown: "right top", block: { type: "text" } },
+        { blockIndex: "left-bottom", bbox: [42, 320, 262, 370], pageSize: [600, 800], markdown: "left bottom", block: { type: "text" } },
+        { blockIndex: "right-bottom", bbox: [332, 325, 552, 375], pageSize: [600, 800], markdown: "right bottom", block: { type: "text" } }
+      ];
+      return JSON.stringify(sortEntriesByVisualReadingOrder(entries).map((entry) => entry.blockIndex));
+    })()`),
+  );
+  assert.deepStrictEqual(
+    orderedBlockIndexes,
+    ["left-top", "left-bottom", "right-top", "right-bottom"],
+    "double-column review entries should read down the left column before jumping to the right column",
+  );
+}
+
+{
+  const orderedBlockIndexes = JSON.parse(
+    call(`(() => {
+      const entries = [
+        { blockIndex: "left-a", bbox: [33, 339, 281, 379], pageSize: [581, 793], markdown: "left a", block: { type: "text" } },
+        { blockIndex: "right-a", bbox: [299, 339, 546, 389], pageSize: [581, 793], markdown: "right a", block: { type: "text" } },
+        { blockIndex: "left-b", bbox: [32, 379, 284, 521], pageSize: [581, 793], markdown: "left b", block: { type: "text" } },
+        { blockIndex: "right-b", bbox: [297, 388, 548, 560], pageSize: [581, 793], markdown: "right b", block: { type: "text" } },
+        { blockIndex: "left-c", bbox: [31, 519, 283, 720], pageSize: [581, 793], markdown: "left c", block: { type: "text" } },
+        { blockIndex: "right-c", bbox: [296, 559, 547, 760], pageSize: [581, 793], markdown: "right c", block: { type: "text" } }
+      ];
+      return JSON.stringify(sortEntriesByVisualReadingOrder(entries).map((entry) => entry.blockIndex));
+    })()`),
+  );
+  assert.deepStrictEqual(
+    orderedBlockIndexes,
+    ["left-a", "left-b", "left-c", "right-a", "right-b", "right-c"],
+    "Nature-style narrow-gutter double columns should still read the full left column before the right column",
+  );
+}
+
+{
+  const orderedBlockIndexes = JSON.parse(
+    call(`(() => {
+      const entries = [
+        { blockIndex: "left-top", bbox: [30, 100, 250, 140], pageSize: [600, 800], markdown: "left top", block: { type: "text" } },
+        { blockIndex: "right-top", bbox: [330, 110, 550, 150], pageSize: [600, 800], markdown: "right top", block: { type: "text" } },
+        {
+          blockIndex: "cross-union",
+          bbox: [30, 110, 550, 720],
+          focusBBoxes: [[30, 680, 250, 720], [330, 110, 550, 150]],
+          pageSize: [600, 800],
+          markdown: "left bottom then right top",
+          block: { type: "text" }
+        },
+        { blockIndex: "left-middle", bbox: [32, 300, 252, 340], pageSize: [600, 800], markdown: "left middle", block: { type: "text" } }
+      ];
+      return JSON.stringify(sortEntriesByVisualReadingOrder(entries).map((entry) => entry.blockIndex));
+    })()`),
+  );
+  assert.deepStrictEqual(
+    orderedBlockIndexes,
+    ["left-top", "left-middle", "cross-union", "right-top"],
+    "fragmented cross-column blocks should sort by their first focus fragment rather than the union bbox top",
+  );
 }
 
 const latexArray = "\\begin{array}{cc}\na & b \\\\ c & d\n\\end{array}";

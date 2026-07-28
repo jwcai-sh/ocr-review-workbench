@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260728-focus-fragments";
+const OCR_COMPARE_BUILD_ID = "20260728-column-order";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -7537,11 +7537,22 @@ function segmentEntries(entries) {
 }
 
 function sortEntriesByVisualReadingOrder(entries) {
-  return (Array.isArray(entries) ? entries : [])
-    .map((entry, index) => ({ entry, index, geometry: bboxReadingGeometry(entry?.bbox, entry?.pageSize) }))
+  const items = (Array.isArray(entries) ? entries : [])
+    .map((entry, index) => ({
+      entry,
+      index,
+      geometry: bboxReadingGeometry(entry?.bbox, entry?.pageSize),
+      sortGeometry: reviewEntrySortGeometry(entry),
+    }));
+  const twoColumnLayout = detectTwoColumnVisualLayout(items);
+  return items
     .sort((left, right) => {
-      if (!left.geometry || !right.geometry) {
+      if (!left.sortGeometry || !right.sortGeometry) {
         return visualOrderForPageEntry(left.entry, left.index) - visualOrderForPageEntry(right.entry, right.index);
+      }
+      const columnOrder = compareTwoColumnVisualItems(left, right, twoColumnLayout);
+      if (Number.isFinite(columnOrder)) {
+        return columnOrder;
       }
       if (shouldKeepTopMediaBeforeFollowingText(left, right)) {
         return -1;
@@ -7555,14 +7566,88 @@ function sortEntriesByVisualReadingOrder(entries) {
       if (shouldKeepTopTableBeforeReferencingProse(right, left)) {
         return 1;
       }
-      const rowGap = left.geometry.top - right.geometry.top;
-      const rowTolerance = Math.max(left.geometry.height, right.geometry.height, left.geometry.pageHeight * 0.018, 18);
+      const rowGap = left.sortGeometry.top - right.sortGeometry.top;
+      const rowTolerance = Math.max(left.sortGeometry.height, right.sortGeometry.height, left.sortGeometry.pageHeight * 0.018, 18);
       if (Math.abs(rowGap) > rowTolerance) {
         return rowGap;
       }
-      return left.geometry.left - right.geometry.left || left.index - right.index;
+      return left.sortGeometry.left - right.sortGeometry.left || left.index - right.index;
     })
     .map((item) => item.entry);
+}
+
+function reviewEntrySortGeometry(entry) {
+  const firstFocusBBox = Array.isArray(entry?.focusBBoxes) ? entry.focusBBoxes.map(normalizedBBox).filter(Boolean)[0] : null;
+  return bboxReadingGeometry(firstFocusBBox || entry?.bbox, entry?.pageSize);
+}
+
+function detectTwoColumnVisualLayout(items) {
+  const geometries = (Array.isArray(items) ? items : [])
+    .map((item) => item?.sortGeometry)
+    .filter(Boolean);
+  if (geometries.length < 4) {
+    return null;
+  }
+  const pageWidth = Math.max(...geometries.map((geometry) => geometry.pageWidth || 0), 0);
+  if (!pageWidth) {
+    return null;
+  }
+  const columnCandidates = geometries.filter((geometry) => geometry.width <= pageWidth * 0.56);
+  const leftColumn = columnCandidates.filter((geometry) => bboxCenterX(geometry) <= pageWidth * 0.5);
+  const rightColumn = columnCandidates.filter((geometry) => bboxCenterX(geometry) > pageWidth * 0.5);
+  if (!leftColumn.length || !rightColumn.length) {
+    return null;
+  }
+  const leftRightEdge = medianNumber(leftColumn.map((geometry) => geometry.right));
+  const rightLeftEdge = medianNumber(rightColumn.map((geometry) => geometry.left));
+  const gutter = rightLeftEdge - leftRightEdge;
+  if (!Number.isFinite(gutter) || gutter < Math.max(8, pageWidth * 0.015)) {
+    return null;
+  }
+  return {
+    pageWidth,
+    splitX: (leftRightEdge + rightLeftEdge) / 2,
+  };
+}
+
+function compareTwoColumnVisualItems(left, right, layout) {
+  if (!layout) {
+    return null;
+  }
+  const leftColumn = visualColumnIndex(left?.sortGeometry, layout);
+  const rightColumn = visualColumnIndex(right?.sortGeometry, layout);
+  if (!Number.isInteger(leftColumn) || !Number.isInteger(rightColumn)) {
+    return null;
+  }
+  if (leftColumn !== rightColumn) {
+    return leftColumn - rightColumn;
+  }
+  return left.sortGeometry.top - right.sortGeometry.top || left.sortGeometry.left - right.sortGeometry.left || left.index - right.index;
+}
+
+function visualColumnIndex(geometry, layout) {
+  if (!geometry || !layout?.pageWidth) {
+    return null;
+  }
+  const widthRatio = geometry.width / layout.pageWidth;
+  const crossesSplit = geometry.left < layout.splitX && geometry.right > layout.splitX;
+  if (widthRatio >= 0.68 || crossesSplit) {
+    return null;
+  }
+  return bboxCenterX(geometry) <= layout.splitX ? 0 : 1;
+}
+
+function bboxCenterX(geometry) {
+  return (Number(geometry?.left) + Number(geometry?.right)) / 2;
+}
+
+function medianNumber(values) {
+  const numbers = (Array.isArray(values) ? values : []).map(Number).filter(Number.isFinite).sort((left, right) => left - right);
+  if (!numbers.length) {
+    return NaN;
+  }
+  const middle = Math.floor(numbers.length / 2);
+  return numbers.length % 2 ? numbers[middle] : (numbers[middle - 1] + numbers[middle]) / 2;
 }
 
 function shouldKeepTopMediaBeforeFollowingText(mediaItem, textItem) {
