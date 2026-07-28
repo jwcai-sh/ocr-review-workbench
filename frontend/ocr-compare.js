@@ -409,6 +409,7 @@ function bindElements() {
     "downloadAcceptedCorrectedButton",
     "pageList",
     "statusBadge",
+    "dashboardBackLink",
   ].forEach((id) => {
     els[id] = document.getElementById(id);
   });
@@ -416,6 +417,7 @@ function bindElements() {
 
 async function initialize() {
   bindElements();
+  updateDashboardBackLink();
   await initCurrentUser();
   restoreColumnWidths();
   restoreMiddleColumnCollapsed();
@@ -1030,6 +1032,27 @@ function urlBookId() {
   } catch {
     return "";
   }
+}
+
+function urlReturnBookId() {
+  try {
+    const params = new URLSearchParams(window.location.search || "");
+    return String(params.get("return_book_id") || params.get("returnBookId") || params.get("book_id") || params.get("bookId") || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function updateDashboardBackLink() {
+  if (!els.dashboardBackLink) {
+    return false;
+  }
+  const returnBookId = urlReturnBookId();
+  const href = returnBookId
+    ? `./index.html?focus_book_id=${encodeURIComponent(returnBookId)}`
+    : "./index.html";
+  els.dashboardBackLink.setAttribute("href", href);
+  return true;
 }
 
 function renderOssBookLoadingState(bookId) {

@@ -1604,12 +1604,51 @@
         state.selectedBookKey = "";
         return;
       }
+      applyFocusedBookFromUrl(categories);
       if (!categories.some((category) => category.key === state.selectedCategoryKey)) {
         state.selectedCategoryKey = categories[0].key;
       }
       const category = categories.find((item) => item.key === state.selectedCategoryKey) || categories[0];
       if (!category.books.some((book) => book.key === state.selectedBookKey)) {
         state.selectedBookKey = category.books[0]?.key || "";
+      }
+    }
+
+    function applyFocusedBookFromUrl(categories) {
+      const focusedBookId = dashboardFocusedBookId();
+      if (!focusedBookId) {
+        return false;
+      }
+      for (const category of categories) {
+        for (const book of category.books || []) {
+          if (bookRecords(book).some((record) => String(record.id || "") === focusedBookId)) {
+            state.selectedCategoryKey = category.key;
+            state.selectedBookKey = book.key;
+            clearDashboardFocusedBookId();
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    function dashboardFocusedBookId() {
+      try {
+        const params = new URLSearchParams(window.location.search || "");
+        return String(params.get("focus_book_id") || params.get("focusBookId") || "").trim();
+      } catch {
+        return "";
+      }
+    }
+
+    function clearDashboardFocusedBookId() {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("focus_book_id");
+        url.searchParams.delete("focusBookId");
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      } catch {
+        // URL cleanup is best-effort; selection is already restored.
       }
     }
 
@@ -1736,8 +1775,9 @@
         <div class="book-chunk-list" aria-label="分块列表">
           ${records.map((record, index) => {
             const openHref = `./ocr-compare.html?book_id=${encodeURIComponent(String(record.id || ""))}`;
+            const returnHref = appendReturnBookId(openHref, record);
             return `
-              <a class="book-chunk-link" href="${openHref}">
+              <a class="book-chunk-link" href="${returnHref}">
                 <span class="book-chunk-icon" aria-hidden="true"></span>
                 <span>${escapeHtml(folderRecordLinkLabel(record, index))}</span>
               </a>
@@ -1837,8 +1877,9 @@
       const statusInfo = summarizeStatus(folder.records);
       const primaryRecord = folder.records[0] || {};
       const openHref = `./ocr-compare.html?book_id=${encodeURIComponent(String(primaryRecord.id || ""))}`;
+      const returnHref = appendReturnBookId(openHref, primaryRecord);
       const needsExtraCount = folderNeedsExtraCorrectionCount(folder);
-      const needsExtraHref = `${openHref}&review_filter=needs_extra_correction`;
+      const needsExtraHref = `${returnHref}&review_filter=needs_extra_correction`;
       return `
         <article class="mineru-card">
           <div class="mineru-top">
@@ -1859,10 +1900,19 @@
             ${needsExtraCount ? `<a class="link-button" href="${needsExtraHref}">查看需校正</a>` : ""}
           </div>
           <div class="mineru-actions">
-            <a class="link-button" href="${openHref}">打开校对</a>
+            <a class="link-button" href="${returnHref}">打开校对</a>
           </div>
         </article>
       `;
+    }
+
+    function appendReturnBookId(href, record) {
+      const recordId = String(record?.id || "").trim();
+      if (!recordId) {
+        return href;
+      }
+      const separator = href.includes("?") ? "&" : "?";
+      return `${href}${separator}return_book_id=${encodeURIComponent(recordId)}`;
     }
 
     function folderRecordLinkLabel(record, index) {
