@@ -103,8 +103,6 @@ def _focused_books_payload(book_id: str, limit: int = 100) -> dict:
     if not normalized_book_id:
         return {"ok": False, "error": "missing_book_id", "books": []}
     payload = DB_SERVICE.list_focused_books(normalized_book_id, limit=max(1, min(int(limit or 100), 500)))
-    if payload.get("ok"):
-        payload["syncRuns"] = DB_SERVICE.list_oss_sync_runs(limit=100).get("runs", [])
     return payload
 
 

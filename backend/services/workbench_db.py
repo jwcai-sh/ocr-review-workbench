@@ -713,18 +713,7 @@ class WorkbenchDatabase:
     def list_focused_books(self, book_id: str, *, limit: int = 100) -> dict[str, Any]:
         if not self.enabled:
             return {"ok": False, "error": self.error, "books": []}
-        focused = self.get_book(book_id)
-        if not focused.get("ok"):
-            return {**focused, "books": []}
-        book = focused["book"]
         placeholder = self.placeholder
-        params = [
-            str(book.get("title") or ""),
-            str(book.get("parent_book_id") or ""),
-            str(book.get("id") or ""),
-            str(book.get("id") or ""),
-            book_id,
-        ]
         sql = f"""
             SELECT
               b.*,
@@ -759,7 +748,19 @@ class WorkbenchDatabase:
             LIMIT {int(limit)}
         """
         with self.connect() as conn:
-            rows = conn.cursor().execute(sql, params).fetchall()
+            cur = conn.cursor()
+            focused_row = cur.execute(f"SELECT * FROM books WHERE id = {placeholder}", [book_id]).fetchone()
+            if not focused_row:
+                return {"ok": False, "error": "book_not_found", "books": []}
+            book = self._normalize_row(focused_row)
+            params = [
+                str(book.get("title") or ""),
+                str(book.get("parent_book_id") or ""),
+                str(book.get("id") or ""),
+                str(book.get("id") or ""),
+                book_id,
+            ]
+            rows = cur.execute(sql, params).fetchall()
         books = [self._normalize_row(row) for row in rows]
         return {"ok": True, "book": book, "books": books, "count": len(books)}
 

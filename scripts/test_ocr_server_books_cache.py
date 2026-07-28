@@ -75,7 +75,7 @@ def main() -> None:
         assert focused["ok"] is True
         assert focused["book"]["id"] == "book-1"
         assert len(focused["books"]) == 2
-        assert focused["syncRuns"][0]["id"] == "sync-3"
+        assert "syncRuns" not in focused
 
         ocr_server._invalidate_books_list_cache()
         third = ocr_server._books_list_payload(limit=5000)
