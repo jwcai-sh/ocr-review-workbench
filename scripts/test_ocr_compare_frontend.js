@@ -37,8 +37,11 @@ function call(expression) {
 }
 
 {
-  assert(dashboardHtml.includes("renderFolderRecordLinks"), "dashboard should render direct links for each chunk record");
+  assert(dashboardHtml.includes("renderBookChunkLinks"), "dashboard should render chunk links in the middle book column");
+  assert(dashboardHtml.includes("book-chunk-list"), "dashboard should keep chunked book children in the book list column");
+  assert(!dashboardHtml.includes("renderFolderRecordLinks"), "dashboard detail cards should not own chunk navigation");
   assert(!dashboardHtml.includes("打开首个分块"), "dashboard must not hide chunked books behind a first-chunk-only action");
+  assert(!dashboardHtml.includes("一校完成，进入二校"), "dashboard should not show second-review transition before proofreading is complete");
 }
 
 function readStoredZipEntries(bytes) {

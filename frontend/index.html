@@ -512,6 +512,47 @@
       color: rgba(245, 255, 242, 0.86);
     }
 
+    .book-list-unit {
+      display: grid;
+      gap: 4px;
+    }
+
+    .book-chunk-list {
+      display: grid;
+      gap: 3px;
+      margin: -1px 0 7px 34px;
+      padding-left: 12px;
+      border-left: 1px solid var(--border);
+    }
+
+    .book-chunk-link {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      padding: 5px 8px;
+      border-radius: 7px;
+      color: #2f6f24;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 650;
+      line-height: 1.2;
+      word-break: break-word;
+    }
+
+    .book-chunk-link:hover {
+      background: rgba(92, 155, 62, 0.1);
+    }
+
+    .book-chunk-icon {
+      width: 17px;
+      height: 13px;
+      flex: 0 0 auto;
+      border-radius: 3px 3px 2px 2px;
+      background: linear-gradient(180deg, #77c4f4, #49a7db);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+    }
+
     .folder-arrow {
       color: #95a08d;
       font-size: 18px;
@@ -628,28 +669,6 @@
 
     .mineru-actions .wide-action {
       grid-column: 1 / -1;
-    }
-
-    .chunk-link-list {
-      display: grid;
-      gap: 6px;
-      grid-column: 1 / -1;
-    }
-
-    .chunk-link-list-title {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 650;
-    }
-
-    .chunk-link-list .link-button {
-      justify-content: flex-start;
-      min-height: 34px;
-      height: auto;
-      padding: 7px 10px;
-      line-height: 1.25;
-      text-align: left;
-      word-break: break-word;
     }
 
     .stage-actions {
@@ -1684,20 +1703,48 @@
         els.bookList.innerHTML = '<div class="empty">先选择左侧分类。</div>';
         return;
       }
-      els.bookList.innerHTML = `${renderBulkAssignBar(category.books)}${category.books.map((book) => `
-        <button class="folder-item ${book.key === state.selectedBookKey ? "is-selected" : ""}" type="button" data-book-key="${escapeHtml(book.key)}">
-          <input class="folder-select" type="checkbox" data-book-select="${escapeHtml(book.key)}" ${state.selectedBookKeys.has(book.key) ? "checked" : ""} aria-label="选择 ${escapeHtml(book.title)}">
-          <span class="folder-icon" aria-hidden="true"></span>
-          <span class="folder-main">
-            <span class="folder-heading">
-              <span class="folder-title">${escapeHtml(book.title)}</span>
-              ${renderNeedsExtraBadge(bookNeedsExtraCorrectionCount(book), book.fromOssOverview)}
+      els.bookList.innerHTML = `${renderBulkAssignBar(category.books)}${category.books.map((book) => renderBookListItem(book)).join("")}`;
+    }
+
+    function renderBookListItem(book) {
+      const selected = book.key === state.selectedBookKey;
+      return `
+        <div class="book-list-unit">
+          <button class="folder-item ${selected ? "is-selected" : ""}" type="button" data-book-key="${escapeHtml(book.key)}">
+            <input class="folder-select" type="checkbox" data-book-select="${escapeHtml(book.key)}" ${state.selectedBookKeys.has(book.key) ? "checked" : ""} aria-label="选择 ${escapeHtml(book.title)}">
+            <span class="folder-icon" aria-hidden="true"></span>
+            <span class="folder-main">
+              <span class="folder-heading">
+                <span class="folder-title">${escapeHtml(book.title)}</span>
+                ${renderNeedsExtraBadge(bookNeedsExtraCorrectionCount(book), book.fromOssOverview)}
+              </span>
+              <span class="folder-meta">${escapeHtml(bookMetaLabel(book))}</span>
             </span>
-            <span class="folder-meta">${escapeHtml(bookMetaLabel(book))}</span>
-          </span>
-          <span class="folder-arrow" aria-hidden="true">›</span>
-        </button>
-      `).join("")}`;
+            <span class="folder-arrow" aria-hidden="true">›</span>
+          </button>
+          ${selected ? renderBookChunkLinks(book) : ""}
+        </div>
+      `;
+    }
+
+    function renderBookChunkLinks(book) {
+      const records = bookRecords(book).filter((record) => String(record.mode || "") === "chunk");
+      if (records.length <= 1) {
+        return "";
+      }
+      return `
+        <div class="book-chunk-list" aria-label="分块列表">
+          ${records.map((record, index) => {
+            const openHref = `./ocr-compare.html?book_id=${encodeURIComponent(String(record.id || ""))}`;
+            return `
+              <a class="book-chunk-link" href="${openHref}">
+                <span class="book-chunk-icon" aria-hidden="true"></span>
+                <span>${escapeHtml(folderRecordLinkLabel(record, index))}</span>
+              </a>
+            `;
+          }).join("")}
+        </div>
+      `;
     }
 
     function bookMetaLabel(book) {
@@ -1792,7 +1839,6 @@
       const openHref = `./ocr-compare.html?book_id=${encodeURIComponent(String(primaryRecord.id || ""))}`;
       const needsExtraCount = folderNeedsExtraCorrectionCount(folder);
       const needsExtraHref = `${openHref}&review_filter=needs_extra_correction`;
-      const recordLinks = renderFolderRecordLinks(folder);
       return `
         <article class="mineru-card">
           <div class="mineru-top">
@@ -1813,31 +1859,9 @@
             ${needsExtraCount ? `<a class="link-button" href="${needsExtraHref}">查看需校正</a>` : ""}
           </div>
           <div class="mineru-actions">
-            ${recordLinks}
-          </div>
-          <div class="stage-actions">
-            <span class="stage-actions-label">阶段管理</span>
-            <button type="button" data-folder-second-stage="${escapeHtml(folder.key)}" ${canAssign() && firstInfo.value && statusInfo.value !== "second_review" && statusInfo.value !== "completed" ? "" : "disabled"}>一校完成，进入二校</button>
+            <a class="link-button" href="${openHref}">打开校对</a>
           </div>
         </article>
-      `;
-    }
-
-    function renderFolderRecordLinks(folder) {
-      const records = Array.isArray(folder.records) ? folder.records : [];
-      if (records.length <= 1) {
-        const record = records[0] || {};
-        const openHref = `./ocr-compare.html?book_id=${encodeURIComponent(String(record.id || ""))}`;
-        return `<a class="link-button" href="${openHref}">打开校对</a>`;
-      }
-      return `
-        <div class="chunk-link-list" aria-label="分块列表">
-          <span class="chunk-link-list-title">分块列表</span>
-          ${records.map((record, index) => {
-            const openHref = `./ocr-compare.html?book_id=${encodeURIComponent(String(record.id || ""))}`;
-            return `<a class="link-button" href="${openHref}">${escapeHtml(folderRecordLinkLabel(record, index))}</a>`;
-          }).join("")}
-        </div>
       `;
     }
 
