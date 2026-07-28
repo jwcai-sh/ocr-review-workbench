@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260728-bibliography-focus-fix";
+const OCR_COMPARE_BUILD_ID = "20260728-circled-number-fix";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -5655,9 +5655,11 @@ function renderBlockContent(markdown, entry) {
   }
   const displayMarkdown = autoCorrectKnownEquationOcrMarkdown(markdown);
   const normalizedMarkdown = normalizeReferenceSpacing(
-    normalizeEditableProseLineBreaksOutsideStructuredBlocks(
-      normalizeMathpixCollapsedProse(
-        normalizeSingleLineDisplayMath(normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(displayMarkdown))),
+    normalizeTextCircledOutsideStructuredBlocks(
+      normalizeEditableProseLineBreaksOutsideStructuredBlocks(
+        normalizeMathpixCollapsedProse(
+          normalizeSingleLineDisplayMath(normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(displayMarkdown))),
+        ),
       ),
     ),
   );
@@ -5741,6 +5743,41 @@ function normalizeInlineMathSpacingOutsideDisplayMath(markdown) {
     })
     .join("\n")
     .replace(/[ \t]+\n/g, "\n");
+}
+
+function normalizeTextCircledOutsideStructuredBlocks(markdown) {
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+  let inDisplayMath = false;
+  let inCodeFence = false;
+  return lines
+    .map((line) => {
+      const trimmed = line.trim();
+      if (isCodeFenceStart(line)) {
+        inCodeFence = !inCodeFence;
+        return line;
+      }
+      if (trimmed === "$$" || trimmed === "\\[" || trimmed === "\\]") {
+        inDisplayMath = trimmed === "\\]" ? false : !inDisplayMath;
+        return line;
+      }
+      if (inCodeFence || inDisplayMath || hasLatexMathEnvironment(line)) {
+        return line;
+      }
+      return normalizeTextCircledCommands(line);
+    })
+    .join("\n");
+}
+
+function normalizeTextCircledCommands(text) {
+  return String(text || "")
+    .replace(/\\textcircled\s*\{\s*(\d{1,2})\s*\}/g, (_match, value) => circledNumberGlyph(value))
+    .replace(/\\textcircled\s*(\d{1,2})/g, (_match, value) => circledNumberGlyph(value));
+}
+
+function circledNumberGlyph(value) {
+  const number = Number(value);
+  const glyphs = ["", "①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫", "⑬", "⑭", "⑮", "⑯", "⑰", "⑱", "⑲", "⑳"];
+  return glyphs[number] || `(${String(value).trim()})`;
 }
 
 function cleanMathpixEditableMarkdown(markdown) {

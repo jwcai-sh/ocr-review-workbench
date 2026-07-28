@@ -185,9 +185,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-bibliography-focus-fix"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-bibliography-focus-fix"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-bibliography-focus-fix"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-circled-number-fix"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-circled-number-fix"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-circled-number-fix"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -584,6 +584,15 @@ assert(singleLineHtml.includes('class="math-display'), "single-line display math
 assert(!singleLineHtml.includes("<p>$$"), "single-line display math should not render as raw paragraph text");
 assert.strictEqual(call("rootHasMathContent({ textContent: 'plain OCR text' })"), false);
 assert.strictEqual(call("rootHasMathContent({ textContent: 'formula $E=mc^2$' })"), true);
+
+{
+  const circledNumberProse = "无主机结构的主要优点是：\\textcircled1 易于程序开发、维护和移植；\\textcircled2 程序较易调试；\\textcircled3 程序的正确性易于保证。";
+  const html = call(`renderBlockContent(${JSON.stringify(circledNumberProse)}, { kind: "text", blockIndex: "circled-number-prose" })`);
+  assert(html.includes("① 易于程序开发"), "rendered prose should show LaTeX textcircled1 as a readable circled number");
+  assert(html.includes("② 程序较易调试"), "rendered prose should show LaTeX textcircled2 as a readable circled number");
+  assert(html.includes("③ 程序的正确性"), "rendered prose should show LaTeX textcircled3 as a readable circled number");
+  assert(!html.includes("\\\\textcircled"), "rendered prose should not expose raw LaTeX textcircled commands");
+}
 
 {
   const userCorrectedMathBlock = `For a compact binary system, the waveforms $\\tilde{h}^{j k}$ and $\\Psi$ are given to the required orders (Lang, 2014, 2015) by
