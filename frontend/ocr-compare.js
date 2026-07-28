@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260728-reference-empty-page-fix";
+const OCR_COMPARE_BUILD_ID = "20260728-bibliography-focus-fix";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -7184,18 +7184,22 @@ function reviewBlockMarkdownsForPage(pageNumber) {
   }
   const blocks = Array.isArray(page.para_blocks) ? page.para_blocks : [];
   const entries = blocks
-    .map((block, blockIndex) => {
+    .flatMap((block, blockIndex) => {
       const scopedBlock = filterBlockLines(block, (line) => !lineHasCrossPageContent(line));
-      return {
+      const bibliographyEntries = bibliographyReviewEntriesFromBlock(scopedBlock, blockIndex, page.page_size);
+      if (bibliographyEntries.length >= 2) {
+        return bibliographyEntries;
+      }
+      return [{
         block,
         blockIndex,
         bbox: getBlockBBox(scopedBlock) || getBlockBBox(block),
         focusBBoxes: focusBBoxesForBlock(scopedBlock, page.page_size) || focusBBoxesForBlock(block, page.page_size),
         markdown: cleanNarrativeFigureTablePrefixForTextBlock(blockToMarkdown(scopedBlock), scopedBlock),
         pageSize: page.page_size,
-      };
+      }];
     })
-    .filter((entry) => !isLikelyPageHeaderEntry(entry));
+    .filter((entry) => entry.kind === "bibliography" || !isLikelyPageHeaderEntry(entry));
   return attachEquationNumbersToReviewEntries(
     sortEntriesByVisualReadingOrder(augmentTableCaptionsForEntries(entries, pageNumber)),
     pageNumber,
@@ -7204,6 +7208,23 @@ function reviewBlockMarkdownsForPage(pageNumber) {
 
 function reviewSegmentsForPage(pageNumber) {
   return segmentEntries(mergeAdjacentPlainProseEntriesForReview(reviewBlockMarkdownsForPage(pageNumber), pageNumber));
+}
+
+function bibliographyReviewEntriesFromBlock(block, blockIndex, pageSize) {
+  const entries = bibliographyEntryObjectsFromBlockLines(block);
+  if (entries.length < 2) {
+    return [];
+  }
+  return entries.map((entry, entryIndex) => ({
+    block,
+    blockIndex: `${blockIndex}-ref-${entryIndex + 1}`,
+    sourceBlockIndex: blockIndex,
+    bbox: entry.bbox,
+    focusBBoxes: entry.focusBBoxes,
+    markdown: entry.markdown,
+    pageSize,
+    kind: "bibliography",
+  }));
 }
 
 function attachEquationNumbersToReviewEntries(entries, pageNumber = state.currentPage) {
@@ -10826,30 +10847,72 @@ function isPlausibleBibliographyIndex(value) {
 }
 
 function bibliographyEntriesFromBlockLines(block) {
-  const rawLines = collectBlockLineMarkdowns(block).map(normalizeBibliographyLine).filter(Boolean);
+  return bibliographyEntryObjectsFromBlockLines(block).map((entry) => entry.markdown);
+}
+
+function bibliographyEntryObjectsFromBlockLines(block) {
+  const rawLines = collectBibliographyLineObjects(block);
   if (rawLines.length < 2) {
     return [];
   }
   const entries = [];
   let current = [];
-  rawLines.forEach((line) => {
-    if (bibliographyLineStartsNewEntry(line)) {
+  rawLines.forEach((lineObject) => {
+    if (bibliographyLineStartsNewEntry(lineObject.text)) {
       if (current.length) {
-        entries.push(current.join(" ").replace(/[ \t]{2,}/g, " ").trim());
+        entries.push(bibliographyEntryObjectFromLines(current));
       }
-      current = [line];
+      current = [lineObject];
       return;
     }
     if (current.length) {
-      current.push(line);
+      current.push(lineObject);
       return;
     }
-    current = [line];
+    current = [lineObject];
   });
   if (current.length) {
-    entries.push(current.join(" ").replace(/[ \t]{2,}/g, " ").trim());
+    entries.push(bibliographyEntryObjectFromLines(current));
   }
-  return entries.filter(Boolean);
+  return entries.filter((entry) => entry.markdown);
+}
+
+function collectBibliographyLineObjects(block) {
+  return collectBlockLineObjects(block)
+    .map((line) => ({
+      text: normalizeBibliographyLine(line.text),
+      bbox: normalizedBBox(line.bbox),
+    }))
+    .filter((line) => line.text);
+}
+
+function collectBlockLineObjects(block, output = []) {
+  if (!block || typeof block !== "object") {
+    return output;
+  }
+  if (Array.isArray(block.lines)) {
+    block.lines.forEach((line) => {
+      const text = lineToMarkdown(line, {}, block).trim();
+      if (text) {
+        output.push({ text, bbox: normalizedBBox(line?.bbox) });
+      }
+    });
+  }
+  if (Array.isArray(block.blocks)) {
+    block.blocks.forEach((nested) => collectBlockLineObjects(nested, output));
+  }
+  return output;
+}
+
+function bibliographyEntryObjectFromLines(lines) {
+  const lineObjects = Array.isArray(lines) ? lines : [];
+  const markdown = lineObjects.map((line) => line.text).join(" ").replace(/[ \t]{2,}/g, " ").trim();
+  const boxes = lineObjects.map((line) => normalizedBBox(line.bbox)).filter(Boolean);
+  return {
+    markdown,
+    bbox: mergeBBoxes(boxes),
+    focusBBoxes: boxes.length > 1 ? boxes : null,
+  };
 }
 
 function bibliographyLineStartsNewEntry(line) {

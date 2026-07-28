@@ -185,9 +185,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-reference-empty-page-fix"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-reference-empty-page-fix"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-reference-empty-page-fix"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-bibliography-focus-fix"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-bibliography-focus-fix"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-bibliography-focus-fix"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -1072,6 +1072,45 @@ assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX tab
   assert(markdown.includes("\n\n63 Felten"), "following no-space numbered reference entries should start a new paragraph");
   assert(html.includes("bibliography-list"), "no-space numbered bibliography blocks should render as a readable reference list");
   assert(html.includes("bibliography-number\">62</span>"), "no-space numbered bibliography entries should preserve the entry number in a dedicated label");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.riskByPage.clear();
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [581, 793],
+            para_blocks: [
+              {
+                type: "list",
+                lines: [
+                  { bbox: [64, 71, 350, 87], spans: [{ bbox: [64, 71, 350, 87], content: "61Dongarra J J et al.LINPACK User's Guide.SIAM.1979" }] },
+                  { bbox: [64, 91, 510, 105], spans: [{ bbox: [64, 91, 510, 105], content: "62Duato J,Yalamanchili S,Ni L,Interconnection Networks: An Engineering Approach. IEEE" }] },
+                  { bbox: [86, 108, 223, 122], spans: [{ bbox: [86, 108, 223, 122], content: "Computer Society Press,1997" }] },
+                  { bbox: [63, 124, 507, 143], spans: [{ bbox: [63, 124, 507, 143], content: "63Felten E W et al.Early Experience with Message-Passing on the SHRIMP Multicomputer." }] },
+                  { bbox: [84, 142, 367, 159], spans: [{ bbox: [84, 142, 367, 159], content: "Proc.of the 23rd Int'l Symp.on Computer Architecture,1996" }] }
+                ]
+              }
+            ]
+          }
+        ]
+      };
+      const segments = reviewSegmentsForPage(1);
+      const risks = segments.map((segment) => reviewRiskFromSegment(segment, 1));
+      return JSON.stringify({
+        count: segments.length,
+        segments: segments.map((segment) => ({ blockIndex: segment.blockIndex, markdown: segment.markdown, bbox: segment.bbox, focusBBoxes: segment.focusBBoxes })),
+        riskPercents: risks.map((risk) => pdfFocusPercentForRisk(risk))
+      });
+    })()`),
+  );
+  assert.strictEqual(result.count, 3, "bibliography review blocks should split into per-reference segments for paragraph-level sync");
+  assert(result.segments[1].markdown.startsWith("62 Duato"), "the second bibliography segment should contain only reference 62");
+  assert.deepStrictEqual(result.segments[1].bbox, [64, 91, 510, 122], "reference continuation lines should merge into that reference's paragraph bbox");
+  assert(result.riskPercents[1].height < 5, "paragraph-level bibliography focus should be compact, not a whole-page reference block");
 }
 
 {
