@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260729-image-crop-fallback";
+const OCR_COMPARE_BUILD_ID = "20260729-merge-adjacent-images";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -7324,7 +7324,8 @@ function reviewBlockMarkdownsForPage(pageNumber) {
 }
 
 function reviewSegmentsForPage(pageNumber) {
-  return segmentEntries(mergeAdjacentPlainProseEntriesForReview(reviewBlockMarkdownsForPage(pageNumber), pageNumber));
+  const mergedProse = mergeAdjacentPlainProseEntriesForReview(reviewBlockMarkdownsForPage(pageNumber), pageNumber);
+  return segmentEntries(mergeAdjacentImageEntriesForReview(mergedProse, pageNumber));
 }
 
 function bibliographyReviewEntriesFromBlock(block, blockIndex, pageSize) {
@@ -7403,6 +7404,62 @@ function mergeAdjacentPlainProseEntriesForReview(entries, pageNumber = state.cur
     output.push(entry);
   });
   return output;
+}
+
+function mergeAdjacentImageEntriesForReview(entries, pageNumber = state.currentPage) {
+  const output = [];
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    const previous = output[output.length - 1];
+    if (shouldMergeAdjacentImageEntries(previous, entry, pageNumber)) {
+      output[output.length - 1] = mergeImageEntries(previous, entry);
+      return;
+    }
+    output.push(entry);
+  });
+  return output;
+}
+
+function shouldMergeAdjacentImageEntries(previous, current, pageNumber = state.currentPage) {
+  if (!previous || !current || !isImageReviewEntry(previous) || !isImageReviewEntry(current)) {
+    return false;
+  }
+  if (entryHasReviewPatchState(previous, pageNumber) || entryHasReviewPatchState(current, pageNumber)) {
+    return false;
+  }
+  const left = bboxReadingGeometry(previous?.bbox, previous?.pageSize);
+  const right = bboxReadingGeometry(current?.bbox, current?.pageSize);
+  if (!left || !right || Math.abs(left.pageWidth - right.pageWidth) > 2 || Math.abs(left.pageHeight - right.pageHeight) > 2) {
+    return false;
+  }
+  const pageWidth = Math.max(left.pageWidth, right.pageWidth, 1);
+  const verticalOverlap = Math.max(0, Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top));
+  const minHeight = Math.max(1, Math.min(left.height, right.height));
+  const horizontalGap = Math.max(0, Math.max(left.left, right.left) - Math.min(left.right, right.right));
+  return verticalOverlap / minHeight >= 0.32 && horizontalGap <= Math.max(36, pageWidth * 0.18);
+}
+
+function isImageReviewEntry(entry) {
+  const blockType = String(entry?.block?.type || entry?.kind || entry?.type || "").toLowerCase();
+  return blockType === "image" || blockType === "figure" || hasMarkdownImageReference(entry?.markdown);
+}
+
+function mergeImageEntries(previous, current) {
+  const blockIndexes = []
+    .concat(Array.isArray(previous?.blockIndexes) ? previous.blockIndexes : [previous?.blockIndex])
+    .concat(Array.isArray(current?.blockIndexes) ? current.blockIndexes : [current?.blockIndex])
+    .filter((value) => value != null);
+  const firstIndex = blockIndexes[0];
+  const lastIndex = blockIndexes[blockIndexes.length - 1];
+  return {
+    ...previous,
+    id: `image-${firstIndex}-${lastIndex}`,
+    blockIndex: `image-${firstIndex}-${lastIndex}`,
+    blockIndexes,
+    bbox: mergeBBoxes([previous?.bbox, current?.bbox]),
+    focusBBoxes: mergedFocusBBoxesForEntries([previous, current]),
+    markdown: [previous?.markdown, current?.markdown].filter(Boolean).join("\n\n"),
+    kind: "image",
+  };
 }
 
 function shouldMergeAdjacentPlainProseEntries(previous, current, pageNumber = state.currentPage) {
@@ -7697,12 +7754,13 @@ function segmentEntries(entries) {
   while (index < entries.length) {
     const entry = entries[index];
     if (!isAlgorithmStartEntry(entry)) {
+      const blockIndexes = Array.isArray(entry.blockIndexes) && entry.blockIndexes.length ? entry.blockIndexes : [entry.blockIndex];
       segments.push({
         ...entry,
-        id: String(entry.blockIndex),
+        id: String(entry.id || entry.blockIndex),
         blockIndex: String(entry.blockIndex),
-        blockIndexes: [entry.blockIndex],
-        kind: entry.block?.type || "block",
+        blockIndexes,
+        kind: entry.kind || entry.block?.type || "block",
       });
       index += 1;
       continue;

@@ -188,9 +188,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260729-image-crop-fallback"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260729-image-crop-fallback"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260729-image-crop-fallback"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260729-merge-adjacent-images"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260729-merge-adjacent-images"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260729-merge-adjacent-images"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -7850,6 +7850,44 @@ const imagePreviewHtml = call(`(() => {
 assert(imagePreviewHtml.includes("review-image-preview"), "relative image blocks should fall back to a page-crop preview when page image exists");
 assert(!imagePreviewHtml.includes("![image]"), "literal markdown image token should be hidden when preview is rendered");
 assert(imagePreviewHtml.includes("Fig. 2.2 Caption"), "figure caption should remain visible beside image preview");
+
+const adjacentImageSegments = JSON.parse(
+  call(`(() => {
+    state.currentPage = 27;
+    state.ocrPatches = [];
+    state.mineruBlockOverrides.clear();
+    state.mathpixBlockDrafts.clear();
+    state.reviewNeedsCorrection.clear();
+    state.mineruInfo = {
+      pdf_info: Array.from({ length: 27 }, (_unused, index) => index === 26 ? {
+        page_size: [1000, 1200],
+        para_blocks: [
+          {
+            type: "image",
+            bbox: [120, 620, 470, 980],
+            lines: [{ bbox: [120, 620, 470, 980], spans: [{ image_path: "fig-2-7.jpg" }, { content: "图2.7" }] }]
+          },
+          {
+            type: "image",
+            bbox: [500, 625, 850, 982],
+            lines: [{ bbox: [500, 625, 850, 982], spans: [{ image_path: "fig-2-8.jpg" }, { content: "图2.8" }] }]
+          }
+        ]
+      } : { page_size: [1000, 1200], para_blocks: [] })
+    };
+    return JSON.stringify(reviewSegmentsForPage(27).map((segment) => ({
+      blockIndex: segment.blockIndex,
+      blockIndexes: segment.blockIndexes,
+      bbox: segment.bbox,
+      kind: segment.kind,
+      markdown: segment.markdown
+    })));
+  })()`),
+);
+assert.strictEqual(adjacentImageSegments.length, 1, "same-row adjacent image blocks should merge into one review segment");
+assert.strictEqual(adjacentImageSegments[0].kind, "image");
+assert.deepStrictEqual(adjacentImageSegments[0].blockIndexes, [0, 1]);
+assert(adjacentImageSegments[0].markdown.includes("图2.7") && adjacentImageSegments[0].markdown.includes("图2.8"), "merged image segment should keep both figure labels");
 
 const loadableImagePreviewHtml = call(`(() => {
   state.currentPage = 21;
