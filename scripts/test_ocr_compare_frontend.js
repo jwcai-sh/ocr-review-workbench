@@ -188,9 +188,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260729-image-block-ocr-preserve"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260729-image-block-ocr-preserve"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260729-image-block-ocr-preserve"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260729-mathpix-bare-formula-render"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260729-mathpix-bare-formula-render"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260729-mathpix-bare-formula-render"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -760,6 +760,20 @@ assert.strictEqual(
 const inlineOnly = prepareMathpix("The period is \\(P=2\\pi\\sqrt{a^3/GM}\\).");
 assert.strictEqual(inlineOnly, "The period is $P=2\\pi\\sqrt{a^3/GM}$.");
 assert(!inlineOnly.includes("$$"), "prepareMathpixMarkdown should not upgrade inline math to display math");
+
+const bareMathpixFormulaLines = "G \\rho_{m} = \\frac{\\omega^{2}}{2 \\pi} + \\frac{1}{4 \\pi \\nu}\\n\\int_{s} g d s_\\circ";
+const bareMathpixFormulaHtml = call(`renderBlockContent(${JSON.stringify(bareMathpixFormulaLines)}, { kind: "text" })`);
+assert(
+  bareMathpixFormulaHtml.includes("math-display"),
+  "block Mathpix draft formula lines should render as display math",
+);
+assert(!bareMathpixFormulaHtml.includes("<p>G \\\\rho"), "block Mathpix draft formula lines should not render as a raw paragraph");
+
+const lowercaseVariableFormulaHtml = call(`renderBlockContent(${JSON.stringify("v_p = \\frac{1}{4\\pi} \\int_v \\frac{\\partial}{\\partial n} \\left( \\frac{1}{r} \\right) ds")}, { kind: "text" })`);
+assert(
+  lowercaseVariableFormulaHtml.includes("math-display"),
+  "standalone lowercase-variable formula lines should render as display math",
+);
 
 assert.strictEqual(
   prepareMathpix("The replacement CCD cost $100."),

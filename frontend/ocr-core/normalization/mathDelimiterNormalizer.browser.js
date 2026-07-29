@@ -119,6 +119,12 @@
           index = skipDelimiterRun(lines, nextIndex);
           continue;
         }
+        const standaloneBlock = collectStandaloneDisplayMathBlock(lines, index);
+        if (standaloneBlock.lines.length) {
+          output.push("$$", ...standaloneBlock.lines, "$$");
+          index = standaloneBlock.nextIndex;
+          continue;
+        }
       }
 
       output.push(lines[index]);
@@ -126,6 +132,31 @@
     }
 
     return output.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  function collectStandaloneDisplayMathBlock(lines, startIndex) {
+    const collected = [];
+    let index = startIndex;
+
+    while (index < lines.length) {
+      const trimmed = String(lines[index] || "").trim();
+      if (!trimmed) {
+        const nextIndex = nextNonEmptyLineIndex(lines, index + 1);
+        if (nextIndex >= 0 && isLikelyMathContinuation(lines[nextIndex].trim())) {
+          collected.push(lines[index]);
+          index += 1;
+          continue;
+        }
+        break;
+      }
+      if (!isLikelyMathContinuation(trimmed)) {
+        break;
+      }
+      collected.push(lines[index]);
+      index += 1;
+    }
+
+    return { lines: trimBlankLines(collected), nextIndex: index };
   }
 
   function hasDisplayMathDelimiter(text) {
@@ -237,7 +268,10 @@
       return false;
     }
     if (/\\begin\s*\{/.test(trimmed)) {
-      return isDisplayEnvironmentStart(trimmed);
+      return false;
+    }
+    if (!isStandaloneMathLineStart(trimmed)) {
+      return false;
     }
     if (!/[=<>^_]|\\(?:frac|sqrt|sum|int|Omega|Lambda|Delta|lambda|nu|alpha|beta|gamma|omega|leq|geq)/.test(trimmed)) {
       return false;
@@ -246,6 +280,10 @@
       return false;
     }
     return /^[A-Za-z0-9\\{}()[\]\s+\-*/^_=,.;:'<>|]+$/.test(trimmed);
+  }
+
+  function isStandaloneMathLineStart(trimmed) {
+    return /^(?:[A-Z0-9]|[a-z](?=(?:[_^]|\s*[=<>]))|\\(?:frac|sqrt|sum|int|Omega|Lambda|Delta|lambda|nu|alpha|beta|gamma|omega|rho|partial|nabla)(?=[^A-Za-z]|$)|[{}()[\]+\-*/=<>]|&)/.test(trimmed);
   }
 
   function isLikelyMathContinuation(trimmed) {
