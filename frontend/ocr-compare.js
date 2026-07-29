@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260729-image-page-noise-filter";
+const OCR_COMPARE_BUILD_ID = "20260729-image-crop-fallback";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -6554,7 +6554,7 @@ function renderBlockImagePreview(markdown, entry) {
   if (!image) {
     return "";
   }
-  if (isImageLikeReviewSegment(entry)) {
+  if (isBrowserLoadableImageSrc(image.src)) {
     return renderMarkdownImage(image.alt || "image", image.src);
   }
   const page = state.pageCache.get(state.currentPage);
@@ -6594,6 +6594,10 @@ function extractMarkdownImageReferences(markdown) {
 
 function hasMarkdownImageReference(markdown) {
   return extractMarkdownImageReferences(markdown).length > 0;
+}
+
+function isBrowserLoadableImageSrc(src) {
+  return /^(?:data:image\/|https?:\/\/|blob:|\/)/i.test(String(src || "").trim());
 }
 
 function isImageLikeReviewSegment(segment) {
@@ -6645,9 +6649,10 @@ function expandedBBoxWithPadding(bbox, padding, pageSize) {
     return null;
   }
   const pad = normalizeCropPadding(padding);
-  const left = clamp(Number(bbox[0]) - pad.left, 0, pageWidth);
+  const fullWidth = Boolean(pad.fullWidth);
+  const left = fullWidth ? 0 : clamp(Number(bbox[0]) - pad.left, 0, pageWidth);
   const top = clamp(Number(bbox[1]) - pad.top, 0, pageHeight);
-  const right = clamp(Number(bbox[2]) + pad.right, left + 1, pageWidth);
+  const right = fullWidth ? pageWidth : clamp(Number(bbox[2]) + pad.right, left + 1, pageWidth);
   const bottom = clamp(Number(bbox[3]) + pad.bottom, top + 1, pageHeight);
   return [left, top, right, bottom];
 }
@@ -6685,6 +6690,7 @@ function cropPaddingForImageLikeBlock(pageSize) {
     right: Math.max(28, pageWidth * 0.035, BLOCK_MATHPIX_CROP_PADDING.horizontal),
     top: Math.max(8, pageHeight * 0.012, BLOCK_MATHPIX_CROP_PADDING.vertical),
     bottom: Math.max(40, pageHeight * 0.018, BLOCK_MATHPIX_CROP_PADDING.vertical),
+    fullWidth: true,
   };
 }
 

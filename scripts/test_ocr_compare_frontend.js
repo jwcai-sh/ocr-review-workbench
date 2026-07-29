@@ -188,9 +188,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260729-image-page-noise-filter"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260729-image-page-noise-filter"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260729-image-page-noise-filter"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260729-image-crop-fallback"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260729-image-crop-fallback"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260729-image-crop-fallback"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -7827,6 +7827,7 @@ assert.strictEqual((preservedFigurePatch.normalizedText.match(/Fig\. 2\.2/g) || 
 const imagePadding = JSON.parse(
   call(`JSON.stringify(cropPaddingForRiskBlock({ text: "![image](fig.jpg)", pageSize: [1000, 1200], reasons: [] }))`),
 );
+assert.strictEqual(imagePadding.fullWidth, true, "image block crop should expand to full page width to avoid splitting side-by-side figures");
 assert(imagePadding.left >= 120, "image block crop should expand left enough to include side figure labels");
 assert(imagePadding.bottom >= 40, "image block crop should expand bottom enough to include captions");
 
@@ -7846,9 +7847,22 @@ const imagePreviewHtml = call(`(() => {
     pageSize: [1000, 1200]
   });
 })()`);
-assert(imagePreviewHtml.includes("markdown-image-reference"), "image block should render the complete image asset when a Markdown image exists");
+assert(imagePreviewHtml.includes("review-image-preview"), "relative image blocks should fall back to a page-crop preview when page image exists");
 assert(!imagePreviewHtml.includes("![image]"), "literal markdown image token should be hidden when preview is rendered");
 assert(imagePreviewHtml.includes("Fig. 2.2 Caption"), "figure caption should remain visible beside image preview");
+
+const loadableImagePreviewHtml = call(`(() => {
+  state.currentPage = 21;
+  state.pageCache.set(21, { image: "data:image/png;base64,AAA" });
+  return renderBlockContent("![image](data:image/png;base64,BBB)\\n\\nFig. 2.2 Caption", {
+    blockIndex: "1",
+    markdown: "![image](data:image/png;base64,BBB)\\n\\nFig. 2.2 Caption",
+    kind: "image",
+    bbox: [100, 100, 300, 300],
+    pageSize: [1000, 1200]
+  });
+})()`);
+assert(loadableImagePreviewHtml.includes("markdown-image-reference"), "browser-loadable image blocks should render the complete image asset directly");
 
 const inlineImagePreviewHtml = call(`(() => {
   state.currentPage = 21;
@@ -7861,7 +7875,7 @@ const inlineImagePreviewHtml = call(`(() => {
     pageSize: [1000, 1200]
   });
 })()`);
-assert(inlineImagePreviewHtml.includes("markdown-image-reference"), "inline image block should render the complete image asset when a Markdown image exists");
+assert(inlineImagePreviewHtml.includes("review-image-preview"), "relative inline image blocks should fall back to a page-crop preview when page image exists");
 assert(!inlineImagePreviewHtml.includes("![image]"), "inline image token should be hidden when preview is rendered");
 assert(inlineImagePreviewHtml.includes("See for Fig. 2.2 Caption"), "inline image caption text should remain visible beside preview");
 
