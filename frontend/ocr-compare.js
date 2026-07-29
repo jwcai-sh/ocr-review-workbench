@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260729-merge-image-noise-separated";
+const OCR_COMPARE_BUILD_ID = "20260729-page-mathpix-action";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -403,6 +403,7 @@ function bindElements() {
     "ossBookEntryList",
     "ossBookSelectedSummary",
     "loadOssBookButton",
+    "runPageMathpixButton",
     "runBookMathpixButton",
     "stopBookMathpixButton",
     "previewAcceptedBookButton",
@@ -427,6 +428,7 @@ async function initialize() {
   bindNativeFilePickerLabel(els.pickMineruButton, els.mineruInput, "等待选择 middle.json");
   bindNativeFilePickerLabel(els.pickContentListButton, els.contentListInput, "等待选择 content_list");
   els.pickRequiredFilesButton?.addEventListener("click", handleRequiredFilesButtonClick);
+  els.runPageMathpixButton?.addEventListener("click", recognizeCurrentPageWithMathpix);
   els.runBookMathpixButton?.addEventListener("click", runBookMathpixDraftBatch);
   els.stopBookMathpixButton?.addEventListener("click", requestStopBookMathpixDraftBatch);
   els.previewAcceptedBookButton?.addEventListener("click", toggleAcceptedBookPreview);
@@ -3255,9 +3257,28 @@ function bookMathpixDraftDisabledReason() {
   return "";
 }
 
+function pageMathpixDraftDisabledReason() {
+  if (state.busy) {
+    return "Mathpix 正在运行。";
+  }
+  if (!hasPdfSource()) {
+    return "先加载 PDF 原文。";
+  }
+  if (state.mathpixConfigured === false) {
+    return state.mathpixConfigError || "Mathpix 未配置：请设置 MATHPIX_APP_ID/MATHPIX_APP_KEY。";
+  }
+  return "";
+}
+
 function updateBookMathpixTopControls() {
   const batch = state.bookMathpixBatch || {};
   const reason = bookMathpixDraftDisabledReason();
+  const pageReason = pageMathpixDraftDisabledReason();
+  if (els.runPageMathpixButton) {
+    els.runPageMathpixButton.disabled = Boolean(pageReason);
+    els.runPageMathpixButton.title = pageReason || "对当前页整页图像调用 Mathpix，生成整页参考草稿；不会自动 accept。";
+    els.runPageMathpixButton.textContent = state.busy && !batch.running ? "Mathpix 中..." : "整页 Mathpix 草稿";
+  }
   if (els.runBookMathpixButton) {
     els.runBookMathpixButton.disabled = Boolean(reason);
     els.runBookMathpixButton.title = reason || "对整本书逐块调用 Mathpix，生成 draft OcrPatch；不会自动 accept。";
@@ -6872,12 +6893,17 @@ function renderCorrectionDiff(mathpixMarkdown) {
 
 async function recognizeCurrentPageWithMathpix() {
   if (state.busy || !hasPdfSource()) {
+    updateBookMathpixTopControls();
+    return;
+  }
+  if (state.mathpixConfigured === false) {
+    const message = state.mathpixConfigError || "Mathpix 未配置：请设置 MATHPIX_APP_ID/MATHPIX_APP_KEY 后重启服务。";
+    setStatus(state.mathpixConfigError ? "Mathpix 配置无效" : "Mathpix 未配置", "error", message);
+    updateBookMathpixTopControls();
     return;
   }
   state.busy = true;
-  if (els.mathpixButton) {
-    els.mathpixButton.disabled = true;
-  }
+  updateBookMathpixTopControls();
   setStatus("Mathpix", "busy");
   try {
     const page = await ensureCurrentPagePreview();
@@ -6915,6 +6941,7 @@ async function recognizeCurrentPageWithMathpix() {
     setStatus("Error", "error");
   } finally {
     state.busy = false;
+    updateBookMathpixTopControls();
     updatePager();
     await renderCurrentPage();
   }

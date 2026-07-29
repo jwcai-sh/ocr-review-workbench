@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OCR 三栏对照</title>
-  <link rel="stylesheet" href="./ocr-compare.css?v=20260729-merge-image-noise-separated">
+  <link rel="stylesheet" href="./ocr-compare.css?v=20260729-page-mathpix-action">
 </head>
 <body>
   <div class="ocr-shell">
@@ -35,19 +35,26 @@
       <input id="requiredFilesInput" class="hidden-input" type="file" accept=".pdf,application/pdf,.json,application/json" multiple>
       <div class="control-column control-column-pdf" aria-label="上传 OCR 输入文件">
         <span id="reviewerAccessBadge" class="reviewer-access-badge">本地模式</span>
-        <div class="accepted-top-actions" aria-label="accepted 校正稿操作">
-          <button id="runBookMathpixButton" class="secondary-button mathpix-book-action-button" type="button" data-run-book-mathpix disabled>
-            全书 Mathpix 草稿
-          </button>
-          <button id="stopBookMathpixButton" class="secondary-button mathpix-book-stop-button" type="button" data-stop-book-mathpix disabled hidden>
-            停止
-          </button>
-          <button id="previewAcceptedBookButton" class="secondary-button accepted-action-button" type="button" data-preview-accepted-book-patches disabled hidden>
-            预览整书 accepted 校正稿
-          </button>
-          <button id="downloadAcceptedCorrectedButton" class="secondary-button accepted-action-button" type="button" data-download-accepted-corrected disabled>
-            下载 accepted 校正稿
-          </button>
+        <div class="accepted-top-actions" aria-label="Mathpix 与 accepted 校正稿操作">
+          <div class="mathpix-top-actions" aria-label="Mathpix 草稿操作">
+            <button id="runPageMathpixButton" class="secondary-button mathpix-page-action-button" type="button" data-run-page-mathpix disabled>
+              整页 Mathpix 草稿
+            </button>
+            <button id="runBookMathpixButton" class="secondary-button mathpix-book-action-button" type="button" data-run-book-mathpix disabled>
+              全书 Mathpix 草稿
+            </button>
+            <button id="stopBookMathpixButton" class="secondary-button mathpix-book-stop-button" type="button" data-stop-book-mathpix disabled hidden>
+              停止
+            </button>
+          </div>
+          <div class="accepted-download-actions" aria-label="accepted 校正稿下载">
+            <button id="previewAcceptedBookButton" class="secondary-button accepted-action-button" type="button" data-preview-accepted-book-patches disabled hidden>
+              预览整书 accepted 校正稿
+            </button>
+            <button id="downloadAcceptedCorrectedButton" class="secondary-button accepted-action-button" type="button" data-download-accepted-corrected disabled>
+              下载 accepted 校正稿
+            </button>
+          </div>
         </div>
         <details class="local-debug-panel">
           <summary class="secondary-button local-debug-summary">本地调试</summary>
@@ -162,6 +169,6 @@
       }
     };
   </script>
-  <script src="./ocr-compare.js?v=20260729-merge-image-noise-separated"></script>
+  <script src="./ocr-compare.js?v=20260729-page-mathpix-action"></script>
 </body>
 </html>

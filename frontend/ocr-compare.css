@@ -608,11 +608,26 @@ label[role="button"] {
 
 .accepted-top-actions {
   min-width: 0;
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   margin-left: auto;
   flex-wrap: wrap;
+}
+
+.mathpix-top-actions,
+.accepted-download-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.accepted-download-actions {
+  margin-left: auto;
 }
 
 .accepted-action-button {
@@ -634,6 +649,7 @@ label[role="button"] {
   outline: none;
 }
 
+.mathpix-page-action-button,
 .mathpix-book-action-button {
   color: #1d4ed8;
   border-color: #bfdbfe;
@@ -641,6 +657,8 @@ label[role="button"] {
   font-weight: 800;
 }
 
+.mathpix-page-action-button:not(:disabled):hover,
+.mathpix-page-action-button:not(:disabled):focus-visible,
 .mathpix-book-action-button:not(:disabled):hover,
 .mathpix-book-action-button:not(:disabled):focus-visible {
   color: #1e40af;
