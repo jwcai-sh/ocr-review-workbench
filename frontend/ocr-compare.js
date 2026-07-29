@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260729-page-mathpix-action";
+const OCR_COMPARE_BUILD_ID = "20260730-wide-image-row-merge";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -7472,7 +7472,7 @@ function findMergeablePriorImageEntryIndex(output, currentImage, pageNumber = st
   for (let index = output.length - 1; index >= 0; index -= 1) {
     const candidate = output[index];
     if (isImageReviewEntry(candidate)) {
-      if (shouldMergeAdjacentImageEntries(candidate, currentImage, pageNumber) || imageEntriesAreLikelySameFigureGroup(candidate, currentImage)) {
+      if (shouldMergeImageReviewEntries(candidate, currentImage, pageNumber)) {
         return index;
       }
       return -1;
@@ -7499,7 +7499,7 @@ function shouldMergeCaptionSeparatedImageEntries(previousImage, captionEntry, cu
   ) {
     return false;
   }
-  return shouldMergeAdjacentImageEntries(previousImage, currentImage, pageNumber) || imageEntriesAreLikelySameFigureGroup(previousImage, currentImage);
+  return shouldMergeImageReviewEntries(previousImage, currentImage, pageNumber);
 }
 
 function shouldAttachCaptionOnlyEntryToImage(imageEntry, captionEntry, pageNumber = state.currentPage) {
@@ -7537,6 +7537,10 @@ function shouldMergeAdjacentImageEntries(previous, current, pageNumber = state.c
   const minHeight = Math.max(1, Math.min(left.height, right.height));
   const horizontalGap = Math.max(0, Math.max(left.left, right.left) - Math.min(left.right, right.right));
   return (verticalOverlap / minHeight >= 0.32 && horizontalGap <= Math.max(36, pageWidth * 0.18)) || imageEntriesAreLikelySameFigureGroup(previous, current);
+}
+
+function shouldMergeImageReviewEntries(leftEntry, rightEntry, pageNumber = state.currentPage) {
+  return shouldMergeAdjacentImageEntries(leftEntry, rightEntry, pageNumber) || imageEntriesAreLikelySameFigureGroup(leftEntry, rightEntry) || imageEntriesAreLikelySameWideRow(leftEntry, rightEntry);
 }
 
 function isImageReviewEntry(entry) {
@@ -7582,6 +7586,34 @@ function imageEntriesAreLikelySameFigureGroup(leftEntry, rightEntry) {
       return overlap / smallerArea >= 0.42;
     })
   );
+}
+
+function imageEntriesAreLikelySameWideRow(leftEntry, rightEntry) {
+  const left = bboxReadingGeometry(leftEntry?.bbox, leftEntry?.pageSize);
+  const right = bboxReadingGeometry(rightEntry?.bbox, rightEntry?.pageSize);
+  if (!left || !right || Math.abs(left.pageWidth - right.pageWidth) > 2 || Math.abs(left.pageHeight - right.pageHeight) > 2) {
+    return false;
+  }
+  const pageWidth = Math.max(left.pageWidth, right.pageWidth, 1);
+  const pageHeight = Math.max(left.pageHeight, right.pageHeight, 1);
+  const verticalOverlap = Math.max(0, Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top));
+  const minHeight = Math.max(1, Math.min(left.height, right.height));
+  const centerYDelta = Math.abs((left.top + left.bottom) / 2 - (right.top + right.bottom) / 2);
+  const horizontalGap = Math.max(0, Math.max(left.left, right.left) - Math.min(left.right, right.right));
+  const unionLeft = Math.min(left.left, right.left);
+  const unionRight = Math.max(left.right, right.right);
+  const unionWidth = unionRight - unionLeft;
+  const sameRow = verticalOverlap / minHeight >= 0.18 || centerYDelta <= Math.max(42, pageHeight * 0.055);
+  if (!sameRow) {
+    return false;
+  }
+  if (horizontalGap > Math.max(180, pageWidth * 0.36)) {
+    return false;
+  }
+  if (unionWidth < pageWidth * 0.42) {
+    return false;
+  }
+  return Math.max(left.top, right.top) / pageHeight >= 0.18 || Math.min(left.bottom, right.bottom) / pageHeight >= 0.32;
 }
 
 function reviewEntryVisualBoxes(entry) {

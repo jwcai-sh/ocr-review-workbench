@@ -198,9 +198,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260729-page-mathpix-action"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260729-page-mathpix-action"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260729-page-mathpix-action"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260730-wide-image-row-merge"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260730-wide-image-row-merge"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260730-wide-image-row-merge"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -7898,6 +7898,44 @@ assert.strictEqual(adjacentImageSegments.length, 1, "same-row adjacent image blo
 assert.strictEqual(adjacentImageSegments[0].kind, "image");
 assert.deepStrictEqual(adjacentImageSegments[0].blockIndexes, [0, 1]);
 assert(adjacentImageSegments[0].markdown.includes("图2.7") && adjacentImageSegments[0].markdown.includes("图2.8"), "merged image segment should keep both figure labels");
+
+const wideGapImageSegments = JSON.parse(
+  call(`(() => {
+    state.currentPage = 30;
+    state.ocrPatches = [];
+    state.mineruBlockOverrides.clear();
+    state.mathpixBlockDrafts.clear();
+    state.reviewNeedsCorrection.clear();
+    state.mineruInfo = {
+      pdf_info: Array.from({ length: 30 }, (_unused, index) => index === 29 ? {
+        page_size: [1000, 1200],
+        para_blocks: [
+          {
+            type: "image",
+            bbox: [80, 620, 300, 980],
+            lines: [{ bbox: [80, 620, 300, 980], spans: [{ image_path: "wide-row-left.jpg" }, { content: "图2.7" }] }]
+          },
+          {
+            type: "image",
+            bbox: [610, 625, 880, 982],
+            lines: [{ bbox: [610, 625, 880, 982], spans: [{ image_path: "wide-row-right.jpg" }, { content: "图2.8" }] }]
+          }
+        ]
+      } : { page_size: [1000, 1200], para_blocks: [] })
+    };
+    return JSON.stringify(reviewSegmentsForPage(30).map((segment) => ({
+      blockIndex: segment.blockIndex,
+      blockIndexes: segment.blockIndexes,
+      bbox: segment.bbox,
+      kind: segment.kind,
+      markdown: segment.markdown
+    })));
+  })()`),
+);
+assert.strictEqual(wideGapImageSegments.length, 1, "same-row image blocks with a wide middle gap should still merge into one review segment");
+assert.strictEqual(wideGapImageSegments[0].kind, "image");
+assert.deepStrictEqual(wideGapImageSegments[0].blockIndexes, [0, 1]);
+assert.deepStrictEqual(wideGapImageSegments[0].bbox, [80, 620, 880, 982], "wide row image merge should crop the full visual row, not one split half");
 
 const captionSeparatedImageSegments = JSON.parse(
   call(`(() => {
