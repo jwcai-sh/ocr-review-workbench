@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260728-review-button-align-fix";
+const OCR_COMPARE_BUILD_ID = "20260729-image-block-ocr-preserve";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -3766,13 +3766,18 @@ function isActiveReviewBlockKey(fullKey) {
 function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDraftMarkdown = "", ocrPatch = null, options = {}) {
   const isCrossPage = Boolean(risk?.crossPageSourcePage);
   const isReviewOnly = Boolean(risk?.reviewOnly);
+  const imageLikeSegment = isImageLikeReviewSegment(segment);
   const displayIndex = Number(options.displayIndex) > 0 ? Number(options.displayIndex) : null;
   const displayBlockLabel = `Block ${escapeHtml(String(displayIndex || segment.blockIndex))}`;
   const disabled = !isCrossPage && risk.bbox ? "" : "disabled";
   const mathpixUnavailable = state.mathpixConfigured === false;
-  const mathpixDisabled = !isCrossPage && (disabled || mathpixUnavailable) ? "disabled" : "";
+  const mathpixDisabled = !isCrossPage && (disabled || mathpixUnavailable || imageLikeSegment) ? "disabled" : "";
   const mathpixUnavailableReason = state.mathpixConfigError || "未配置 MATHPIX_APP_ID/MATHPIX_APP_KEY";
-  const mathpixTitle = mathpixUnavailable ? `title="${escapeHtml(mathpixUnavailableReason)}"` : "";
+  const mathpixTitle = imageLikeSegment
+    ? 'title="图片块保持原 MinerU 结果，不进行 Mathpix OCR。"'
+    : mathpixUnavailable
+      ? `title="${escapeHtml(mathpixUnavailableReason)}"`
+      : "";
   const patchMarkdown = reviewPatchMarkdown(ocrPatch);
   const correctionView = options.correctionView || buildReviewCorrectionViewModel({
     liveDraft: getLiveReviewDrafts(state.currentPage, false).get(String(segment.blockIndex)) || null,
@@ -3811,7 +3816,15 @@ function renderReviewItem(segment, risk, correctedMarkdown, corrected, mathpixDr
   const correctedPaneTitle = hasMathpixDraft ? "Mathpix 识别稿（未应用）" : hasAcceptedPatchMarkdown ? "已接受校正稿" : "校正稿渲染";
   const mathpixError = String(options.mathpixError || getMathpixBlockError(state.currentPage, segment.blockIndex) || "");
   const reviewActionError = [mathpixError, saveUnavailableMessage].filter(Boolean).join(" ");
-  const mathpixActionLabel = mathpixUnavailable ? (state.mathpixConfigError ? "Mathpix 配置无效" : "Mathpix 未配置") : isCorrected ? "Mathpix 重校正" : risk.bbox ? "Mathpix 校正" : "缺少 bbox";
+  const mathpixActionLabel = imageLikeSegment
+    ? "图片保持不变"
+    : mathpixUnavailable
+      ? (state.mathpixConfigError ? "Mathpix 配置无效" : "Mathpix 未配置")
+      : isCorrected
+        ? "Mathpix 重校正"
+        : risk.bbox
+          ? "Mathpix 校正"
+          : "缺少 bbox";
   const shouldShowLatestOnly = hasMathpixDraft || isCorrected;
   const title = risk?.syntheticLabel
     ? `${escapeHtml(risk.syntheticLabel)} · ${displayBlockLabel}`
@@ -6580,6 +6593,14 @@ function hasMarkdownImageReference(markdown) {
   return extractMarkdownImageReferences(markdown).length > 0;
 }
 
+function isImageLikeReviewSegment(segment) {
+  if (!segment) {
+    return false;
+  }
+  const rawType = String(segment?.block?.type || segment?.type || segment?.kind || "").toLowerCase();
+  return rawType === "image" || rawType === "figure" || hasMarkdownImageReference(segment?.markdown);
+}
+
 function isStandaloneMarkdownImageLine(line) {
   return /^\s*!\[[^\]]*\]\([^)]+\)\s*$/.test(String(line || ""));
 }
@@ -6910,6 +6931,9 @@ function collectBookMathpixDraftJobs(options = {}) {
       if (!blockKey || !oldText || !bbox) {
         return;
       }
+      if (isImageLikeReviewSegment(segment)) {
+        return;
+      }
       if (!includeExisting && reviewSegmentHasExistingDraftOrAccepted(pageNo, segment)) {
         return;
       }
@@ -7117,6 +7141,13 @@ async function recognizeRiskBlockWithMathpix(blockIndex) {
     return;
   }
   const blockKey = String(blockIndex);
+  const segment = reviewSegmentsForPage(state.currentPage).find((item) => String(item.blockIndex) === blockKey);
+  if (isImageLikeReviewSegment(segment)) {
+    setMathpixBlockError(state.currentPage, blockKey, "图片块保持原 MinerU 结果，不进行 Mathpix OCR。");
+    setStatus("图片块保持不变", "ok");
+    await renderCurrentPage();
+    return;
+  }
   if (state.mathpixConfigured === false) {
     const message = state.mathpixConfigError || "Mathpix 未配置：请设置 MATHPIX_APP_ID/MATHPIX_APP_KEY 后重启服务。";
     setMathpixBlockError(state.currentPage, blockKey, message);
@@ -7165,7 +7196,6 @@ async function recognizeRiskBlockWithMathpix(blockIndex) {
     if (!preparedMarkdown.trim()) {
       throw new Error("Mathpix 块级响应为空");
     }
-    const segment = reviewSegmentsForPage(state.currentPage).find((item) => String(item.blockIndex) === blockKey);
     const patchResult = createAndStoreDraftOcrPatch({
       pageNo: state.currentPage,
       blockIndex: blockKey,
@@ -9588,6 +9618,7 @@ function detectRiskCandidatesForPage(pageNumber) {
 
 function detectLocalRiskCandidatesForPage(pageNumber) {
   const segmentRisks = reviewSegmentsForPage(pageNumber)
+    .filter((segment) => !isImageLikeReviewSegment(segment))
     .map((segment) => {
       const { score: baseScore, reasons: baseReasons } = scoreRiskBlock(segment.markdown);
       const reasons = baseReasons.slice();

@@ -188,9 +188,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260728-review-button-align-fix"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260728-review-button-align-fix"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260728-review-button-align-fix"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260729-image-block-ocr-preserve"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260729-image-block-ocr-preserve"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260729-image-block-ocr-preserve"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -252,7 +252,8 @@ function runOcrCompareInContext(testContext) {
             page_size: [1000, 1400],
             para_blocks: [
               { type: "interline_equation", bbox: [120, 100, 820, 180], lines: [{ spans: [{ content: "bad formula 1" }] }] },
-              { type: "text", bbox: [120, 220, 820, 280], lines: [{ spans: [{ content: "body text still needs OCR" }] }] }
+              { type: "text", bbox: [120, 220, 820, 280], lines: [{ spans: [{ content: "body text still needs OCR" }] }] },
+              { type: "image", bbox: [90, 360, 880, 760], lines: [{ spans: [{ image_path: "fig-2-7.jpg" }, { content: "图 2.7" }] }] }
             ]
           },
           {
