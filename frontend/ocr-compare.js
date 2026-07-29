@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260729-merge-adjacent-images";
+const OCR_COMPARE_BUILD_ID = "20260729-merge-caption-separated-images";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -7410,13 +7410,58 @@ function mergeAdjacentImageEntriesForReview(entries, pageNumber = state.currentP
   const output = [];
   (Array.isArray(entries) ? entries : []).forEach((entry) => {
     const previous = output[output.length - 1];
+    const beforePrevious = output[output.length - 2];
+    if (shouldMergeCaptionSeparatedImageEntries(beforePrevious, previous, entry, pageNumber)) {
+      const mergedImage = mergeImageEntries(beforePrevious, entry, previous);
+      output.splice(output.length - 2, 2, mergedImage);
+      return;
+    }
     if (shouldMergeAdjacentImageEntries(previous, entry, pageNumber)) {
       output[output.length - 1] = mergeImageEntries(previous, entry);
+      return;
+    }
+    if (shouldAttachCaptionOnlyEntryToImage(previous, entry, pageNumber)) {
+      output[output.length - 1] = mergeImageWithCaptionEntry(previous, entry);
       return;
     }
     output.push(entry);
   });
   return output;
+}
+
+function shouldMergeCaptionSeparatedImageEntries(previousImage, captionEntry, currentImage, pageNumber = state.currentPage) {
+  if (!previousImage || !captionEntry || !currentImage) {
+    return false;
+  }
+  if (!isImageReviewEntry(previousImage) || !isImageCaptionOnlyReviewEntry(captionEntry) || !isImageReviewEntry(currentImage)) {
+    return false;
+  }
+  if (
+    entryHasReviewPatchState(previousImage, pageNumber) ||
+    entryHasReviewPatchState(captionEntry, pageNumber) ||
+    entryHasReviewPatchState(currentImage, pageNumber)
+  ) {
+    return false;
+  }
+  return shouldMergeAdjacentImageEntries(previousImage, currentImage, pageNumber) || imageEntriesAreLikelySameFigureGroup(previousImage, currentImage);
+}
+
+function shouldAttachCaptionOnlyEntryToImage(imageEntry, captionEntry, pageNumber = state.currentPage) {
+  if (!isImageReviewEntry(imageEntry) || !isImageCaptionOnlyReviewEntry(captionEntry)) {
+    return false;
+  }
+  if (entryHasReviewPatchState(imageEntry, pageNumber) || entryHasReviewPatchState(captionEntry, pageNumber)) {
+    return false;
+  }
+  const image = bboxReadingGeometry(imageEntry?.bbox, imageEntry?.pageSize);
+  const caption = bboxReadingGeometry(captionEntry?.bbox, captionEntry?.pageSize || imageEntry?.pageSize);
+  if (!image || !caption) {
+    return false;
+  }
+  const pageHeight = Math.max(image.pageHeight, caption.pageHeight, 1);
+  const verticalGap = Math.max(0, caption.top - image.bottom);
+  const horizontalOverlap = Math.max(0, Math.min(image.right, caption.right) - Math.max(image.left, caption.left));
+  return verticalGap <= Math.max(18, pageHeight * 0.04) && horizontalOverlap > 0;
 }
 
 function shouldMergeAdjacentImageEntries(previous, current, pageNumber = state.currentPage) {
@@ -7435,7 +7480,7 @@ function shouldMergeAdjacentImageEntries(previous, current, pageNumber = state.c
   const verticalOverlap = Math.max(0, Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top));
   const minHeight = Math.max(1, Math.min(left.height, right.height));
   const horizontalGap = Math.max(0, Math.max(left.left, right.left) - Math.min(left.right, right.right));
-  return verticalOverlap / minHeight >= 0.32 && horizontalGap <= Math.max(36, pageWidth * 0.18);
+  return (verticalOverlap / minHeight >= 0.32 && horizontalGap <= Math.max(36, pageWidth * 0.18)) || imageEntriesAreLikelySameFigureGroup(previous, current);
 }
 
 function isImageReviewEntry(entry) {
@@ -7443,11 +7488,70 @@ function isImageReviewEntry(entry) {
   return blockType === "image" || blockType === "figure" || hasMarkdownImageReference(entry?.markdown);
 }
 
-function mergeImageEntries(previous, current) {
+function isImageCaptionOnlyReviewEntry(entry) {
+  const value = String(entry?.markdown || "")
+    .replace(/!\[[^\]]*]\([^)]+\)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!value || value.length > 40) {
+    return false;
+  }
+  return /^(?:图|Fig\.?|Figure)\s*\d+(?:\.\d+)*[a-zA-Z]?\s*$/i.test(value);
+}
+
+function imageEntriesAreLikelySameFigureGroup(leftEntry, rightEntry) {
+  const leftBoxes = reviewEntryVisualBoxes(leftEntry);
+  const rightBoxes = reviewEntryVisualBoxes(rightEntry);
+  if (!leftBoxes.length || !rightBoxes.length) {
+    return false;
+  }
+  return leftBoxes.some((left) =>
+    rightBoxes.some((right) => {
+      const overlap = bboxIntersectionArea(left, right);
+      if (overlap <= 0) {
+        return false;
+      }
+      const smallerArea = Math.max(1, Math.min(bboxArea(left), bboxArea(right)));
+      return overlap / smallerArea >= 0.42;
+    })
+  );
+}
+
+function reviewEntryVisualBoxes(entry) {
+  const boxes = [];
+  if (Array.isArray(entry?.focusBBoxes) && entry.focusBBoxes.length) {
+    entry.focusBBoxes.forEach((box) => {
+      const normalized = normalizedBBox(box);
+      if (normalized) {
+        boxes.push(normalized);
+      }
+    });
+  }
+  const bbox = normalizedBBox(entry?.bbox);
+  if (bbox) {
+    boxes.push(bbox);
+  }
+  return boxes;
+}
+
+function bboxIntersectionArea(leftBox, rightBox) {
+  const left = normalizedBBox(leftBox);
+  const right = normalizedBBox(rightBox);
+  if (!left || !right) {
+    return 0;
+  }
+  const width = Math.max(0, Math.min(left[2], right[2]) - Math.max(left[0], right[0]));
+  const height = Math.max(0, Math.min(left[3], right[3]) - Math.max(left[1], right[1]));
+  return width * height;
+}
+
+function mergeImageEntries(previous, current, captionEntry = null) {
   const blockIndexes = []
     .concat(Array.isArray(previous?.blockIndexes) ? previous.blockIndexes : [previous?.blockIndex])
+    .concat(captionEntry ? (Array.isArray(captionEntry?.blockIndexes) ? captionEntry.blockIndexes : [captionEntry?.blockIndex]) : [])
     .concat(Array.isArray(current?.blockIndexes) ? current.blockIndexes : [current?.blockIndex])
-    .filter((value) => value != null);
+    .filter((value) => value != null)
+    .sort(compareReviewBlockIndexValues);
   const firstIndex = blockIndexes[0];
   const lastIndex = blockIndexes[blockIndexes.length - 1];
   return {
@@ -7455,11 +7559,39 @@ function mergeImageEntries(previous, current) {
     id: `image-${firstIndex}-${lastIndex}`,
     blockIndex: `image-${firstIndex}-${lastIndex}`,
     blockIndexes,
-    bbox: mergeBBoxes([previous?.bbox, current?.bbox]),
+    bbox: mergeBBoxes([previous?.bbox, captionEntry?.bbox, current?.bbox]),
     focusBBoxes: mergedFocusBBoxesForEntries([previous, current]),
-    markdown: [previous?.markdown, current?.markdown].filter(Boolean).join("\n\n"),
+    markdown: [previous?.markdown, captionEntry?.markdown, current?.markdown].filter(Boolean).join("\n\n"),
     kind: "image",
   };
+}
+
+function mergeImageWithCaptionEntry(imageEntry, captionEntry) {
+  const blockIndexes = []
+    .concat(Array.isArray(imageEntry?.blockIndexes) ? imageEntry.blockIndexes : [imageEntry?.blockIndex])
+    .concat(Array.isArray(captionEntry?.blockIndexes) ? captionEntry.blockIndexes : [captionEntry?.blockIndex])
+    .filter((value) => value != null)
+    .sort(compareReviewBlockIndexValues);
+  const firstIndex = blockIndexes[0];
+  const lastIndex = blockIndexes[blockIndexes.length - 1];
+  return {
+    ...imageEntry,
+    id: `image-${firstIndex}-${lastIndex}`,
+    blockIndex: `image-${firstIndex}-${lastIndex}`,
+    blockIndexes,
+    bbox: mergeBBoxes([imageEntry?.bbox, captionEntry?.bbox]),
+    markdown: [imageEntry?.markdown, captionEntry?.markdown].filter(Boolean).join("\n\n"),
+    kind: "image",
+  };
+}
+
+function compareReviewBlockIndexValues(left, right) {
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+    return leftNumber - rightNumber;
+  }
+  return String(left).localeCompare(String(right), undefined, { numeric: true });
 }
 
 function shouldMergeAdjacentPlainProseEntries(previous, current, pageNumber = state.currentPage) {
