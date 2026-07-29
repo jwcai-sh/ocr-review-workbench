@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260729-merge-caption-separated-images";
+const OCR_COMPARE_BUILD_ID = "20260729-merge-image-noise-separated";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -7410,6 +7410,15 @@ function mergeAdjacentImageEntriesForReview(entries, pageNumber = state.currentP
   const output = [];
   (Array.isArray(entries) ? entries : []).forEach((entry) => {
     const previous = output[output.length - 1];
+    if (isImageReviewEntry(entry)) {
+      const priorImageIndex = findMergeablePriorImageEntryIndex(output, entry, pageNumber);
+      if (priorImageIndex >= 0) {
+        const previousImage = output[priorImageIndex];
+        const separatorEntries = output.slice(priorImageIndex + 1);
+        output.splice(priorImageIndex, output.length - priorImageIndex, mergeImageEntries(previousImage, entry, separatorEntries));
+        return;
+      }
+    }
     const beforePrevious = output[output.length - 2];
     if (shouldMergeCaptionSeparatedImageEntries(beforePrevious, previous, entry, pageNumber)) {
       const mergedImage = mergeImageEntries(beforePrevious, entry, previous);
@@ -7427,6 +7436,26 @@ function mergeAdjacentImageEntriesForReview(entries, pageNumber = state.currentP
     output.push(entry);
   });
   return output;
+}
+
+function findMergeablePriorImageEntryIndex(output, currentImage, pageNumber = state.currentPage) {
+  if (!Array.isArray(output) || !output.length || !isImageReviewEntry(currentImage)) {
+    return -1;
+  }
+  for (let index = output.length - 1; index >= 0; index -= 1) {
+    const candidate = output[index];
+    if (isImageReviewEntry(candidate)) {
+      if (shouldMergeAdjacentImageEntries(candidate, currentImage, pageNumber) || imageEntriesAreLikelySameFigureGroup(candidate, currentImage)) {
+        return index;
+      }
+      return -1;
+    }
+    if (isIgnorableImageSeparatorReviewEntry(candidate)) {
+      continue;
+    }
+    return -1;
+  }
+  return -1;
 }
 
 function shouldMergeCaptionSeparatedImageEntries(previousImage, captionEntry, currentImage, pageNumber = state.currentPage) {
@@ -7499,6 +7528,17 @@ function isImageCaptionOnlyReviewEntry(entry) {
   return /^(?:图|Fig\.?|Figure)\s*\d+(?:\.\d+)*[a-zA-Z]?\s*$/i.test(value);
 }
 
+function isIgnorableImageSeparatorReviewEntry(entry) {
+  return isImageCaptionOnlyReviewEntry(entry) || isImagePageNumberNoiseReviewEntry(entry);
+}
+
+function isImagePageNumberNoiseReviewEntry(entry) {
+  const value = String(entry?.markdown || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return Boolean(value) && value.length <= 24 && isPageNumberOnlyText(value);
+}
+
 function imageEntriesAreLikelySameFigureGroup(leftEntry, rightEntry) {
   const leftBoxes = reviewEntryVisualBoxes(leftEntry);
   const rightBoxes = reviewEntryVisualBoxes(rightEntry);
@@ -7545,10 +7585,11 @@ function bboxIntersectionArea(leftBox, rightBox) {
   return width * height;
 }
 
-function mergeImageEntries(previous, current, captionEntry = null) {
+function mergeImageEntries(previous, current, separatorEntries = []) {
+  const separators = Array.isArray(separatorEntries) ? separatorEntries : (separatorEntries ? [separatorEntries] : []);
   const blockIndexes = []
     .concat(Array.isArray(previous?.blockIndexes) ? previous.blockIndexes : [previous?.blockIndex])
-    .concat(captionEntry ? (Array.isArray(captionEntry?.blockIndexes) ? captionEntry.blockIndexes : [captionEntry?.blockIndex]) : [])
+    .concat(separators.flatMap((entry) => (Array.isArray(entry?.blockIndexes) ? entry.blockIndexes : [entry?.blockIndex])))
     .concat(Array.isArray(current?.blockIndexes) ? current.blockIndexes : [current?.blockIndex])
     .filter((value) => value != null)
     .sort(compareReviewBlockIndexValues);
@@ -7559,9 +7600,12 @@ function mergeImageEntries(previous, current, captionEntry = null) {
     id: `image-${firstIndex}-${lastIndex}`,
     blockIndex: `image-${firstIndex}-${lastIndex}`,
     blockIndexes,
-    bbox: mergeBBoxes([previous?.bbox, captionEntry?.bbox, current?.bbox]),
+    bbox: mergeBBoxes([previous?.bbox].concat(separators.map((entry) => entry?.bbox), [current?.bbox])),
     focusBBoxes: mergedFocusBBoxesForEntries([previous, current]),
-    markdown: [previous?.markdown, captionEntry?.markdown, current?.markdown].filter(Boolean).join("\n\n"),
+    markdown: [previous?.markdown]
+      .concat(separators.filter((entry) => !isImagePageNumberNoiseReviewEntry(entry)).map((entry) => entry?.markdown), [current?.markdown])
+      .filter(Boolean)
+      .join("\n\n"),
     kind: "image",
   };
 }

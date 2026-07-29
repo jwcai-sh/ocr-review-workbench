@@ -188,9 +188,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260729-merge-caption-separated-images"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260729-merge-caption-separated-images"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260729-merge-caption-separated-images"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260729-merge-image-noise-separated"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260729-merge-image-noise-separated"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260729-merge-image-noise-separated"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -7931,6 +7931,55 @@ assert.strictEqual(captionSeparatedImageSegments.length, 1, "image blocks separa
 assert.strictEqual(captionSeparatedImageSegments[0].kind, "image");
 assert.deepStrictEqual(captionSeparatedImageSegments[0].blockIndexes, [0, 1, 2]);
 assert(captionSeparatedImageSegments[0].markdown.includes("图2.7") && captionSeparatedImageSegments[0].markdown.includes("图2.8"), "caption-separated image merge should keep both visible figure labels");
+
+const noiseSeparatedImageSegments = JSON.parse(
+  call(`(() => {
+    state.currentPage = 29;
+    state.ocrPatches = [];
+    state.mineruBlockOverrides.clear();
+    state.mathpixBlockDrafts.clear();
+    state.reviewNeedsCorrection.clear();
+    state.mineruInfo = {
+      pdf_info: Array.from({ length: 29 }, (_unused, index) => index === 28 ? {
+        page_size: [1000, 1200],
+        para_blocks: [
+          {
+            type: "image",
+            bbox: [120, 620, 470, 980],
+            lines: [{ bbox: [120, 620, 470, 980], spans: [{ image_path: "fig-2-7-left.jpg" }] }]
+          },
+          {
+            type: "text",
+            bbox: [260, 990, 330, 1025],
+            lines: [{ bbox: [260, 990, 330, 1025], spans: [{ content: "图2.7" }] }]
+          },
+          {
+            type: "text",
+            bbox: [360, 1030, 430, 1060],
+            lines: [{ bbox: [360, 1030, 430, 1060], spans: [{ content: "- 12 ●" }] }]
+          },
+          {
+            type: "image",
+            bbox: [500, 625, 850, 982],
+            lines: [{ bbox: [500, 625, 850, 982], spans: [{ image_path: "fig-2-8-right.jpg" }, { content: "图2.8" }] }]
+          }
+        ]
+      } : { page_size: [1000, 1200], para_blocks: [] })
+    };
+    return JSON.stringify(reviewSegmentsForPage(29).map((segment) => ({
+      blockIndex: segment.blockIndex,
+      blockIndexes: segment.blockIndexes,
+      bbox: segment.bbox,
+      kind: segment.kind,
+      markdown: segment.markdown
+    })));
+  })()`),
+);
+assert.strictEqual(noiseSeparatedImageSegments.length, 1, "image blocks separated by figure label and page-number noise should merge into one review segment");
+assert.strictEqual(noiseSeparatedImageSegments[0].kind, "image");
+assert.deepStrictEqual(noiseSeparatedImageSegments[0].blockIndexes, [0, 1, 2, 3]);
+assert(noiseSeparatedImageSegments[0].markdown.includes("图2.7") && noiseSeparatedImageSegments[0].markdown.includes("图2.8"), "noise-separated image merge should keep figure labels");
+assert(!noiseSeparatedImageSegments[0].markdown.includes("12"), "page-number noise between image blocks should not remain in merged image markdown");
 
 const loadableImagePreviewHtml = call(`(() => {
   state.currentPage = 21;
