@@ -188,9 +188,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260729-mathpix-bare-formula-render"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260729-mathpix-bare-formula-render"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260729-mathpix-bare-formula-render"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260729-image-page-noise-filter"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260729-image-page-noise-filter"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260729-image-page-noise-filter"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -4462,6 +4462,18 @@ function setupPreviewBookExpression(pages) {
         {
           type: "discarded",
           page_idx: 4,
+          bbox: [238, 910, 272, 930],
+          text: "·12·"
+        },
+        {
+          type: "discarded",
+          page_idx: 4,
+          bbox: [238, 110, 285, 132],
+          text: "- 12 ●"
+        },
+        {
+          type: "discarded",
+          page_idx: 4,
           bbox: [88, 100, 911, 180],
           text: "2 The Einstein Equivalence Principle "
         }
@@ -4509,13 +4521,14 @@ function setupPreviewBookExpression(pages) {
   assert(result.candidate.reasons.includes("footnote_marker_or_note"));
   assert(result.candidate.reasons.includes("page_bottom_boundary"));
   assert.strictEqual(result.candidate.syntheticLabel, "content_list 脚注候选");
-  const titleCandidate = result.risks.find((risk) => risk.blockIndex === "content-list-discarded-5-3");
+  const titleCandidate = result.risks.find((risk) => risk.syntheticLabel === "content_list 标题候选" && /Einstein Equivalence Principle/.test(risk.text));
   assert(titleCandidate, "content_list top discarded title should become a title candidate");
   assert.strictEqual(titleCandidate.syntheticLabel, "content_list 标题候选");
   assert(titleCandidate.reasons.includes("background_heading_missing"));
   assert(titleCandidate.text.startsWith("### "), "content_list top title candidates should render at the same heading level as MinerU title blocks");
   assert(!titleCandidate.reasons.includes("footnote_marker_or_note"), "content_list top title should not be mislabeled as a footnote");
   assert(!result.risks.some((risk) => risk.text.trim() === "11"), "content_list page-number-only discarded items should be skipped");
+  assert(!result.risks.some((risk) => /·12·|- 12/.test(risk.text)), "decorated content_list page-number-only discarded items should be skipped");
   assert.strictEqual(call('riskReasonLabel("content_list_discarded")'), "content_list 补充");
   assert.strictEqual(result.preview.ok, true);
   assert.strictEqual(result.preview.appliedPatchCount, 1);
@@ -7833,7 +7846,7 @@ const imagePreviewHtml = call(`(() => {
     pageSize: [1000, 1200]
   });
 })()`);
-assert(imagePreviewHtml.includes("review-image-preview"), "image block should render a page-crop preview when page image exists");
+assert(imagePreviewHtml.includes("markdown-image-reference"), "image block should render the complete image asset when a Markdown image exists");
 assert(!imagePreviewHtml.includes("![image]"), "literal markdown image token should be hidden when preview is rendered");
 assert(imagePreviewHtml.includes("Fig. 2.2 Caption"), "figure caption should remain visible beside image preview");
 
@@ -7848,9 +7861,23 @@ const inlineImagePreviewHtml = call(`(() => {
     pageSize: [1000, 1200]
   });
 })()`);
-assert(inlineImagePreviewHtml.includes("review-image-preview"), "inline image block should render a page-crop preview when page image exists");
+assert(inlineImagePreviewHtml.includes("markdown-image-reference"), "inline image block should render the complete image asset when a Markdown image exists");
 assert(!inlineImagePreviewHtml.includes("![image]"), "inline image token should be hidden when preview is rendered");
 assert(inlineImagePreviewHtml.includes("See for Fig. 2.2 Caption"), "inline image caption text should remain visible beside preview");
+
+const imagePageNumberNoiseHtml = call(`(() => {
+  state.currentPage = 21;
+  state.pageCache.set(21, { image: "data:image/png;base64,AAA" });
+  return renderBlockContent("![image](fig.jpg)\\n\\n图2.7\\n- 12 ●", {
+    blockIndex: "1",
+    markdown: "![image](fig.jpg)\\n\\n图2.7\\n- 12 ●",
+    kind: "image",
+    bbox: [100, 100, 300, 300],
+    pageSize: [1000, 1200]
+  });
+})()`);
+assert(imagePageNumberNoiseHtml.includes("图2.7"), "figure label should remain visible beside image preview");
+assert(!imagePageNumberNoiseHtml.includes("- 12"), "decorated standalone page number should be hidden beside image preview");
 
 const badGatewayJsonMessage = call(`(() => {
   try {

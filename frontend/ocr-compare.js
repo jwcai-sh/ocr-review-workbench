@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260729-mathpix-bare-formula-render";
+const OCR_COMPARE_BUILD_ID = "20260729-image-page-noise-filter";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -6550,16 +6550,19 @@ function normalizeEscapedDisplayMathNewlines(markdown) {
 }
 
 function renderBlockImagePreview(markdown, entry) {
-  if (!hasMarkdownImageReference(markdown)) {
+  const image = extractMarkdownImageReferences(markdown)[0];
+  if (!image) {
     return "";
+  }
+  if (isImageLikeReviewSegment(entry)) {
+    return renderMarkdownImage(image.alt || "image", image.src);
   }
   const page = state.pageCache.get(state.currentPage);
   const bbox = expandedBBoxWithPadding(entry?.bbox, cropPaddingForMarkdownBlock(markdown, entry?.pageSize), entry?.pageSize);
   const pageWidth = pageSizeWidth(entry?.pageSize);
   const pageHeight = pageSizeHeight(entry?.pageSize);
   if (!page?.image || !bbox || !pageWidth || !pageHeight) {
-    const image = extractMarkdownImageReferences(markdown)[0];
-    return image ? renderMarkdownImage(image.alt || "image", image.src) : "";
+    return renderMarkdownImage(image.alt || "image", image.src);
   }
   const bboxWidth = Math.max(1, bbox[2] - bbox[0]);
   const bboxHeight = Math.max(1, bbox[3] - bbox[1]);
@@ -6612,6 +6615,7 @@ function stripMarkdownImageReferences(markdown) {
     .replace(imagePattern, "")
     .split("\n")
     .map((line) => line.replace(/[ \t]{2,}/g, " ").trimEnd())
+    .filter((line) => !isPageNumberOnlyText(line))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/^\n+/, "");
@@ -10480,7 +10484,12 @@ function isTextRedundantWithNormalizedSet(text, normalizedTexts) {
 }
 
 function isPageNumberOnlyText(text) {
-  return /^[\s\dIVXLCDMivxlcdm.()-]+$/.test(String(text || "").trim());
+  const normalized = String(text || "")
+    .trim()
+    .replace(/[·•●▪︎・]+/gu, "")
+    .replace(/[—–-]+/g, "")
+    .trim();
+  return Boolean(normalized) && /^[\s\dIVXLCDMivxlcdm.()]+$/.test(normalized);
 }
 
 function detectRiskCandidates(markdown, pageNumber) {
