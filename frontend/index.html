@@ -1563,11 +1563,14 @@
         }
         folderGroup.records.push(book);
       });
-      const categories = Array.from(categoriesByKey.values()).sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
+      const categories = Array.from(categoriesByKey.values()).sort((a, b) => compareNaturalName(a.title, b.title));
       categories.forEach((category) => {
-        category.books.sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
+        category.books.sort((a, b) => compareNaturalName(a.title, b.title));
         category.books.forEach((book) => {
-          book.folders.sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
+          book.folders.sort((a, b) => compareNaturalName(a.title, b.title));
+          book.folders.forEach((folder) => {
+            folder.records = sortBookRecordsByName(folder.records);
+          });
         });
       });
       return { categories };
@@ -1615,9 +1618,9 @@
           });
           existingBooks.add(bookTitle);
         });
-        category.books.sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
+        category.books.sort((a, b) => compareNaturalName(a.title, b.title));
       });
-      return merged.sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
+      return merged.sort((a, b) => compareNaturalName(a.title, b.title));
     }
 
     function mergeOverviewAssignmentIntoBook(book, assignment) {
@@ -1857,7 +1860,7 @@
     }
 
     function renderBookChunkLinks(book) {
-      const records = bookRecords(book).filter((record) => String(record.mode || "") === "chunk");
+      const records = sortBookRecordsByName(bookRecords(book).filter((record) => String(record.mode || "") === "chunk"));
       if (records.length <= 1) {
         return "";
       }
@@ -2012,6 +2015,30 @@
         return `part_${pageMatch[1]} · pages ${pageMatch[2]}-${pageMatch[3]}`;
       }
       return chunkLabel || `分块 ${index + 1}`;
+    }
+
+    function sortBookRecordsByName(records) {
+      return (Array.isArray(records) ? records : [])
+        .slice()
+        .sort((left, right) => compareNaturalName(bookRecordSortName(left), bookRecordSortName(right)));
+    }
+
+    function bookRecordSortName(record) {
+      return String(
+        record?.chunk_label ||
+        record?.title ||
+        record?.oss_middle_key ||
+        record?.oss_pdf_key ||
+        record?.id ||
+        "",
+      );
+    }
+
+    function compareNaturalName(left, right) {
+      return String(left || "").localeCompare(String(right || ""), "zh-Hans-CN", {
+        numeric: true,
+        sensitivity: "base",
+      });
     }
 
     function folderNeedsExtraCorrectionCount(folder) {
