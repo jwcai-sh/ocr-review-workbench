@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260730-wide-image-row-merge";
+const OCR_COMPARE_BUILD_ID = "20260730-index-lines-hide-content-list";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -3557,6 +3557,9 @@ function buildReviewEntriesForPage(risks, segments, pageNumber) {
     if (seen.has(key)) {
       return;
     }
+    if (risk?.supplementalSource === "content_list") {
+      return;
+    }
     if (risk?.supplementalSource === "content_list" && isTextRedundantWithNormalizedSet(risk.text, segmentTexts)) {
       return;
     }
@@ -5720,15 +5723,18 @@ function renderBlockContent(markdown, entry) {
     return renderAlgorithmBlock(markdownToAlgorithmLines(markdown));
   }
   const displayMarkdown = autoCorrectKnownEquationOcrMarkdown(markdown);
-  const normalizedMarkdown = normalizeReferenceSpacing(
-    normalizeTextCircledOutsideStructuredBlocks(
-      normalizeEditableProseLineBreaksOutsideStructuredBlocks(
-        normalizeMathpixCollapsedProse(
-          normalizeSingleLineDisplayMath(normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(displayMarkdown))),
+  const preserveIndexListingBreaks = isLikelyIndexListingText(String(displayMarkdown || "").replace(/\r\n?/g, "\n").split("\n"));
+  const normalizedMarkdown = preserveIndexListingBreaks
+    ? normalizeReferenceSpacing(normalizeTextCircledOutsideStructuredBlocks(normalizeSingleLineDisplayMath(normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(displayMarkdown)))))
+    : normalizeReferenceSpacing(
+      normalizeTextCircledOutsideStructuredBlocks(
+        normalizeEditableProseLineBreaksOutsideStructuredBlocks(
+          normalizeMathpixCollapsedProse(
+            normalizeSingleLineDisplayMath(normalizeInlineMathSpacingForRender(normalizeDisplayMathForRender(displayMarkdown))),
+          ),
         ),
       ),
-    ),
-  );
+    );
   const imagePreview = renderBlockImagePreview(normalizedMarkdown, entry);
   const markdownForHtml = imagePreview ? stripMarkdownImageReferences(normalizedMarkdown) : normalizedMarkdown;
   const bibliographyHtml = renderBibliographyHtml(markdownForHtml);
@@ -12707,7 +12713,26 @@ function normalizeRenderedParagraphText(text) {
 
 function shouldPreserveRenderedParagraphBreaks(text) {
   const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n");
-  return lines.some((line) => /(?: {2,}|\\)$/.test(line) || /<br\s*\/?>/i.test(line));
+  return lines.some((line) => /(?: {2,}|\\)$/.test(line) || /<br\s*\/?>/i.test(line)) || isLikelyIndexListingText(lines);
+}
+
+function isLikelyIndexListingText(lines) {
+  const meaningful = (Array.isArray(lines) ? lines : [])
+    .map((line) => String(line || "").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  if (meaningful.length < 3) {
+    return false;
+  }
+  const hits = meaningful.filter((line) => isLikelyIndexListingLine(line)).length;
+  return hits >= 3 && hits / meaningful.length >= 0.6;
+}
+
+function isLikelyIndexListingLine(line) {
+  const value = String(line || "").replace(/\s+/g, " ").trim();
+  if (!/\s\d{1,4}$/.test(value)) {
+    return false;
+  }
+  return /^(?:算法|第[\d一二三四五六七八九十百]+章|附录|Appendix|Algorithm|Chapter|Section)\s*[\dA-Z]*(?:\.\d+)*/iu.test(value);
 }
 
 function renderHeading(line) {

@@ -198,9 +198,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260730-wide-image-row-merge"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260730-wide-image-row-merge"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260730-wide-image-row-merge"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260730-index-lines-hide-content-list"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260730-index-lines-hide-content-list"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260730-index-lines-hide-content-list"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -778,6 +778,15 @@ assert(
   "block Mathpix draft formula lines should render as display math",
 );
 assert(!bareMathpixFormulaHtml.includes("<p>G \\\\rho"), "block Mathpix draft formula lines should not render as a raw paragraph");
+
+const algorithmIndexHtml = call(`renderBlockContent(${JSON.stringify([
+  "算法 9.4 单处理机上分块矩阵相乘算法 214",
+  "算法 9.5 Cannon分块乘法算法 216",
+  "算法 9.6 DNS乘法算法 221",
+  "算法 9.7 PRAM-CREW上矩阵相乘算法 225",
+].join("\n"))}, { kind: "text", blockIndex: "algorithm-index" })`);
+assert(algorithmIndexHtml.includes("算法 9.4 单处理机上分块矩阵相乘算法 214<br>算法 9.5"), "algorithm index listings should preserve one line per entry");
+assert(!algorithmIndexHtml.includes("214 算法 9.5"), "algorithm index listings should not be unwrapped into one prose paragraph");
 
 const lowercaseVariableFormulaHtml = call(`renderBlockContent(${JSON.stringify("v_p = \\frac{1}{4\\pi} \\int_v \\frac{\\partial}{\\partial n} \\left( \\frac{1}{r} \\right) ds")}, { kind: "text" })`);
 assert(
@@ -4500,6 +4509,7 @@ function setupPreviewBookExpression(pages) {
         ]
       };
       const risks = detectRiskCandidatesForPage(5);
+      const entries = buildReviewEntriesForPage(risks, reviewSegmentsForPage(5), 5);
       const candidate = risks.find((risk) => risk.blockIndex === "content-list-discarded-5-1");
       let preview = null;
       if (candidate) {
@@ -4521,6 +4531,7 @@ function setupPreviewBookExpression(pages) {
           syntheticPlacement: risk.syntheticPlacement,
           text: risk.text
         })),
+        entries: entries.map((entry) => ({ key: entry.key, label: entry.risk?.syntheticLabel || "", text: entry.segment.markdown })),
         candidate,
         preview
       });
@@ -4537,6 +4548,7 @@ function setupPreviewBookExpression(pages) {
   assert(titleCandidate.reasons.includes("background_heading_missing"));
   assert(titleCandidate.text.startsWith("### "), "content_list top title candidates should render at the same heading level as MinerU title blocks");
   assert(!titleCandidate.reasons.includes("footnote_marker_or_note"), "content_list top title should not be mislabeled as a footnote");
+  assert(!result.entries.some((entry) => entry.label.startsWith("content_list") || String(entry.key).startsWith("content-list-discarded-")), "content_list candidates should not render as right-column OCR result blocks");
   assert(!result.risks.some((risk) => risk.text.trim() === "11"), "content_list page-number-only discarded items should be skipped");
   assert(!result.risks.some((risk) => /·12·|- 12/.test(risk.text)), "decorated content_list page-number-only discarded items should be skipped");
   assert.strictEqual(call('riskReasonLabel("content_list_discarded")'), "content_list 补充");
@@ -5127,10 +5139,10 @@ function setupPreviewBookExpression(pages) {
     })()`),
   );
   assert.strictEqual(result.entries[0].key, "0", "current-page body text should remain before figure narrative continuation candidates");
-  assert.strictEqual(result.entries[1].key, "content-list-discarded-18-0", "figure narrative continuation should be anchored after the paragraph that references it");
   assert.strictEqual(result.continuation.syntheticPlacement, "after_anchor");
   assert.strictEqual(result.continuation.anchorBlockIndex, "0");
-  assert(result.entries[1].text.startsWith("Although the uncertainties"), "narrative continuation should not keep an incorrect leading figure label");
+  assert(!result.entries.some((entry) => String(entry.key).startsWith("content-list-discarded-18")), "figure narrative content_list candidates should not render as OCR result blocks");
+  assert(result.continuation.text.startsWith("Although the uncertainties"), "narrative continuation should not keep an incorrect leading figure label");
   assert.strictEqual(result.figureLabel, "", "narrative continuation should not be treated as a figure caption needing a label");
 }
 
@@ -5180,7 +5192,7 @@ function setupPreviewBookExpression(pages) {
   );
   assert.strictEqual(result[0].key, "0", "page-top table should remain first");
   assert.strictEqual(result[1].key, "1", "real prose immediately below a table should not be jumped over by lower content_list supplements");
-  assert.strictEqual(result[2].key, "content-list-discarded-19-0", "lower content_list continuation should follow prose above its bbox");
+  assert(!result.some((entry) => String(entry.key).startsWith("content-list-discarded-19")), "lower content_list continuation should not render as an OCR result block");
 }
 
 {
@@ -5274,7 +5286,7 @@ function setupPreviewBookExpression(pages) {
   assert(result.supplemental.text.startsWith("Although the uncertainties"), "figure narrative prefix should still be removed");
   assert.strictEqual(result.entries[0].key, "0", "top figure should remain first");
   assert.strictEqual(result.entries[1].key, "1", "existing body text should remain before the lower supplement");
-  assert.strictEqual(result.entries[2].key, "content-list-discarded-21-0", "lower supplement should follow by its own bbox");
+  assert(!result.entries.some((entry) => String(entry.key).startsWith("content-list-discarded-21")), "content_list supplemental candidates should not render as OCR result blocks");
 }
 
 {
@@ -5451,10 +5463,9 @@ function setupPreviewBookExpression(pages) {
     })()`),
   );
   assert.strictEqual(result[0].key, "0", "top media block should remain first");
-  assert.strictEqual(result[1].key, "1", "prose above a page-bottom content_list candidate should remain before it");
-  assert.strictEqual(result[2].key, "content-list-discarded-25-0", "page-bottom content_list with bbox should sort by bbox instead of always last");
-  assert(result[2].text.startsWith("Although the uncertainties"), "right-column render should remove narrative Fig/Table prefixes from supplemental prose");
-  assert.strictEqual(result[3].key, "2", "later prose below the supplemental bbox should remain after it");
+  assert.strictEqual(result[1].key, "1", "prose above a page-bottom content_list candidate should remain visible");
+  assert.strictEqual(result[2].key, "2", "later prose below the supplemental bbox should remain visible after earlier prose");
+  assert(!result.some((entry) => String(entry.key).startsWith("content-list-discarded-25")), "page-bottom content_list should not render as an OCR result block");
 }
 
 {
