@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260730-index-lines-hide-content-list";
+const OCR_COMPARE_BUILD_ID = "20260730-empty-block-correction-fix";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -3670,7 +3670,10 @@ function reviewPatchMarkdown(patch) {
   if (!patch || !["draft", "accepted"].includes(patch.status)) {
     return "";
   }
-  return String(patch.newText || "").trim() ? String(patch.newText || "") : "";
+  if (!Object.prototype.hasOwnProperty.call(patch, "newText")) {
+    return "";
+  }
+  return String(patch.newText ?? "");
 }
 
 function renderPageReviewCanvas(reviewEntries) {
@@ -3987,22 +3990,27 @@ function buildReviewCorrectionViewModel({
   const draftText = String(mathpixDraftMarkdown || "");
   const patchText = String(patchMarkdown || "");
   const correctedText = String(correctedMarkdown || "");
-  const hasPatchDraft = Boolean(patchText.trim() && ocrPatch?.status === "draft");
-  const hasAcceptedPatchMarkdown = Boolean(patchText.trim() && ocrPatch?.status === "accepted");
+  const hasExplicitPatchText = Boolean(ocrPatch && Object.prototype.hasOwnProperty.call(ocrPatch, "newText"));
+  const hasPatchDraft = Boolean(hasExplicitPatchText && ocrPatch?.status === "draft");
+  const hasAcceptedPatchMarkdown = Boolean(hasExplicitPatchText && ocrPatch?.status === "accepted");
   const acceptedText = hasAcceptedPatchMarkdown
     ? patchText
     : !liveDraftText.trim() && !draftText.trim() && corrected
       ? correctedText
       : "";
-  const activeCorrectionMarkdown = acceptedText || liveDraftText || draftText || patchText || correctedText || "";
-  const editableMarkdown = activeCorrectionMarkdown
+  const activeCorrectionMarkdown = hasAcceptedPatchMarkdown
     ? acceptedText
+    : hasPatchDraft
+      ? patchText
+      : liveDraftText || draftText || correctedText || "";
+  const editableMarkdown = activeCorrectionMarkdown
+    ? hasAcceptedPatchMarkdown
       ? normalizedReviewMarkdownForActiveCorrection(activeCorrectionMarkdown)
       : liveDraftText
         ? liveDraftText
         : normalizedReviewMarkdownForActiveCorrection(activeCorrectionMarkdown)
     : "";
-  const hasEditableMarkdown = Boolean(editableMarkdown.trim());
+  const hasEditableMarkdown = Boolean(hasAcceptedPatchMarkdown || hasPatchDraft || editableMarkdown.trim());
   const hasMathpixDraft = !hasAcceptedPatchMarkdown && Boolean(liveDraftText.trim() || draftText.trim() || hasPatchDraft);
   const isCorrected = Boolean(corrected || hasAcceptedPatchMarkdown);
   const previewMarkdown = hasMathpixDraft || hasAcceptedPatchMarkdown ? editableMarkdown : correctedText;
@@ -4013,7 +4021,7 @@ function buildReviewCorrectionViewModel({
   );
   return {
     activeCorrectionMarkdown,
-    displayMarkdown: hasEditableMarkdown ? editableMarkdown : String(fallbackMarkdown || ""),
+    displayMarkdown: hasAcceptedPatchMarkdown || hasPatchDraft || hasEditableMarkdown ? editableMarkdown : String(fallbackMarkdown || ""),
     editableMarkdown,
     hasEditableMarkdown,
     hasPatchDraft,
@@ -5610,12 +5618,6 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
     return false;
   }
   const preparedMarkdown = cleanMathpixEditableMarkdown(String(newMarkdown || ""));
-  if (!preparedMarkdown.trim()) {
-    const message = "保存内容为空。";
-    setStatus("保存失败", "error", message);
-    showReviewBlockSaveError(blockKey, message);
-    return false;
-  }
   const segment = reviewSegmentsForPage(state.currentPage).find((item) => String(item.blockIndex) === blockKey);
   const risk = reviewRiskForBlock(state.currentPage, blockKey);
   const patchResult = createAndStoreDraftOcrPatch({
@@ -8530,7 +8532,8 @@ function createAndStoreDraftOcrPatch({ pageNo, blockIndex, oldText, newText, sou
   const context = createLegacyBlockPatchContext(pageNo, blockIndex, oldText);
   const createOcrPatch = getOcrCoreCreateOcrPatch();
   const preservationSource = [oldText, preserveText].filter(Boolean).join("\n\n");
-  const normalizedNewText = source === "mathpix" ? normalizeMathpixOcrArtifacts(newText) : String(newText || "");
+  const rawNewText = String(newText ?? "");
+  const normalizedNewText = source === "mathpix" ? normalizeMathpixOcrArtifacts(rawNewText) : rawNewText;
   const completeNewText = preserveMathpixPlainTextCompleteness(oldText, normalizedNewText, source);
   const captionPreservedText = source === "mathpix"
     ? preserveTableCaptionFromOriginal(preservationSource, completeNewText)

@@ -199,9 +199,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260730-index-lines-hide-content-list"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260730-index-lines-hide-content-list"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260730-index-lines-hide-content-list"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260730-empty-block-correction-fix"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260730-empty-block-correction-fix"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260730-empty-block-correction-fix"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -2022,6 +2022,56 @@ function assertOcrPatchShape(patch) {
   assert.strictEqual(result.override, "Manual MinerU source edit");
   assert.strictEqual(result.preview.appliedPatchCount, 1);
   assert(result.preview.markdown.includes("Manual MinerU source edit"));
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      ${setupPreviewPageExpression(["193 trailing year 1993"])}
+      state.currentPage = 1;
+      state.ocrPatches = [];
+      state.acceptedPatchPreview = null;
+      state.acceptedPatchBookPreview = null;
+      els.fileMeta = { textContent: "" };
+      els.statusBadge = { textContent: "", className: "" };
+      renderCurrentPage = async function noopRenderCurrentPage() {};
+      const trigger = {
+        closest() {
+          return {
+            querySelector() {
+              return { value: "" };
+            }
+          };
+        }
+      };
+      applyMineruSourceEdit("0", trigger);
+      const latestPatch = getLatestOcrPatchForBlock(1, "0");
+      const segment = reviewSegmentsForPage(1)[0];
+      const correctionState = reviewCorrectionStateForSegment(1, "0", segment, "193 trailing year 1993");
+      return JSON.stringify({
+        patches: state.ocrPatches.map((patch) => ({
+          source: patch.source,
+          status: patch.status,
+          newText: patch.newText
+        })),
+        latestPatchText: latestPatch?.newText,
+        override: getBlockOverrides(1, false).get("0"),
+        hasAcceptedPatchMarkdown: correctionState.correctionView.hasAcceptedPatchMarkdown,
+        displayMarkdown: correctionState.correctionView.displayMarkdown,
+        editableMarkdown: correctionState.correctionView.editableMarkdown,
+        statusText: els.statusBadge.textContent
+      });
+    })()`),
+  );
+  const humanAccepted = result.patches.find((patch) => patch.source === "human" && patch.status === "accepted");
+  assert(humanAccepted, "empty manual source edit should still create an accepted human patch");
+  assert.strictEqual(humanAccepted.newText, "");
+  assert.strictEqual(result.latestPatchText, "");
+  assert.strictEqual(result.override, "");
+  assert.strictEqual(result.hasAcceptedPatchMarkdown, true, "empty accepted patch should count as an explicit correction");
+  assert.strictEqual(result.displayMarkdown, "", "empty accepted patch should not fall back to raw MinerU text");
+  assert.strictEqual(result.editableMarkdown, "", "empty accepted patch should remain editable as empty");
+  assert(!String(result.statusText || "").includes("保存内容为空"), "empty manual save should not show the old empty-content validation error");
 }
 
 {
