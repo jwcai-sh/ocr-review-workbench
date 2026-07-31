@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260730-empty-block-correction-fix";
+const OCR_COMPARE_BUILD_ID = "20260731-empty-save-remote-timeout-fix";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -5652,23 +5652,28 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
   // TODO: next step will switch display/export to accepted patches.
   getBlockOverrides(state.currentPage).set(blockKey, markdown);
   saveOcrWorkspaceState();
+  let remoteSaveError = null;
   try {
     await Promise.all([
       persistDbOcrPatch(patchResult.patch),
       flushRemoteOcrWorkspaceSave(),
     ]);
   } catch (error) {
-    const message = error?.message || String(error || "");
-    setStatus("保存失败", "error", message);
-    showReviewBlockSaveError(blockKey, message);
-    return false;
+    remoteSaveError = error;
+    if (typeof console !== "undefined" && typeof console.warn === "function") {
+      console.warn("[OCR Save] 本地校正已保存，远端同步失败。", error);
+    }
   }
   clearMathpixBlockError(state.currentPage, blockKey);
   expandOnlyReviewBlock(state.currentPage, blockKey);
   updateCorrectionSummary();
   state.acceptedPatchPreview = null;
   state.acceptedPatchBookPreview = null;
-  setStatus(patchResult.patch?.status === "accepted" ? "保存成功" : "Ready", "ok");
+  if (remoteSaveError) {
+    setStatus("本地保存成功，远端同步失败", "ok", remoteSaveError?.message || String(remoteSaveError || ""));
+  } else {
+    setStatus(patchResult.patch?.status === "accepted" ? "保存成功" : "Ready", "ok");
+  }
   const fullKey = normalizeReviewBlockKey(blockKey, state.currentPage);
   if (refreshRightWorkbenchOnly({ preserveReviewScroll: true, preserveReviewAnchorKey: fullKey })) {
     refreshReviewSelectionInPlace(fullKey);

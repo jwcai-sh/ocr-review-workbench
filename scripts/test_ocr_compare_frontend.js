@@ -199,9 +199,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260730-empty-block-correction-fix"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260730-empty-block-correction-fix"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260730-empty-block-correction-fix"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260731-empty-save-remote-timeout-fix"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260731-empty-save-remote-timeout-fix"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260731-empty-save-remote-timeout-fix"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -8276,6 +8276,61 @@ async function runAsyncRegressions() {
   assert.strictEqual(retryHydrated.firstPatchId, "patch-2", "retried DB state hydration should use the successful response");
   assert.strictEqual(retryHydrated.needsCorrectionSize, 0, "retried DB state hydration should clear stale open marks when DB returns none");
   assert.strictEqual(retryHydrated.renderCalls, 1, "retried DB state hydration should render once after success");
+
+  let remoteSaveAttempts = 0;
+  const emptySaveTimeoutContext = runOcrCompareInContext(createOcrCompareContext({
+    fetch: async () => {
+      remoteSaveAttempts += 1;
+      throw new TypeError("{'status': -2, 'x-oss-request-id': '', 'details': \"RequestError: ('Connection aborted.', TimeoutError('The write operation timed out'))\"}");
+    },
+  }));
+  vm.runInContext(patchBrowserSource, emptySaveTimeoutContext);
+  const emptySaveTimeoutResult = await vm.runInContext(
+    `(() => {
+      ${setupPreviewPageExpression(["193 trailing year 1993"])}
+      state.currentPage = 1;
+      state.authenticated = true;
+      state.currentUser = "门";
+      state.currentBookId = "book-timeout";
+      state.currentBookOwnerId = "门";
+      state.ossWorkspaceId = "workspace-timeout";
+      els.fileMeta = { textContent: "" };
+      els.statusBadge = { textContent: "", className: "" };
+      renderCurrentPage = async function noopRenderCurrentPage() {};
+      refreshRightWorkbenchOnly = () => false;
+      scrollSelectedReviewBlockIntoView = () => {};
+      schedulePdfFocusSync = () => {};
+      const trigger = {
+        closest() {
+          return {
+            querySelector() {
+              return { value: "" };
+            }
+          };
+        }
+      };
+      return applyMineruSourceEdit("0", trigger).then((ok) => JSON.stringify({
+        ok,
+        patches: state.ocrPatches.map((patch) => ({
+          source: patch.source,
+          status: patch.status,
+          newText: patch.newText
+        })),
+        override: getBlockOverrides(1, false).get("0"),
+        blockError: getMathpixBlockError(1, "0"),
+        statusText: els.statusBadge.textContent,
+        statusClass: els.statusBadge.className
+      }));
+    })()`,
+    emptySaveTimeoutContext,
+  );
+  const emptySavedWithRemoteTimeout = JSON.parse(emptySaveTimeoutResult);
+  assert.strictEqual(emptySavedWithRemoteTimeout.ok, true, "empty manual save should remain locally successful when remote persistence times out");
+  assert(emptySavedWithRemoteTimeout.patches.some((patch) => patch.source === "human" && patch.status === "accepted" && patch.newText === ""), "empty timeout save should keep an accepted human patch");
+  assert.strictEqual(emptySavedWithRemoteTimeout.override, "", "empty timeout save should keep the local empty override");
+  assert.strictEqual(emptySavedWithRemoteTimeout.blockError, "", "remote persistence timeout should not render as a per-block correction error after local save succeeds");
+  assert(emptySavedWithRemoteTimeout.statusText.includes("远端同步失败"), "empty timeout save should surface a non-blocking remote sync warning");
+  assert(remoteSaveAttempts > 0, "test should exercise the remote persistence path");
 }
 
 runAsyncRegressions()
