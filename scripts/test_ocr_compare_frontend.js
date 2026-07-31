@@ -199,9 +199,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260731-empty-save-remote-timeout-fix"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260731-empty-save-remote-timeout-fix"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260731-empty-save-remote-timeout-fix"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260731-empty-save-stale-error-fix"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260731-empty-save-stale-error-fix"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260731-empty-save-stale-error-fix"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -8331,6 +8331,50 @@ async function runAsyncRegressions() {
   assert.strictEqual(emptySavedWithRemoteTimeout.blockError, "", "remote persistence timeout should not render as a per-block correction error after local save succeeds");
   assert(emptySavedWithRemoteTimeout.statusText.includes("远端同步失败"), "empty timeout save should surface a non-blocking remote sync warning");
   assert(remoteSaveAttempts > 0, "test should exercise the remote persistence path");
+
+  const staleErrorClearedContext = runOcrCompareInContext(createOcrCompareContext({
+    fetch: async () => new Promise(() => {}),
+  }));
+  vm.runInContext(patchBrowserSource, staleErrorClearedContext);
+  const staleErrorClearedResult = JSON.parse(vm.runInContext(
+    `(() => {
+      ${setupPreviewPageExpression(["193 trailing year 1993"])}
+      state.currentPage = 1;
+      state.authenticated = true;
+      state.currentUser = "门";
+      state.currentBookId = "book-stale-error";
+      state.currentBookOwnerId = "门";
+      state.ossWorkspaceId = "workspace-stale-error";
+      els.fileMeta = { textContent: "" };
+      els.statusBadge = { textContent: "", className: "" };
+      renderCurrentPage = async function noopRenderCurrentPage() {};
+      refreshRightWorkbenchOnly = () => false;
+      scrollSelectedReviewBlockIntoView = () => {};
+      schedulePdfFocusSync = () => {};
+      setMathpixBlockError(1, "0", "{'status': -2, 'details': 'old remote timeout'}");
+      const trigger = {
+        closest() {
+          return {
+            querySelector() {
+              return { value: "" };
+            }
+          };
+        }
+      };
+      applyMineruSourceEdit("0", trigger);
+      return JSON.stringify({
+        blockError: getMathpixBlockError(1, "0"),
+        patches: state.ocrPatches.map((patch) => ({
+          source: patch.source,
+          status: patch.status,
+          newText: patch.newText
+        }))
+      });
+    })()`,
+    staleErrorClearedContext,
+  ));
+  assert.strictEqual(staleErrorClearedResult.blockError, "", "starting an empty manual save should clear stale per-block remote errors immediately");
+  assert(staleErrorClearedResult.patches.some((patch) => patch.source === "human" && patch.status === "accepted" && patch.newText === ""), "stale-error empty save should still create an accepted local empty patch before remote sync finishes");
 }
 
 runAsyncRegressions()

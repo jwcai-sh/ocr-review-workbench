@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260731-empty-save-remote-timeout-fix";
+const OCR_COMPARE_BUILD_ID = "20260731-empty-save-stale-error-fix";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -1862,7 +1862,7 @@ function scheduleCurrentBookProgressSave() {
   }, 300);
 }
 
-function persistDbOcrPatch(patch) {
+function persistDbOcrPatch(patch, options = {}) {
   const bookId = currentDbBookId();
   const reviewer = currentReviewerId();
   if (!bookId || !patch?.patchId || !reviewer || typeof fetch !== "function" || !ensureWritableBookAction("当前书籍只读")) {
@@ -1876,7 +1876,9 @@ function persistDbOcrPatch(patch) {
     }
     return result;
   }).catch((error) => {
-    setStatus("数据库保存失败", "error", error?.message || String(error || ""));
+    if (!options?.quiet) {
+      setStatus("数据库保存失败", "error", error?.message || String(error || ""));
+    }
     if (typeof console !== "undefined" && typeof console.warn === "function") {
       console.warn("[OCR DB] 无法保存 OCR patch。", error);
     }
@@ -2058,6 +2060,14 @@ function showReviewBlockSaveError(blockKey, message) {
     return;
   }
   setMathpixBlockError(state.currentPage, blockKey, text);
+  const fullKey = normalizeReviewBlockKey(blockKey, state.currentPage);
+  if (refreshRightWorkbenchOnly({ preserveReviewScroll: true, preserveReviewAnchorKey: fullKey })) {
+    refreshReviewSelectionInPlace(fullKey);
+  }
+}
+
+function clearReviewBlockSaveError(blockKey) {
+  clearMathpixBlockError(state.currentPage, blockKey);
   const fullKey = normalizeReviewBlockKey(blockKey, state.currentPage);
   if (refreshRightWorkbenchOnly({ preserveReviewScroll: true, preserveReviewAnchorKey: fullKey })) {
     refreshReviewSelectionInPlace(fullKey);
@@ -5618,6 +5628,7 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
     return false;
   }
   const preparedMarkdown = cleanMathpixEditableMarkdown(String(newMarkdown || ""));
+  clearReviewBlockSaveError(blockKey);
   const segment = reviewSegmentsForPage(state.currentPage).find((item) => String(item.blockIndex) === blockKey);
   const risk = reviewRiskForBlock(state.currentPage, blockKey);
   const patchResult = createAndStoreDraftOcrPatch({
@@ -5655,7 +5666,7 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
   let remoteSaveError = null;
   try {
     await Promise.all([
-      persistDbOcrPatch(patchResult.patch),
+      persistDbOcrPatch(patchResult.patch, { quiet: true }),
       flushRemoteOcrWorkspaceSave(),
     ]);
   } catch (error) {
@@ -8576,7 +8587,7 @@ function createAndStoreDraftOcrPatch({ pageNo, blockIndex, oldText, newText, sou
     state.ocrPatches.push(patch);
   }
   saveOcrWorkspaceState();
-  persistDbOcrPatch(patch).catch(() => {});
+  persistDbOcrPatch(patch, { quiet: true }).catch(() => {});
   return { patch, normalizedText, renderValidation };
 }
 
@@ -8969,7 +8980,7 @@ function updateOcrPatchStatus(patchId, nextStatus) {
   patch.status = targetStatus;
   patch.updatedAt = new Date().toISOString();
   saveOcrWorkspaceState();
-  persistDbOcrPatch(patch)
+  persistDbOcrPatch(patch, { quiet: true })
     .then(() => persistDbOcrPatchStatus(patch, targetStatus))
     .catch(() => {});
   return { ok: true, reason: "", patch };
