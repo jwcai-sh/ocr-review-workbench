@@ -199,9 +199,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260731-bibliography-segment-boundary-fix"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260731-bibliography-segment-boundary-fix"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260731-bibliography-segment-boundary-fix"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260731-save-hydration-race-fix"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260731-save-hydration-race-fix"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260731-save-hydration-race-fix"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -1989,6 +1989,7 @@ function assertOcrPatchShape(patch) {
       getMathpixBlockDrafts(1).set("0", "Mathpix draft correction");
       els.fileMeta = { textContent: "" };
       els.statusBadge = { textContent: "", className: "" };
+      updatePager = function noopUpdatePager() {};
       renderCurrentPage = async function noopRenderCurrentPage() {};
       const trigger = {
         closest() {
@@ -8387,6 +8388,242 @@ async function runAsyncRegressions() {
   assert.strictEqual(emptySavedWithRemoteTimeout.blockError, "", "remote persistence timeout should not render as a per-block correction error after local save succeeds");
   assert(emptySavedWithRemoteTimeout.statusText.includes("远端同步失败"), "empty timeout save should surface a non-blocking remote sync warning");
   assert(remoteSaveAttempts > 0, "test should exercise the remote persistence path");
+
+  const jsonMetadataEditContext = runOcrCompareInContext(createOcrCompareContext({
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+      text: async () => JSON.stringify({ ok: true }),
+    }),
+  }));
+  vm.runInContext(patchBrowserSource, jsonMetadataEditContext);
+  const jsonMetadataEditResult = await vm.runInContext(
+    `(() => {
+      state.ocrPatches = [];
+      state.currentPage = 1;
+      state.authenticated = true;
+      state.currentUser = "门";
+      state.currentBookId = "book-json-edit";
+      state.currentBookOwnerId = "门";
+      state.ossWorkspaceId = "workspace-json-edit";
+      els.fileMeta = { textContent: "" };
+      els.statusBadge = { textContent: "", className: "" };
+      renderCurrentPage = async function noopRenderCurrentPage() {};
+      refreshRightWorkbenchOnly = () => false;
+      scrollSelectedReviewBlockIntoView = () => {};
+      schedulePdfFocusSync = () => {};
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [600, 900],
+            para_blocks: [
+              { type: "text", bbox: [50, 60, 520, 140], lines: [{ spans: [{ content: "{ \\"filename\\": \\"MTA5MDA0NjMuemlw\\", \\"filename_decoded\\": \\"10900463.zip\\", \\"total_pages\\": 450 }" }] }] }
+            ]
+          }
+        ]
+      };
+      const trigger = {
+        closest() {
+          return {
+            querySelector() {
+              return { value: "已删除无关压缩包元数据" };
+            }
+          };
+        }
+      };
+      return applyMineruSourceEdit("0", trigger).then((ok) => {
+        const segment = reviewSegmentsForPage(1)[0];
+        const correction = reviewCorrectionStateForSegment(1, "0", segment, segment.markdown);
+        return JSON.stringify({
+          ok,
+          displayMarkdown: correction.correctionView.displayMarkdown,
+          patchStatus: state.ocrPatches[0]?.status || "",
+          patchText: state.ocrPatches[0]?.newText || "",
+          override: getBlockOverrides(1, false).get("0") || "",
+          statusText: els.statusBadge.textContent || ""
+        });
+      });
+    })()`,
+    jsonMetadataEditContext,
+  );
+  const jsonMetadataEdit = JSON.parse(jsonMetadataEditResult);
+  assert.strictEqual(jsonMetadataEdit.ok, true, "manual edit of JSON metadata block should save");
+  assert.strictEqual(jsonMetadataEdit.patchStatus, "accepted", "manual edit of JSON metadata block should become an accepted patch");
+  assert.strictEqual(jsonMetadataEdit.patchText, "已删除无关压缩包元数据", "manual edit should store the user's replacement text exactly");
+  assert.strictEqual(jsonMetadataEdit.override, "已删除无关压缩包元数据", "manual edit should update the local block override used for immediate display");
+  assert.strictEqual(jsonMetadataEdit.displayMarkdown, "已删除无关压缩包元数据", "right-column effective text should read the accepted manual edit, not stale JSON metadata");
+
+  const acceptedPaneJsonEditResult = await vm.runInContext(
+    `(() => {
+      state.ocrPatches = [];
+      state.mineruBlockOverrides.clear();
+      state.mathpixBlockDrafts.clear();
+      state.liveReviewDrafts.clear();
+      state.currentPage = 1;
+      state.authenticated = true;
+      state.currentUser = "门";
+      state.currentBookId = "book-json-accepted-edit";
+      state.currentBookOwnerId = "门";
+      state.ossWorkspaceId = "workspace-json-accepted-edit";
+      els.fileMeta = { textContent: "" };
+      els.statusBadge = { textContent: "", className: "" };
+      renderCurrentPage = async function noopRenderCurrentPage() {};
+      refreshRightWorkbenchOnly = () => false;
+      scrollSelectedReviewBlockIntoView = () => {};
+      schedulePdfFocusSync = () => {};
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [600, 900],
+            para_blocks: [
+              { type: "text", bbox: [50, 60, 520, 140], lines: [{ spans: [{ content: "{ \\"filename\\": \\"MTA5MDA0NjMuemlw\\", \\"filename_decoded\\": \\"10900463.zip\\", \\"total_pages\\": 450 }" }] }] }
+            ]
+          }
+        ]
+      };
+      const original = reviewSegmentsForPage(1)[0].markdown;
+      const initial = createAndStoreDraftOcrPatch({
+        pageNo: 1,
+        blockIndex: "0",
+        oldText: original,
+        newText: original,
+        source: "human"
+      });
+      if (initial.patch?.status === "draft") {
+        updateOcrPatchStatus(initial.patch.patchId, "accepted");
+      }
+      getBlockOverrides(1).set("0", original);
+      const trigger = {
+        closest(selector) {
+          if (selector === ".block-source-detail") {
+            return null;
+          }
+          return {
+            querySelector() {
+              return { value: "人工修改后的 accepted 内容" };
+            }
+          };
+        }
+      };
+      return applyMathpixBlockEdit("0", trigger).then((ok) => {
+        const segment = reviewSegmentsForPage(1)[0];
+        const correction = reviewCorrectionStateForSegment(1, "0", segment, segment.markdown);
+        const acceptedPatches = state.ocrPatches.filter((patch) => patch.status === "accepted");
+        return JSON.stringify({
+          ok,
+          displayMarkdown: correction.correctionView.displayMarkdown,
+          patchTexts: acceptedPatches.map((patch) => patch.newText),
+          latestPatchText: getLatestOcrPatchForBlock(1, "0", segment.markdown)?.newText || "",
+          override: getBlockOverrides(1, false).get("0") || ""
+        });
+      });
+    })()`,
+    jsonMetadataEditContext,
+  );
+  const acceptedPaneJsonEdit = JSON.parse(acceptedPaneJsonEditResult);
+  assert.strictEqual(acceptedPaneJsonEdit.ok, true, "accepted-pane JSON edit should save");
+  assert(acceptedPaneJsonEdit.patchTexts.includes("人工修改后的 accepted 内容"), "accepted-pane edit should create a new accepted patch with the replacement text");
+  assert.strictEqual(acceptedPaneJsonEdit.latestPatchText, "人工修改后的 accepted 内容", "latest accepted patch should be the user's replacement text");
+  assert.strictEqual(acceptedPaneJsonEdit.override, "人工修改后的 accepted 内容", "accepted-pane edit should update immediate display override");
+  assert.strictEqual(acceptedPaneJsonEdit.displayMarkdown, "人工修改后的 accepted 内容", "accepted-pane effective text should not fall back to stale JSON metadata");
+
+  let resolveDeferredHydration;
+  const deferredHydrationContext = runOcrCompareInContext(createOcrCompareContext({
+    fetch: async (_url, options = {}) => {
+      const body = JSON.parse(options.body || "{}");
+      if (body.bookId === "book-stale-hydration") {
+        return new Promise((resolve) => {
+          resolveDeferredHydration = () => resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ok: true,
+              book: { owner_user_id: "门" },
+              ocrPatches: [
+                {
+                  patchId: "stale-patch",
+                  blockId: "p1_b0_staleold",
+                  oldHash: "staleold",
+                  newText: "旧的远端 JSON 内容",
+                  source: "human",
+                  status: "accepted",
+                  metadata: { pageNo: 1 },
+                },
+              ],
+              reviewMarks: [],
+            }),
+            text: async () => JSON.stringify({ ok: true }),
+          });
+        });
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true }),
+        text: async () => JSON.stringify({ ok: true }),
+      };
+    },
+  }));
+  vm.runInContext(patchBrowserSource, deferredHydrationContext);
+  const staleHydrationResult = await vm.runInContext(
+    `(() => {
+      state.ocrPatches = [];
+      state.currentPage = 1;
+      state.authenticated = true;
+      state.currentUser = "门";
+      state.currentBookId = "book-stale-hydration";
+      state.currentBookOwnerId = "门";
+      state.ossWorkspaceId = "workspace-stale-hydration";
+      els.fileMeta = { textContent: "" };
+      els.statusBadge = { textContent: "", className: "" };
+      updatePager = function noopUpdatePager() {};
+      renderCurrentPage = async function noopRenderCurrentPage() {};
+      refreshRightWorkbenchOnly = () => false;
+      scrollSelectedReviewBlockIntoView = () => {};
+      schedulePdfFocusSync = () => {};
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [600, 900],
+            para_blocks: [
+              { type: "text", bbox: [50, 60, 520, 140], lines: [{ spans: [{ content: "{ \\"filename\\": \\"MTA5MDA0NjMuemlw\\", \\"filename_decoded\\": \\"10900463.zip\\", \\"total_pages\\": 450 }" }] }] }
+            ]
+          }
+        ]
+      };
+      const hydration = hydrateDatabaseBookStateForCurrentBook("book-stale-hydration");
+      const trigger = {
+        closest() {
+          return {
+            querySelector() {
+              return { value: "用户刚保存的新内容" };
+            }
+          };
+        }
+      };
+      return applyMineruSourceEdit("0", trigger)
+        .then(() => globalThis.__resolveDeferredHydration())
+        .then(() => hydration)
+        .then((restored) => {
+          const segment = reviewSegmentsForPage(1)[0];
+          const correction = reviewCorrectionStateForSegment(1, "0", segment, segment.markdown);
+          return JSON.stringify({
+            restored,
+            patchTexts: state.ocrPatches.map((patch) => patch.newText),
+            displayMarkdown: correction.correctionView.displayMarkdown,
+          });
+        });
+    })()`,
+    Object.assign(deferredHydrationContext, {
+      __resolveDeferredHydration: () => resolveDeferredHydration(),
+    }),
+  );
+  const staleHydration = JSON.parse(staleHydrationResult);
+  assert.strictEqual(staleHydration.restored, false, "stale background hydration should not apply after a local user edit");
+  assert(staleHydration.patchTexts.includes("用户刚保存的新内容"), "local user edit should survive a stale background hydration response");
+  assert(!staleHydration.patchTexts.includes("旧的远端 JSON 内容"), "stale hydration response should not overwrite local user edit patches");
+  assert.strictEqual(staleHydration.displayMarkdown, "用户刚保存的新内容", "right-column effective text should keep the local user edit after stale hydration");
 
   const staleErrorClearedContext = runOcrCompareInContext(createOcrCompareContext({
     fetch: async () => new Promise(() => {}),

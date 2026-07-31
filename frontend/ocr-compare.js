@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260731-bibliography-segment-boundary-fix";
+const OCR_COMPARE_BUILD_ID = "20260731-save-hydration-race-fix";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -56,6 +56,7 @@ const state = {
   adminUserIds: ["门"],
   workspaceRemoteSaveTimer: null,
   currentBookProgressSaveTimer: null,
+  localUserEditRevision: 0,
   bookMathpixBatch: {
     running: false,
     stopRequested: false,
@@ -1340,6 +1341,7 @@ async function hydrateDatabaseBookStateForCurrentBook(bookId = currentDbBookId()
   if (!targetBookId) {
     return false;
   }
+  const userEditRevisionAtRequest = Number(state.localUserEditRevision || 0);
   const response = await postJsonWithRetry(
     "/api/books/state",
     { bookId: targetBookId },
@@ -1349,6 +1351,9 @@ async function hydrateDatabaseBookStateForCurrentBook(bookId = currentDbBookId()
     throw new Error(response?.error || "书籍校对状态恢复失败");
   }
   if (targetBookId !== currentDbBookId()) {
+    return false;
+  }
+  if (Number(state.localUserEditRevision || 0) !== userEditRevisionAtRequest) {
     return false;
   }
   applyDatabaseBookState(response);
@@ -5662,6 +5667,7 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
   clearReviewNeedsCorrectionForBlock(state.currentPage, blockKey);
   // TODO: next step will switch display/export to accepted patches.
   getBlockOverrides(state.currentPage).set(blockKey, markdown);
+  markLocalUserOcrEdit();
   saveOcrWorkspaceState();
   let remoteSaveError = null;
   try {
@@ -5694,6 +5700,10 @@ async function saveHumanAcceptedBlockEdit(blockKey, newMarkdown) {
   await renderCurrentPage();
   scrollSelectedReviewBlockIntoView();
   return true;
+}
+
+function markLocalUserOcrEdit() {
+  state.localUserEditRevision = Number(state.localUserEditRevision || 0) + 1;
 }
 
 function rejectPriorOcrPatchesForBlock(blockId, currentPatchId) {
