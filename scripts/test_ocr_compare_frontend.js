@@ -199,9 +199,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260731-bibliography-sync-box-fix"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260731-bibliography-sync-box-fix"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260731-bibliography-sync-box-fix"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260731-bibliography-segment-boundary-fix"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260731-bibliography-segment-boundary-fix"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260731-bibliography-segment-boundary-fix"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -1166,6 +1166,61 @@ assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX tab
   assert.deepStrictEqual(result.segments[1].bbox, [64, 91, 510, 122], "reference continuation lines should merge into that reference's paragraph bbox");
   assert.strictEqual(result.segments[1].focusBBoxes, null, "same-entry bibliography continuation lines should use one merged sync box instead of per-line fragments");
   assert(result.riskPercents[1].height < 5, "paragraph-level bibliography focus should be compact, not a whole-page reference block");
+}
+
+{
+  const result = JSON.parse(
+    call(`(() => {
+      state.currentPage = 1;
+      state.mineruInfo = {
+        pdf_info: [
+          {
+            page_size: [581, 793],
+            para_blocks: [
+              {
+                type: "list",
+                lines: [
+                  { bbox: [63, 10, 142, 22], spans: [{ content: "pany,1996" }] },
+                  { bbox: [64, 31, 430, 47], spans: [{ content: "185 Wylie J C.The Complexity of Parallel Computations.[PhD thesis].Cornell Univ.,1979" }] },
+                  { bbox: [64, 51, 500, 66], spans: [{ content: "186 Xu Z,Hwang K.Coherent Parallel Programming in C//.Proc.of Int'l Conf.on Advances in" }] },
+                  { bbox: [86, 67, 510, 82], spans: [{ content: "Parallel and Distributed Computing,IEEE Computer Society Press,Mar.1997,116～122" }] },
+                  { bbox: [64, 88, 500, 103], spans: [{ content: "187 Zhang X D,Yan Y,He K Q.Latency Metric: An Experimental Method for Measuring and" }] },
+                  { bbox: [86, 104, 515, 119], spans: [{ content: "Evaluating Parallel Program and Architecture Scalability.J.of Parallal and Distributed Com-" }] },
+                  { bbox: [86, 120, 500, 135], spans: [{ content: "puting,1994,22:392～410 188 Zima H et al.Vienna FORTRAN-A Language Specification.ICASE,1992.Version 1.1" }] }
+                ]
+              },
+              {
+                type: "list",
+                lines: [
+                  { bbox: [64, 146, 510, 162], spans: [{ content: "194 曙光信息产业有限公司.曙光天潮系列曙光2000超级并行计算机.技术白皮书,1998 195 李晓梅,蒋增荣等编著.并行算法(第五章).湖南科技出版社,1992" }] },
+                  { bbox: [64, 186, 510, 202], spans: [{ content: "196 沈志宇等编著.并行程序设计.长沙：国防科学技术大学出版社,1997" }] },
+                  { bbox: [64, 206, 510, 222], spans: [{ content: "197 孙家昶等编著.网络并行计算与分布式编程环境.北京:科学出版社,1996" }] },
+                  { bbox: [64, 226, 510, 242], spans: [{ content: "198 唐荣善，梁维发编著.并行图论算法.合肥：中国科学技术大学出版社,1991" }] },
+                  { bbox: [64, 246, 510, 262], spans: [{ content: "199 王鼎兴,陈国良编著.互联网络结构分析.北京：科学出版社,1990" }] },
+                  { bbox: [64, 266, 510, 282], spans: [{ content: "200 王鼎兴,庄伟强编著.一种实现并行计算的新主流技术—NOW.小型微型计算机系统,1995,16(2):29～34" }] },
+                  { bbox: [64, 286, 510, 302], spans: [{ content: "201 王嘉漠,沈毅主编.并行计算方法(上册).北京：国防工业出版社,1987" }] },
+                  { bbox: [64, 306, 510, 322], spans: [{ content: "202 徐士良编著.计算机常用算法(第二版).北京:清华大学出版社,1996" }] }
+                ]
+              }
+            ]
+          }
+        ]
+      };
+      const segments = reviewSegmentsForPage(1);
+      return JSON.stringify(segments.map((segment) => ({ blockIndex: segment.blockIndex, markdown: segment.markdown, bbox: segment.bbox, focusBBoxes: segment.focusBBoxes })));
+    })()`),
+  );
+  const texts = result.map((segment) => segment.markdown);
+  assert(texts.some((text) => text.startsWith("185 Wylie")), "reference 185 should remain an independent segment");
+  assert(texts.some((text) => text.startsWith("186 Xu")), "reference 186 should remain an independent segment");
+  assert(texts.some((text) => text.startsWith("187 Zhang")), "reference 187 should remain an independent segment");
+  assert(texts.some((text) => text.startsWith("188 Zima")), "reference 188 should split out even when it is collapsed into the previous OCR line");
+  assert(!texts.some((text) => text.startsWith("186 Xu") && text.includes("187 Zhang")), "references 186 and 187 should not merge into one right-column block");
+  assert(!texts.some((text) => text.startsWith("187 Zhang") && text.includes("188 Zima")), "references 187 and 188 should split when MinerU collapses them into one line");
+  assert(texts.some((text) => text.startsWith("194 曙光")), "Chinese reference 194 should remain an independent segment");
+  assert(texts.some((text) => text.startsWith("195 李晓梅")), "Chinese reference 195 should split out even when it is collapsed into the previous OCR line");
+  assert(texts.some((text) => text.startsWith("202 徐士良")), "Chinese reference 202 should remain an independent segment");
+  assert(!texts.some((text) => text.startsWith("194 曙光") && text.includes("202 徐士良")), "Chinese references 194-202 should not merge into one large block");
 }
 
 {

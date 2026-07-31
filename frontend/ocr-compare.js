@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260731-bibliography-sync-box-fix";
+const OCR_COMPARE_BUILD_ID = "20260731-bibliography-segment-boundary-fix";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -7725,6 +7725,9 @@ function shouldMergeAdjacentPlainProseEntries(previous, current, pageNumber = st
   if (!previous || !current) {
     return false;
   }
+  if (isBibliographyReviewEntry(previous) || isBibliographyReviewEntry(current)) {
+    return false;
+  }
   if (!isPlainProseReviewEntry(previous) || !isPlainProseReviewEntry(current)) {
     return false;
   }
@@ -7742,6 +7745,10 @@ function shouldMergeAdjacentPlainProseEntries(previous, current, pageNumber = st
     return false;
   }
   return proseTextSuggestsContinuation(previous.markdown, current.markdown) || geometry.veryTight;
+}
+
+function isBibliographyReviewEntry(entry) {
+  return entry?.kind === "bibliography";
 }
 
 function isPlainProseReviewEntry(entry) {
@@ -8075,12 +8082,12 @@ function sortEntriesByVisualReadingOrder(entries) {
       if (!left.sortGeometry || !right.sortGeometry) {
         return visualOrderForPageEntry(left.entry, left.index) - visualOrderForPageEntry(right.entry, right.index);
       }
+      if (sameBibliographySourceBlock(left.entry, right.entry)) {
+        return left.sortGeometry.top - right.sortGeometry.top || left.sortGeometry.left - right.sortGeometry.left || left.index - right.index;
+      }
       const columnOrder = compareTwoColumnVisualItems(left, right, twoColumnLayout);
       if (Number.isFinite(columnOrder)) {
         return columnOrder;
-      }
-      if (sameBibliographySourceBlock(left.entry, right.entry)) {
-        return left.sortGeometry.top - right.sortGeometry.top || left.sortGeometry.left - right.sortGeometry.left || left.index - right.index;
       }
       if (shouldKeepTopMediaBeforeFollowingText(left, right)) {
         return -1;
@@ -11291,7 +11298,7 @@ function stripLeadingBibliographyIndex(text) {
 }
 
 function normalizeBibliographyIndexSpacing(text) {
-  return String(text || "").replace(/(^|[\s.!?])(\d{1,4})([A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,})/gu, (match, prefix, number, word) => {
+  return String(text || "").replace(/(^|[\s.!?])(\d{1,4})([A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,}|(?!(?:算法|图|表|第))[\u3400-\u9fff])/gu, (match, prefix, number, word) => {
     if (!isPlausibleBibliographyIndex(Number(number))) {
       return match;
     }
@@ -11336,10 +11343,15 @@ function bibliographyEntryObjectsFromBlockLines(block, pageSize = null) {
 
 function collectBibliographyLineObjects(block) {
   return collectBlockLineObjects(block)
-    .map((line) => ({
-      text: normalizeBibliographyLine(line.text),
-      bbox: normalizedBBox(line.bbox),
-    }))
+    .flatMap((line) => {
+      const text = normalizeBibliographyLine(line.text);
+      const bbox = normalizedBBox(line.bbox);
+      const pieces = splitBibliographyLineByEntryStarts(text);
+      if (pieces.length <= 1) {
+        return text ? [{ text, bbox }] : [];
+      }
+      return pieces.map((piece) => ({ text: piece, bbox }));
+    })
     .filter((line) => line.text);
 }
 
@@ -11386,8 +11398,13 @@ function referenceEntryStartIndexes(text) {
   for (let index = 0; index < value.length; index += 1) {
     const previousChar = index > 0 ? value[index - 1] : "";
     const slice = value.slice(index);
-    const numberedLeadMatch = slice.match(/^(\d{1,4})[.)]?\s*[A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,}/u);
-    const numberedLead = Boolean(numberedLeadMatch && isPlausibleBibliographyIndex(Number(numberedLeadMatch[1])) && (index === 0 || /\s/.test(previousChar)));
+    const numberedLeadMatch = slice.match(/^(\d{1,4})[.)]?\s*(?:[A-ZÀ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,}|(?!(?:算法|图|表|第))[\u3400-\u9fff])/u);
+    const prefix = value.slice(0, index);
+    const numberedLead = Boolean(
+      numberedLeadMatch &&
+      isPlausibleBibliographyIndex(Number(numberedLeadMatch[1])) &&
+      (index === 0 || (/[\s.!?]/.test(previousChar) && prefixLooksLikeCompletedBibliographyEntry(prefix)))
+    );
     if (numberedLead) {
       starts.push(index);
       continue;
@@ -11400,6 +11417,24 @@ function referenceEntryStartIndexes(text) {
     }
   }
   return starts;
+}
+
+function prefixLooksLikeCompletedBibliographyEntry(prefix) {
+  const tail = String(prefix || "").slice(-260);
+  if (!tail.trim()) {
+    return false;
+  }
+  if (/[.!?]\s*$/.test(tail) && /\b(?:ACM|IEEE|SIAM|J\.|Proc\.?|Press|Conf\.?|Symp\.?|Univ\.?|ICASE|Comput(?:er|ing)?|Parallel)\b/i.test(tail)) {
+    return true;
+  }
+  if (!/\b(?:18|19|20)\d{2}[a-z]?\b/.test(tail)) {
+    return false;
+  }
+  if (/\d+\s*[~～-]\s*\d+\s*$/.test(tail)) {
+    return true;
+  }
+  return /\b(?:ACM|IEEE|SIAM|J\.|Proc\.?|Press|Conf\.?|Symp\.?|Univ\.?|ICASE|Comput(?:er|ing)?|Parallel)\b/i.test(tail) ||
+    /(?:出版社|编著|大学|公司|研究|技术|报告|北京|长沙|合肥|清华|国防|科学)/.test(tail);
 }
 
 function collectBlockText(block, options = {}) {
