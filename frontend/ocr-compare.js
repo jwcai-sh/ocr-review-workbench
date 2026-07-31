@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260731-empty-save-stale-error-fix";
+const OCR_COMPARE_BUILD_ID = "20260731-bibliography-sync-box-fix";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
@@ -7380,7 +7380,7 @@ function reviewSegmentsForPage(pageNumber) {
 }
 
 function bibliographyReviewEntriesFromBlock(block, blockIndex, pageSize) {
-  const entries = bibliographyEntryObjectsFromBlockLines(block);
+  const entries = bibliographyEntryObjectsFromBlockLines(block, pageSize);
   if (entries.length < 2) {
     return [];
   }
@@ -8079,6 +8079,9 @@ function sortEntriesByVisualReadingOrder(entries) {
       if (Number.isFinite(columnOrder)) {
         return columnOrder;
       }
+      if (sameBibliographySourceBlock(left.entry, right.entry)) {
+        return left.sortGeometry.top - right.sortGeometry.top || left.sortGeometry.left - right.sortGeometry.left || left.index - right.index;
+      }
       if (shouldKeepTopMediaBeforeFollowingText(left, right)) {
         return -1;
       }
@@ -8099,6 +8102,15 @@ function sortEntriesByVisualReadingOrder(entries) {
       return left.sortGeometry.left - right.sortGeometry.left || left.index - right.index;
     })
     .map((item) => item.entry);
+}
+
+function sameBibliographySourceBlock(leftEntry, rightEntry) {
+  if (leftEntry?.kind !== "bibliography" || rightEntry?.kind !== "bibliography") {
+    return false;
+  }
+  const leftSource = String(leftEntry.sourceBlockIndex ?? leftEntry.blockIndex ?? "");
+  const rightSource = String(rightEntry.sourceBlockIndex ?? rightEntry.blockIndex ?? "");
+  return Boolean(leftSource && leftSource === rightSource);
 }
 
 function reviewEntrySortGeometry(entry) {
@@ -8249,12 +8261,16 @@ function bboxReadingGeometry(bbox, pageSize) {
 }
 
 function focusBBoxesForBlock(block, pageSize) {
-  const lineBoxes = collectLineBBoxes(block).map(normalizedBBox).filter(Boolean);
-  if (lineBoxes.length < 2) {
+  return meaningfulFocusBBoxesForLineBoxes(collectLineBBoxes(block), pageSize);
+}
+
+function meaningfulFocusBBoxesForLineBoxes(lineBoxes, pageSize) {
+  const boxes = (Array.isArray(lineBoxes) ? lineBoxes : []).map(normalizedBBox).filter(Boolean);
+  if (boxes.length < 2) {
     return null;
   }
   const clusters = [];
-  lineBoxes.forEach((box) => {
+  boxes.forEach((box) => {
     const current = clusters[clusters.length - 1];
     if (!current?.length || shouldStartNewFocusBBoxCluster(current[current.length - 1], box, pageSize)) {
       clusters.push([box]);
@@ -11291,7 +11307,7 @@ function bibliographyEntriesFromBlockLines(block) {
   return bibliographyEntryObjectsFromBlockLines(block).map((entry) => entry.markdown);
 }
 
-function bibliographyEntryObjectsFromBlockLines(block) {
+function bibliographyEntryObjectsFromBlockLines(block, pageSize = null) {
   const rawLines = collectBibliographyLineObjects(block);
   if (rawLines.length < 2) {
     return [];
@@ -11301,7 +11317,7 @@ function bibliographyEntryObjectsFromBlockLines(block) {
   rawLines.forEach((lineObject) => {
     if (bibliographyLineStartsNewEntry(lineObject.text)) {
       if (current.length) {
-        entries.push(bibliographyEntryObjectFromLines(current));
+        entries.push(bibliographyEntryObjectFromLines(current, pageSize));
       }
       current = [lineObject];
       return;
@@ -11313,7 +11329,7 @@ function bibliographyEntryObjectsFromBlockLines(block) {
     current = [lineObject];
   });
   if (current.length) {
-    entries.push(bibliographyEntryObjectFromLines(current));
+    entries.push(bibliographyEntryObjectFromLines(current, pageSize));
   }
   return entries.filter((entry) => entry.markdown);
 }
@@ -11345,14 +11361,14 @@ function collectBlockLineObjects(block, output = []) {
   return output;
 }
 
-function bibliographyEntryObjectFromLines(lines) {
+function bibliographyEntryObjectFromLines(lines, pageSize = null) {
   const lineObjects = Array.isArray(lines) ? lines : [];
   const markdown = lineObjects.map((line) => line.text).join(" ").replace(/[ \t]{2,}/g, " ").trim();
   const boxes = lineObjects.map((line) => normalizedBBox(line.bbox)).filter(Boolean);
   return {
     markdown,
     bbox: mergeBBoxes(boxes),
-    focusBBoxes: boxes.length > 1 ? boxes : null,
+    focusBBoxes: meaningfulFocusBBoxesForLineBoxes(boxes, pageSize),
   };
 }
 

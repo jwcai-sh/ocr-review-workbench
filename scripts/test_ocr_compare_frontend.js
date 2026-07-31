@@ -199,9 +199,9 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260731-empty-save-stale-error-fix"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260731-empty-save-stale-error-fix"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260731-empty-save-stale-error-fix"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260731-bibliography-sync-box-fix"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260731-bibliography-sync-box-fix"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260731-bibliography-sync-box-fix"'));
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));
@@ -1164,6 +1164,7 @@ assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX tab
   assert.strictEqual(result.count, 3, "bibliography review blocks should split into per-reference segments for paragraph-level sync");
   assert(result.segments[1].markdown.startsWith("62 Duato"), "the second bibliography segment should contain only reference 62");
   assert.deepStrictEqual(result.segments[1].bbox, [64, 91, 510, 122], "reference continuation lines should merge into that reference's paragraph bbox");
+  assert.strictEqual(result.segments[1].focusBBoxes, null, "same-entry bibliography continuation lines should use one merged sync box instead of per-line fragments");
   assert(result.riskPercents[1].height < 5, "paragraph-level bibliography focus should be compact, not a whole-page reference block");
 }
 
