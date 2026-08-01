@@ -518,7 +518,15 @@ class OcrWorkbenchHandler(BaseHTTPRequestHandler):
         middle_bytes = OSS_STORAGE_SERVICE.get_bytes(middle_key)
         content_list_bytes = OSS_STORAGE_SERVICE.get_bytes(content_list_key) if content_list_key else None
         if not middle_bytes:
-            return {"ok": False, "error": f"Cannot read middle.json from OSS: {middle_key}"}
+            return {
+                "ok": False,
+                "error": "middle_json_download_timeout",
+                "message": "OSS middle.json 读取失败，请稍后重试。",
+                "retryable": True,
+                "ossKey": middle_key,
+                "details": OSS_STORAGE_SERVICE.error or "empty_object",
+                "bookId": book_id,
+            }
 
         try:
             middle_json = json.loads(middle_bytes.decode("utf-8"))

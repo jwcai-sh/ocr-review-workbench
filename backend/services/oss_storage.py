@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import posixpath
+import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -29,9 +31,17 @@ class OssStorageService:
     enabled: bool
     _bucket: Any | None = None
     error: str = ""
+    max_get_retries: int = 3
+    cache_ttl_seconds: float = 300.0
+    _get_cache: dict[str, tuple[float, bytes]] | None = None
+    _get_cache_lock: Any | None = None
 
     def __post_init__(self) -> None:
         self._bucket = None
+        self.max_get_retries = max(1, int(getattr(SETTINGS, "oss_get_retries", self.max_get_retries)))
+        self.cache_ttl_seconds = max(0.0, float(getattr(SETTINGS, "oss_cache_ttl_seconds", self.cache_ttl_seconds)))
+        self._get_cache = {}
+        self._get_cache_lock = threading.Lock()
         if not self.enabled:
             return
         if oss2 is None:
@@ -40,7 +50,12 @@ class OssStorageService:
             return
         try:
             auth = oss2.Auth(SETTINGS.oss_access_key_id, SETTINGS.oss_access_key_secret)
-            self._bucket = oss2.Bucket(auth, SETTINGS.oss_endpoint_url, SETTINGS.oss_bucket)
+            self._bucket = oss2.Bucket(
+                auth,
+                SETTINGS.oss_endpoint_url,
+                SETTINGS.oss_bucket,
+                connect_timeout=max(1.0, float(getattr(SETTINGS, "oss_connect_timeout_seconds", 15))),
+            )
         except Exception as error:  # noqa: BLE001
             self.enabled = False
             self.error = str(error)
@@ -58,11 +73,28 @@ class OssStorageService:
     def get_bytes(self, key: str) -> bytes | None:
         if not self.enabled or not self._bucket or not key:
             return None
-        try:
-            return self._bucket.get_object(key).read()
-        except Exception as error:  # noqa: BLE001
-            self.error = str(error)
-            return None
+        now = time.monotonic()
+        with self._get_cache_lock:
+            cached = self._get_cache.get(key) if self._get_cache is not None else None
+            if cached and (self.cache_ttl_seconds <= 0 or cached[0] > now):
+                return cached[1]
+            if cached:
+                self._get_cache.pop(key, None)
+        last_error: Exception | None = None
+        for attempt in range(self.max_get_retries):
+            try:
+                content = self._bucket.get_object(key).read()
+                if self._get_cache is not None:
+                    with self._get_cache_lock:
+                        self._get_cache[key] = (time.monotonic() + self.cache_ttl_seconds, content)
+                self.error = ""
+                return content
+            except Exception as error:  # noqa: BLE001
+                last_error = error
+                if attempt + 1 < self.max_get_retries:
+                    time.sleep(min(0.5 * (2**attempt), 2.0))
+        self.error = f"OSS object read failed after {self.max_get_retries} attempts: {last_error}"
+        return None
 
     def put_json(self, key: str, payload: dict[str, Any]) -> bool:
         return self.put_bytes(
