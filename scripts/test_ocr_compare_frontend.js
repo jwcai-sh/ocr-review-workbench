@@ -199,9 +199,11 @@ function runOcrCompareInContext(testContext) {
   assert(!/<details class="oss-book-panel"[^>]*\sopen\b/.test(ocrCompareHtml), "OSS book browser should not default open");
   assert(ocrCompareHtml.includes("加载 OSS 书籍"));
   assert(!ocrCompareHtml.includes('id="ossBookSelect"'), "OSS books should use the two-column browser instead of a flat select");
-  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260731-save-hydration-race-fix"));
-  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260731-save-hydration-race-fix"));
-  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260731-save-hydration-race-fix"'));
+  assert(ocrCompareHtml.includes("ocr-compare.js?v=20260801-review-button-alignment-fix"));
+  assert(ocrCompareHtml.includes("ocr-compare.css?v=20260801-review-button-alignment-fix"));
+  assert(source.includes('OCR_COMPARE_BUILD_ID = "20260801-review-button-alignment-fix"'));
+  assert(ocrCompareCss.includes(".review-page-block-actions .risk-action"), "review-page action buttons should override the global risk-action top margin");
+  assert(/\.review-page-block-actions \.risk-action\s*{[^}]*margin-top:\s*0;/.test(ocrCompareCss), "review-page Mathpix action button should align vertically with sibling buttons");
   assert(source.includes("deferBookState: true"), "OSS book loads should defer DB patch/mark state so the initial page can load before a slow state restore");
   assert(source.includes("function hydrateDatabaseBookStateForCurrentBook"), "deferred OSS book loads should have a DB state hydration path");
   assert(source.includes('fetchApi("/api/auth/me"'));

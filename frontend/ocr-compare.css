@@ -1646,6 +1646,10 @@ label[role="button"] {
   transition: opacity 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 
+.review-page-block-actions .risk-action {
+  margin-top: 0;
+}
+
 .review-page-correct-button {
   color: #1d4ed8;
   border: 1px solid #bfdbfe;

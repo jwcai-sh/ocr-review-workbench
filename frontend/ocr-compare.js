@@ -4,7 +4,7 @@ let apiBase = resolveApiBase();
 
 const DEFAULT_PDF_IMAGE_ZOOM = 1;
 const DEFAULT_REVIEW_FONT_SCALE = 1;
-const OCR_COMPARE_BUILD_ID = "20260731-save-hydration-race-fix";
+const OCR_COMPARE_BUILD_ID = "20260801-review-button-alignment-fix";
 const PARTICIPANTS = ["傲", "门", "白", "丹"];
 document.documentElement?.setAttribute?.("data-ocr-compare-build-id", OCR_COMPARE_BUILD_ID);
 
