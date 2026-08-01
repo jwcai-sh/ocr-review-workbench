@@ -1349,6 +1349,25 @@ assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX tab
 }
 
 {
+  const orderedMineruBlockIndexes = JSON.parse(
+    call(`(() => {
+      state.mineruInfo = { pdf_info: [{ page_size: [600, 800], para_blocks: [
+        { type: "text", bbox: [330, 125, 550, 175], lines: [{ spans: [{ content: "right top" }] }] },
+        { type: "text", bbox: [40, 120, 260, 170], lines: [{ spans: [{ content: "left top" }] }] },
+        { type: "text", bbox: [332, 325, 552, 375], lines: [{ spans: [{ content: "right bottom" }] }] },
+        { type: "text", bbox: [42, 320, 262, 370], lines: [{ spans: [{ content: "left bottom" }] }] }
+      ] }] };
+      return JSON.stringify(pageSegmentsForPage(1).map((entry) => entry.blockIndex));
+    })()`),
+  );
+  assert.deepStrictEqual(
+    orderedMineruBlockIndexes,
+    ["1", "3", "0", "2"],
+    "MinerU preview blocks must use the same left-column-first order as review blocks",
+  );
+}
+
+{
   const orderedBlockIndexes = JSON.parse(
     call(`(() => {
       const entries = [
@@ -1366,6 +1385,49 @@ assert(wrappedTableHtml.includes("latex-table-wrap"), "display-wrapped LaTeX tab
     orderedBlockIndexes,
     ["left-a", "left-b", "left-c", "right-a", "right-b", "right-c"],
     "Nature-style narrow-gutter double columns should still read the full left column before the right column",
+  );
+}
+
+{
+  const orderedBlockIndexes = JSON.parse(
+    call(`(() => {
+      const entries = [
+        { blockIndex: "right-top", bbox: [502, 100, 998, 180], pageSize: [1000, 1400], markdown: "right top", block: { type: "text" } },
+        { blockIndex: "left-top", bbox: [2, 100, 498, 180], pageSize: [1000, 1400], markdown: "left top", block: { type: "text" } },
+        { blockIndex: "right-bottom", bbox: [502, 240, 998, 320], pageSize: [1000, 1400], markdown: "right bottom", block: { type: "text" } },
+        { blockIndex: "left-bottom", bbox: [2, 240, 498, 320], pageSize: [1000, 1400], markdown: "left bottom", block: { type: "text" } }
+      ];
+      return JSON.stringify(sortEntriesByVisualReadingOrder(entries).map((entry) => entry.blockIndex));
+    })()`),
+  );
+  assert.deepStrictEqual(
+    orderedBlockIndexes,
+    ["left-top", "left-bottom", "right-top", "right-bottom"],
+    "two-column pages should keep column order even when the gutter is narrower than the heuristic threshold",
+  );
+}
+
+{
+  const splitEntries = JSON.parse(
+    call(`(() => {
+      const entry = {
+        block: { type: "text", lines: [
+          { bbox: [30, 100, 250, 120], spans: [{ content: "left top" }] },
+          { bbox: [30, 140, 250, 160], spans: [{ content: "left bottom" }] },
+          { bbox: [330, 110, 550, 130], spans: [{ content: "right top" }] }
+        ] },
+        blockIndex: "7", bbox: [30, 100, 550, 160], pageSize: [600, 800], markdown: "unused"
+      };
+      return JSON.stringify(splitEntryByVisualColumns(entry).map((item) => ({ blockIndex: item.blockIndex, markdown: item.markdown })));
+    })()`),
+  );
+  assert.deepStrictEqual(
+    splitEntries,
+    [
+      { blockIndex: "7-column-left-1", markdown: "left top\nleft bottom" },
+      { blockIndex: "7-column-right-2", markdown: "right top" },
+    ],
+    "a MinerU block spanning columns must become independently sortable column fragments",
   );
 }
 

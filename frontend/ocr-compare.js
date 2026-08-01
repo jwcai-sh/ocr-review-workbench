@@ -7340,7 +7340,7 @@ function originalBlockMarkdownsForPage(pageNumber) {
   }
   const blocks = Array.isArray(page.para_blocks) ? page.para_blocks : [];
   return blocks
-    .map((block, blockIndex) => ({
+    .flatMap((block, blockIndex) => splitEntryByVisualColumns({
       block,
       blockIndex,
       bbox: getBlockBBox(block),
@@ -7350,9 +7350,47 @@ function originalBlockMarkdownsForPage(pageNumber) {
     .filter((entry) => !isLikelyPageHeaderEntry(entry));
 }
 
+function splitEntryByVisualColumns(entry) {
+  const lines = Array.isArray(entry?.block?.lines) ? entry.block.lines : [];
+  const pageWidth = pageSizeWidth(entry?.pageSize);
+  if (lines.length < 2 || !pageWidth) {
+    return [entry];
+  }
+  const groups = [];
+  lines.forEach((line) => {
+    const bbox = normalizedBBox(line?.bbox);
+    const column = bbox ? (bboxCenterX({ left: bbox[0], right: bbox[2] }) <= pageWidth * 0.5 ? "left" : "right") : null;
+    const previous = groups[groups.length - 1];
+    if (!column || !previous || previous.column !== column) {
+      groups.push({ column, lines: [line] });
+    } else {
+      previous.lines.push(line);
+    }
+  });
+  const columns = new Set(groups.map((group) => group.column).filter(Boolean));
+  if (columns.size < 2) {
+    return [entry];
+  }
+  return groups
+    .filter((group) => group.column)
+    .map((group, index) => {
+      const block = { ...(entry.block || {}), lines: group.lines };
+      return {
+        ...entry,
+        block,
+        blockIndex: `${entry.blockIndex}-column-${group.column}-${index + 1}`,
+        sourceBlockIndex: entry.blockIndex,
+        blockIndexes: [entry.blockIndex],
+        bbox: getBlockBBox(block),
+        focusBBoxes: focusBBoxesForBlock(block, entry.pageSize),
+        markdown: cleanNarrativeFigureTablePrefixForTextBlock(blockToMarkdown(block), block),
+      };
+    });
+}
+
 function pageSegmentsForPage(pageNumber) {
   const entries = originalBlockMarkdownsForPage(pageNumber);
-  return segmentEntries(entries);
+  return segmentEntries(sortEntriesByVisualReadingOrder(entries));
 }
 
 function reviewBlockMarkdownsForPage(pageNumber) {
@@ -7368,14 +7406,14 @@ function reviewBlockMarkdownsForPage(pageNumber) {
       if (bibliographyEntries.length >= 2) {
         return bibliographyEntries;
       }
-      return [{
+      return splitEntryByVisualColumns({
         block,
         blockIndex,
         bbox: getBlockBBox(scopedBlock) || getBlockBBox(block),
         focusBBoxes: focusBBoxesForBlock(scopedBlock, page.page_size) || focusBBoxesForBlock(block, page.page_size),
         markdown: cleanNarrativeFigureTablePrefixForTextBlock(blockToMarkdown(scopedBlock), scopedBlock),
         pageSize: page.page_size,
-      }];
+      });
     })
     .filter((entry) => entry.kind === "bibliography" || !isLikelyPageHeaderEntry(entry));
   return attachEquationNumbersToReviewEntries(
@@ -8152,15 +8190,9 @@ function detectTwoColumnVisualLayout(items) {
   if (!leftColumn.length || !rightColumn.length) {
     return null;
   }
-  const leftRightEdge = medianNumber(leftColumn.map((geometry) => geometry.right));
-  const rightLeftEdge = medianNumber(rightColumn.map((geometry) => geometry.left));
-  const gutter = rightLeftEdge - leftRightEdge;
-  if (!Number.isFinite(gutter) || gutter < Math.max(8, pageWidth * 0.015)) {
-    return null;
-  }
   return {
     pageWidth,
-    splitX: (leftRightEdge + rightLeftEdge) / 2,
+    splitX: pageWidth * 0.5,
   };
 }
 
